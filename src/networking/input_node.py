@@ -15,6 +15,24 @@ class InputNode:
         self.controller_port = controller_port
         self.processor = VideoProcessor()
         self.movement_buffer = []
+        self.config = None
+        
+    def get_controller_name(self, mac):
+        """Get controller name from MAC address"""
+        if not self.config:
+            return "Unknown"
+        for name, details in self.config['controllers'].items():
+            if details['mac'].lower() == mac.lower():
+                return name
+        return "Unknown"
+        
+    def get_controller_mac(self, name):
+        """Get MAC address from controller name"""
+        if not self.config:
+            return None
+        if name in self.config['controllers']:
+            return self.config['controllers'][name]['mac']
+        return None
         
     async def discover_controllers(self):
         """Find available controllers"""
@@ -22,9 +40,9 @@ class InputNode:
                                  'config', 'controllers.yaml')
         try:
             with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
+                self.config = yaml.safe_load(f)
                 
-            for name, details in config['controllers'].items():
+            for name, details in self.config['controllers'].items():
                 self.controllers[details['mac']] = "localhost"  # or actual IP
                 print(f"Found controller: {name} ({details['mac']})")
         except Exception as e:

@@ -1,59 +1,88 @@
 import asyncio
 from src.networking.input_node import InputNode
 
-async def main():
-    print("\nStarting Input Node")
-    print("-----------------")
-    input_node = InputNode()
+async def run_input_node(input_node):
+    """Run the input node with menu interface"""
     await input_node.discover_controllers()
     
-    commands = {
-        'd': 'Drive wavemaker',
-        'c': 'Collect signal',
-        'i': 'Idle',
-        'p': 'Process data',
-        's': 'Send collected data',
-        'r': 'Receive data'
-    }
-    
     while True:
-        print("\nOptions:")
+        print("\n=== Input Node Menu ===")
         print("1. Collect movement data")
         print("2. Send command to controller")
-        print("3. Send collected data")
+        print("3. Send movement data to controller")
         print("4. Get controller status")
-        print("q. Quit")
+        print("5. Exit")
         
-        choice = input("\nEnter choice: ").lower()
-        
-        if choice == 'q':
-            break
+        try:
+            choice = input("\nEnter choice: ").strip()
             
-        if choice == '1':
-            # Collect new movement data
-            await input_node.collect_movements()
-            
-        elif choice == '2':
-            print("\nAvailable commands:")
-            for cmd, desc in commands.items():
-                print(f"{cmd}: {desc}")
-            command = input("Enter command: ").lower()
-            if command in commands:
-                await input_node.send_command("00:00:00:00:00:00", command)
-            else:
-                print("Invalid command")
+            if choice == '1':
+                await input_node.collect_movements()
                 
-        elif choice == '3':
-            # Send collected movement data
-            if input_node.movement_buffer:
-                print(f"Sending {len(input_node.movement_buffer)} measurements...")
-                await input_node.send_movement_data("00:00:00:00:00:00")
-            else:
-                print("No data collected yet! Use option 1 first.")
+            elif choice == '2':
+                print("\nAvailable controllers:")
+                for mac, ip in input_node.controllers.items():
+                    controller_name = input_node.get_controller_name(mac)
+                    print(f"{controller_name}: {mac}")
+                    
+                print("\nEnter controller name (e.g., 'res01') or 'q' to cancel:")
+                controller = input().strip()
+                if controller == 'q':
+                    continue
+                    
+                mac = input_node.get_controller_mac(controller)
+                if not mac:
+                    print(f"Unknown controller: {controller}")
+                    continue
                 
-        elif choice == '4':
-            status = await input_node.get_controller_status("00:00:00:00:00:00")
-            print(f"Controller status: {status}")
+                print("\nEnter 'd' for drive wavemaker, 'q' to quit: ")
+                command = input().strip().lower()
+                if command in ['d', 'q']:
+                    await input_node.send_command(mac, command)
+                    
+            elif choice == '3':
+                print("\nAvailable controllers:")
+                for mac, ip in input_node.controllers.items():
+                    controller_name = input_node.get_controller_name(mac)
+                    print(f"{controller_name}: {mac}")
+                    
+                print("\nEnter controller name (e.g., 'res01') or 'q' to cancel:")
+                controller = input().strip()
+                if controller == 'q':
+                    continue
+                    
+                mac = input_node.get_controller_mac(controller)
+                if not mac:
+                    print(f"Unknown controller: {controller}")
+                    continue
+                    
+                await input_node.send_movement_data(mac)
+                
+            elif choice == '4':
+                print("\nAvailable controllers:")
+                for mac, ip in input_node.controllers.items():
+                    controller_name = input_node.get_controller_name(mac)
+                    print(f"{controller_name}: {mac}")
+                    
+                print("\nEnter controller name (e.g., 'res01') or 'q' to cancel:")
+                controller = input().strip()
+                if controller == 'q':
+                    continue
+                    
+                mac = input_node.get_controller_mac(controller)
+                if not mac:
+                    print(f"Unknown controller: {controller}")
+                    continue
+                    
+                status = await input_node.get_controller_status(mac)
+                print(f"\nController status: {status}")
+                
+            elif choice == '5':
+                print("\nExiting...")
+                break
+                
+        except Exception as e:
+            print(f"\nError: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(run_input_node(InputNode())) 
