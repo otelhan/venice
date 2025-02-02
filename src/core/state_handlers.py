@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 import cv2
 import threading
 from queue import Queue
+import os
+
+os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
 class StateHandler:
     def __init__(self):
@@ -23,6 +26,18 @@ class StateHandler:
         self.serial = None
         self.window_name = "Camera View"
         self.is_running = False
+        
+        # Add energy plotting setup
+        self.energy_values = []
+        self.window_size = 100
+        plt.ion()
+        self.fig, self.ax = plt.subplots(figsize=(8, 4))
+        self.line, = self.ax.plot([], [], 'b-', linewidth=2)
+        self.ax.set_ylim(0, 255)
+        self.ax.set_xlabel('Frame')
+        self.ax.set_ylabel('Movement Value')
+        self.ax.grid(True)
+        plt.show()
         
     def find_kb2040_port(self):
         """Find the KB2040 port"""
@@ -114,3 +129,20 @@ class StateHandler:
         """Cleanup when object is destroyed"""
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
+
+    def update_energy_plot(self, value):
+        """Update the energy plot"""
+        try:
+            self.energy_values.append(value)
+            if len(self.energy_values) > self.window_size:
+                self.energy_values = self.energy_values[-self.window_size:]
+                
+            start_idx = max(0, len(self.energy_values) - self.window_size)
+            xdata = range(start_idx, start_idx + len(self.energy_values))
+            self.line.set_data(xdata, self.energy_values)
+            self.ax.set_xlim(start_idx, start_idx + self.window_size)
+            self.fig.canvas.draw_idle()
+            self.fig.canvas.flush_events()
+            
+        except Exception as e:
+            print(f"Error updating plot: {e}")
