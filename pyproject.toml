@@ -1,0 +1,13 @@
+reservoir_computer/
+└── src/
+    └── res-ven/
+        ├── __init__.py
+        ├── networking/
+        │   ├── __init__.py
+        │   ├── controller_node.py
+        │   └── input_node.py
+        ├── run_controller.py
+        └── run_input.py
+
+
+

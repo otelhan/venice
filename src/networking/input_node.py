@@ -41,13 +41,33 @@ class InputNode:
         try:
             with open(config_path, 'r') as f:
                 self.config = yaml.safe_load(f)
-                
+            
+            print("\nDiscovering controllers...")
             for name, details in self.config['controllers'].items():
-                self.controllers[details['mac']] = "localhost"  # or actual IP
-                print(f"Found controller: {name} ({details['mac']})")
+                mac = details['mac']
+                current_ip = details.get('ip', 'Not set')
+                last_seen = details.get('last_seen', 'Never')
+                
+                print(f"\nController: {name}")
+                print(f"MAC: {mac}")
+                print(f"Current IP: {current_ip}")
+                print(f"Last seen: {last_seen}")
+                
+                # Allow IP update
+                new_ip = input(f"Enter new IP for {name} (or press Enter to keep current): ").strip()
+                if new_ip:
+                    details['ip'] = new_ip
+                    details['last_seen'] = time.time()
+                    self.controllers[mac] = new_ip
+                else:
+                    self.controllers[mac] = current_ip
+            
+            # Save updated config
+            with open(config_path, 'w') as f:
+                yaml.safe_dump(self.config, f, default_flow_style=False)
+                
         except Exception as e:
-            print(f"Error loading controller config: {e}")
-            # Fallback to default
+            print(f"Error discovering controllers: {e}")
             self.controllers["00:00:00:00:00:00"] = "localhost"
     
     async def send_command(self, controller_id, command):

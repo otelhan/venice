@@ -36,10 +36,10 @@ class ControllerNode:
         try:
             self.server = await websockets.serve(
                 self.handle_message, 
-                "localhost",
+                "0.0.0.0",  # Listen on all interfaces
                 self.port
             )
-            print(f"Controller {self.mac} listening on ws://localhost:{self.port}")
+            print(f"Controller {self.mac} listening on port {self.port}")
             # Keep the server running
             while True:
                 try:
