@@ -1,0 +1,7 @@
+controllers:
+  res01:
+    mac: "2c:cf:67:86:e6:c9"
+    description: "Venice Controller 01"
+  res02:
+    mac: "00:11:22:33:44:55"  # Example for second controller
+    description: "Venice Controller 02" 

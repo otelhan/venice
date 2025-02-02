@@ -6,16 +6,26 @@ import time
 import socket
 from src.core.machine_controller import MachineController
 from src.core.states import MachineState
+from src.core.config_handler import ConfigHandler
 
 class ControllerNode:
     def __init__(self, port=8765):
         self.port = port
-        self.mac = self._get_mac()
+        self.config_handler = ConfigHandler()
+        if not self.config_handler.load_config():
+            print("Warning: Running with unconfigured controller")
+        
+        self.controller_name = self.config_handler.get_controller_name()
+        self.mac = self.config_handler.current_mac
         self.controller = MachineController()
         self.server = None
+        
+        print(f"Controller initialized:")
+        print(f"- Name: {self.controller_name or 'Unknown'}")
+        print(f"- MAC: {self.mac}")
+        
         # Initialize to IDLE state
         self.controller.transition_to(MachineState.IDLE)
-        print(f"Controller initialized with MAC: {self.mac}")
         
     def _get_mac(self):
         return ':'.join(['{:02x}'.format((uuid.getnode() >> elements) & 0xff)
@@ -82,14 +92,16 @@ class ControllerNode:
                             print(f"Executing command: {command}")
                             await self.execute_command(command)
                             response = {
-                                "status": "success",
+                                "controller_name": self.controller_name,
                                 "mac": self.mac,
+                                "status": "success",
                                 "message": f"Executed command: {command}"
                             }
                         else:
                             response = {
-                                "status": "error",
+                                "controller_name": self.controller_name,
                                 "mac": self.mac,
+                                "status": "error",
                                 "message": "MAC address mismatch"
                             }
                     elif message_type == 'data':
@@ -112,29 +124,33 @@ class ControllerNode:
                             self.controller.handle_current_state()
                             
                             response = {
-                                "status": "success",
+                                "controller_name": self.controller_name,
                                 "mac": self.mac,
+                                "status": "success",
                                 "message": f"Received {len(movements)} movements and started wavemaker"
                             }
                         else:
                             response = {
-                                "status": "error",
+                                "controller_name": self.controller_name,
                                 "mac": self.mac,
+                                "status": "error",
                                 "message": "No movement data in packet"
                             }
                     elif message_type == 'status_request':
                         # Handle status request
                         response = {
-                            "status": "success",
+                            "controller_name": self.controller_name,
                             "mac": self.mac,
+                            "status": "success",
                             "state": self.controller.current_state.name if self.controller.current_state else "IDLE",
                             "uptime": time.time(),  # You could track actual uptime if needed
                             "message": "Controller is running"
                         }
                     else:
                         response = {
-                            "status": "error",
+                            "controller_name": self.controller_name,
                             "mac": self.mac,
+                            "status": "error",
                             "message": f"Unknown message type: {message_type}"
                         }
                     
@@ -143,8 +159,9 @@ class ControllerNode:
                     
                 except json.JSONDecodeError:
                     await websocket.send(json.dumps({
-                        "status": "error",
+                        "controller_name": self.controller_name,
                         "mac": self.mac,
+                        "status": "error",
                         "message": "Invalid JSON format"
                     }))
                     

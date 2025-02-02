@@ -7,6 +7,7 @@ import numpy as np
 import os
 import cv2
 import matplotlib.pyplot as plt
+import yaml
 
 class InputNode:
     def __init__(self, controller_port=8765):
@@ -17,9 +18,19 @@ class InputNode:
         
     async def discover_controllers(self):
         """Find available controllers"""
-        # For testing, add localhost
-        self.controllers["00:00:00:00:00:00"] = "localhost"
-        print("Available controllers:", self.controllers)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                 'config', 'controllers.yaml')
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+                
+            for name, details in config['controllers'].items():
+                self.controllers[details['mac']] = "localhost"  # or actual IP
+                print(f"Found controller: {name} ({details['mac']})")
+        except Exception as e:
+            print(f"Error loading controller config: {e}")
+            # Fallback to default
+            self.controllers["00:00:00:00:00:00"] = "localhost"
     
     async def send_command(self, controller_id, command):
         """Send command to controller"""
