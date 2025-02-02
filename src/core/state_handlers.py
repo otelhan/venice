@@ -91,22 +91,34 @@ class StateHandler:
                 break
                 
     def calculate_frame_energy(self, frame):
-        """Calculate frame energy using entropy"""
-        # Convert to grayscale if needed
-        if len(frame.shape) == 3:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # Calculate histogram
-        histogram = cv2.calcHist([frame], [0], None, [256], [0, 256])
-        
-        # Normalize histogram to get probabilities
-        histogram = histogram.ravel() / histogram.sum()
-        
-        # Calculate entropy only for non-zero probabilities
-        non_zero = histogram > 0
-        entropy = -np.sum(histogram[non_zero] * np.log2(histogram[non_zero]))
-        
-        return entropy
+        """Calculate frame energy using ROI and movement detection"""
+        try:
+            # Scale down frame
+            height, width = frame.shape[:2]
+            small_frame = cv2.resize(frame, (width//2, height//2))
+            
+            # Convert to grayscale
+            gray_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+            
+            # If this is first frame, initialize previous frame
+            if self.prev_frame is None:
+                self.prev_frame = gray_frame
+                return 0
+            
+            # Calculate absolute difference between frames
+            frame_diff = cv2.absdiff(gray_frame, self.prev_frame)
+            
+            # Update previous frame
+            self.prev_frame = gray_frame
+            
+            # Calculate mean movement
+            movement = np.mean(frame_diff)
+            
+            return movement
+            
+        except Exception as e:
+            print(f"Error calculating frame energy: {e}")
+            return 0
 
     def scale_movement(self, value):
         """Scale movement value to motor range (20-127)"""
@@ -129,6 +141,9 @@ class StateHandler:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
             
+            # Initialize previous frame
+            self.prev_frame = None
+            
             for movement in self.movement_buffer:
                 # Scale movement to motor range
                 scaled_movement = self.scale_movement(movement)
@@ -142,9 +157,17 @@ class StateHandler:
                 # Update camera feed and calculate energy
                 ret, frame = self.camera.read()
                 if ret:
+                    # Process frame and calculate energy
                     energy = self.calculate_frame_energy(frame)
-                    cv2.imshow('Camera Feed', frame)
+                    
+                    # Show processed frame
+                    height, width = frame.shape[:2]
+                    small_frame = cv2.resize(frame, (width//2, height//2))
+                    gray_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+                    cv2.imshow('Camera Feed', gray_frame)
                     cv2.waitKey(1)
+                    
+                    # Update energy plot
                     self.update_energy_plot(energy)
                     plt.pause(0.001)
             
