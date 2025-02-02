@@ -9,34 +9,37 @@ import cv2
 import threading
 from queue import Queue
 import os
+import traceback
 
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
 class StateHandler:
     def __init__(self):
         self.serial_port = None
-        self.port_name = None  # We'll find this dynamically
+        self.port_name = None
         self.baud_rate = 9600
         self.movement_buffer = []
-        self.processor = VideoProcessor()
         self.should_continue = True
-        self.camera = CameraHandler()
         self.serial_queue = Queue()
         self.serial_thread = None
         self.serial = None
-        self.window_name = "Camera View"
-        self.is_running = False
         
-        # Add energy plotting setup
-        self.energy_values = []
-        self.window_size = 100
+        # Initialize camera
+        self.camera = cv2.VideoCapture(0)
+        if not self.camera.isOpened():
+            print("ERROR: Could not open camera")
+        
+        # Setup energy plot
         plt.ion()
         self.fig, self.ax = plt.subplots(figsize=(8, 4))
         self.line, = self.ax.plot([], [], 'b-', linewidth=2)
         self.ax.set_ylim(0, 255)
         self.ax.set_xlabel('Frame')
         self.ax.set_ylabel('Movement Value')
+        self.ax.set_title('Wavemaker Control Values')
         self.ax.grid(True)
+        self.energy_values = []
+        self.window_size = 100
         plt.show()
         
     def find_kb2040_port(self):
@@ -87,6 +90,24 @@ class StateHandler:
                 print(f"Serial error: {e}")
                 break
                 
+    def calculate_frame_energy(self, frame):
+        """Calculate frame energy using entropy"""
+        # Convert to grayscale if needed
+        if len(frame.shape) == 3:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Calculate histogram
+        histogram = cv2.calcHist([frame], [0], None, [256], [0, 256])
+        
+        # Normalize histogram to get probabilities
+        histogram = histogram.ravel() / histogram.sum()
+        
+        # Calculate entropy only for non-zero probabilities
+        non_zero = histogram > 0
+        entropy = -np.sum(histogram[non_zero] * np.log2(histogram[non_zero]))
+        
+        return entropy
+
     def drive_wavemaker(self):
         """Drive the wavemaker with movement data"""
         if not self.serial:
@@ -97,10 +118,6 @@ class StateHandler:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
             
-            # Make sure windows are created
-            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-            plt.figure('Energy Plot')  # Create or focus plot window
-            
             for movement in self.movement_buffer:
                 # Send movement value to KB2040
                 command = f"{int(movement)}\n"
@@ -108,27 +125,33 @@ class StateHandler:
                 response = self.serial.readline().decode().strip()
                 print(f"Sent: {movement}, Response: {response}")
                 
-                # Update displays
-                if self.camera and self.is_running:
-                    ret, frame = self.camera.read()
-                    if ret:
-                        cv2.imshow(self.window_name, frame)
-                        cv2.waitKey(1)
-                        
-                # Update plot
-                self.update_energy_plot(movement)
-                plt.pause(0.001)  # Allow plot to update
-                
+                # Update camera feed and calculate energy
+                ret, frame = self.camera.read()
+                if ret:
+                    # Calculate energy from frame
+                    energy = self.calculate_frame_energy(frame)
+                    
+                    # Show frame
+                    cv2.imshow('Camera Feed', frame)
+                    cv2.waitKey(1)
+                    
+                    # Update energy plot
+                    self.update_energy_plot(energy)
+                    plt.pause(0.001)
+            
             return True
             
         except Exception as e:
             print(f"Error driving wavemaker: {e}")
+            traceback.print_exc()
             return True
-    
+            
     def __del__(self):
-        """Cleanup when object is destroyed"""
-        if self.serial_port and self.serial_port.is_open:
-            self.serial_port.close()
+        """Cleanup"""
+        if self.camera is not None:
+            self.camera.release()
+        cv2.destroyAllWindows()
+        plt.close('all')
 
     def update_energy_plot(self, value):
         """Update the energy plot"""
