@@ -4,10 +4,15 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from threading import Lock
+import time
 
 class CameraHandler:
     def __init__(self):
         self.camera = None
+        self.is_running = False
+        self.camera_index = 0  # Default camera
+        if not self._init_camera():
+            print("WARNING: Failed to initialize camera")
         self.window_name = "Live Camera Feed"
         self.frame_count = 0
         self.window_size = 100  # Show last 100 frames
@@ -26,42 +31,73 @@ class CameraHandler:
         self.ax.grid(True)
         self.fig.show()
         
-    def find_camera(self):
-        """Find available video devices"""
+    def _init_camera(self):
+        """Initialize and test camera connection"""
         try:
-            # Check common video device patterns
-            video_devices = glob.glob('/dev/video*')  # Linux style
-            if not video_devices:
-                video_devices = glob.glob('/dev/avf*')  # macOS style
+            # Try to open camera
+            cap = cv2.VideoCapture(self.camera_index)
+            if not cap.isOpened():
+                print("ERROR: Could not open camera")
+                return False
                 
-            if video_devices:
-                print(f"Found video devices: {video_devices}")
-                return 0  # OpenCV usually maps first device to 0
-            return 0
-        except:
-            return 0
-        
-    def start_camera(self, camera_id=None):
-        """Start the camera stream"""
-        try:
-            if camera_id is None:
-                camera_id = self.find_camera()
+            # Try to read a frame
+            ret, frame = cap.read()
+            if not ret:
+                print("ERROR: Could not read from camera")
+                cap.release()
+                return False
                 
-            print(f"\nTrying to open camera {camera_id}")
-            self.camera = cv2.VideoCapture(camera_id)
-            
-            if not self.camera.isOpened():
-                print(f"Failed with camera {camera_id}, trying default camera")
-                self.camera = cv2.VideoCapture(0)
-                if not self.camera.isOpened():
-                    raise ValueError("Could not open any camera")
-                    
-            print(f"\nCamera stream started on device {camera_id}")
+            # Camera works, release it (we'll reopen when needed)
+            cap.release()
+            print("Camera initialized successfully")
             return True
             
         except Exception as e:
-            print(f"\nERROR starting camera: {e}")
+            print(f"Error initializing camera: {e}")
             return False
+            
+    def start_camera(self):
+        """Start the camera"""
+        if self.is_running:
+            return True
+            
+        try:
+            self.camera = cv2.VideoCapture(self.camera_index)
+            if not self.camera.isOpened():
+                print("ERROR: Could not start camera")
+                return False
+                
+            self.is_running = True
+            print("Camera started")
+            return True
+            
+        except Exception as e:
+            print(f"Error starting camera: {e}")
+            return False
+            
+    def stop_camera(self):
+        """Stop the camera"""
+        if self.camera and self.is_running:
+            self.camera.release()
+            self.is_running = False
+            print("Camera stopped")
+            
+    def get_frame(self):
+        """Get a frame from the camera"""
+        if not self.is_running:
+            if not self.start_camera():
+                return None
+                
+        try:
+            ret, frame = self.camera.read()
+            if not ret:
+                print("ERROR: Could not read frame")
+                return None
+            return frame
+            
+        except Exception as e:
+            print(f"Error reading frame: {e}")
+            return None
             
     def init_analyzer(self, frame_shape):
         """Initialize the optimized analyzer with frame shape"""
@@ -176,14 +212,6 @@ class CameraHandler:
             return cv2.waitKey(1) & 0xFF != ord('q')
         return False
         
-    def stop_camera(self):
-        """Stop the camera stream and close windows"""
-        if self.camera:
-            self.camera.release()
-            self.camera = None
-        cv2.destroyAllWindows()
-        print("\nCamera stream stopped")
-        
     def __del__(self):
-        """Cleanup"""
+        """Cleanup when object is destroyed"""
         self.stop_camera() 
