@@ -14,16 +14,22 @@ class MachineController:
         
     def handle_current_state(self):
         """Handle the current state"""
+        print(f"\nHandling state: {self.current_state.name}")  # Debug print
+        
         if self.current_state == MachineState.DRIVE_WAVEMAKER:
             # Pass movement buffer to state handler
             if self.movement_buffer and self.serial:
+                print(f"Movement buffer size: {len(self.movement_buffer)}")  # Debug print
                 self.state_handler.movement_buffer = self.movement_buffer
-                self.state_handler.serial = self.serial  # Pass serial connection
+                self.state_handler.serial = self.serial
                 next_state = self.state_handler.drive_wavemaker()
                 if next_state:
+                    print("Transitioning back to IDLE")  # Debug print
                     self.transition_to(MachineState.IDLE)
             else:
                 print("ERROR: No movement data or KB2040 not connected")
+                print(f"Movement buffer: {len(self.movement_buffer) if self.movement_buffer else 'Empty'}")
+                print(f"Serial connection: {'Connected' if self.serial else 'Not connected'}")
                 self.transition_to(MachineState.IDLE)
     
     def transition_to(self, new_state: MachineState):

@@ -21,6 +21,8 @@ class StateHandler:
         self.serial_queue = Queue()
         self.serial_thread = None
         self.serial = None
+        self.window_name = "Camera View"
+        self.is_running = False
         
     def find_kb2040_port(self):
         """Find the KB2040 port"""
@@ -78,12 +80,29 @@ class StateHandler:
             
         try:
             print("=== Starting wavemaker control ===")
+            print(f"Processing {len(self.movement_buffer)} movements")
+            
+            # Make sure windows are created
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            plt.figure('Energy Plot')  # Create or focus plot window
+            
             for movement in self.movement_buffer:
                 # Send movement value to KB2040
                 command = f"{int(movement)}\n"
                 self.serial.write(command.encode())
                 response = self.serial.readline().decode().strip()
                 print(f"Sent: {movement}, Response: {response}")
+                
+                # Update displays
+                if self.camera and self.is_running:
+                    ret, frame = self.camera.read()
+                    if ret:
+                        cv2.imshow(self.window_name, frame)
+                        cv2.waitKey(1)
+                        
+                # Update plot
+                self.update_energy_plot(movement)
+                plt.pause(0.001)  # Allow plot to update
                 
             return True
             
