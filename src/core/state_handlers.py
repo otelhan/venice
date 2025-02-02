@@ -108,6 +108,17 @@ class StateHandler:
         
         return entropy
 
+    def scale_movement(self, value):
+        """Scale movement value to motor range (20-127)"""
+        try:
+            # Scale to range 20-127
+            scaled = int(20 + (value * (127 - 20) / 255))
+            # Ensure limits
+            return max(20, min(127, scaled))
+        except Exception as e:
+            print(f"Error scaling movement: {e}")
+            return 127  # Default to max on error
+
     def drive_wavemaker(self):
         """Drive the wavemaker with movement data"""
         if not self.serial:
@@ -119,33 +130,45 @@ class StateHandler:
             print(f"Processing {len(self.movement_buffer)} movements")
             
             for movement in self.movement_buffer:
+                # Scale movement to motor range
+                scaled_movement = self.scale_movement(movement)
+                
                 # Send movement value to KB2040
-                command = f"{int(movement)}\n"
+                command = f"{scaled_movement}\n"
                 self.serial.write(command.encode())
                 response = self.serial.readline().decode().strip()
-                print(f"Sent: {movement}, Response: {response}")
+                print(f"Original: {movement}, Scaled: {scaled_movement}, Response: {response}")
                 
                 # Update camera feed and calculate energy
                 ret, frame = self.camera.read()
                 if ret:
-                    # Calculate energy from frame
                     energy = self.calculate_frame_energy(frame)
-                    
-                    # Show frame
                     cv2.imshow('Camera Feed', frame)
                     cv2.waitKey(1)
-                    
-                    # Update energy plot
                     self.update_energy_plot(energy)
                     plt.pause(0.001)
+            
+            # Set to max position when done
+            final_command = "127\n"
+            self.serial.write(final_command.encode())
+            print("Setting wiper to maximum position")
+            
+            # Cleanup windows before returning
+            cv2.destroyAllWindows()
+            plt.close('all')
             
             return True
             
         except Exception as e:
             print(f"Error driving wavemaker: {e}")
             traceback.print_exc()
-            return True
             
+            # Cleanup on error
+            cv2.destroyAllWindows()
+            plt.close('all')
+            
+            return True
+
     def __del__(self):
         """Cleanup"""
         if self.camera is not None:
