@@ -2,6 +2,8 @@ import cv2  # type: ignore
 import glob
 import os
 import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')  # Use TkAgg backend for local display
 import matplotlib.pyplot as plt
 from threading import Lock
 import time
@@ -11,6 +13,7 @@ class CameraHandler:
         self.camera = None
         self.is_running = False
         self.camera_index = 0  # Default camera
+        self.has_display = True  # Force display since we're running locally
         if not self._init_camera():
             print("WARNING: Failed to initialize camera")
         self.window_name = "Live Camera Feed"
@@ -21,15 +24,16 @@ class CameraHandler:
         self.prev_frame = None
         self.plot_lock = Lock()  # Add thread safety
         
-        # Setup energy plot
-        plt.ion()
-        self.fig, self.ax = plt.subplots(num='Energy Plot')
+        # Setup energy plot for local display
+        plt.ion()  # Interactive mode
+        self.fig, self.ax = plt.subplots(figsize=(8, 4))
         self.line, = self.ax.plot([], [], 'b-', linewidth=2)
         self.ax.set_ylim(0, 8)  # Adjust for entropy values
         self.ax.set_xlabel('Frame Number')
         self.ax.set_ylabel('Energy (Entropy)')
         self.ax.grid(True)
-        self.fig.show()
+        self.fig.canvas.manager.window.attributes('-topmost', 1)  # Keep window on top
+        plt.show()  # Show the window
         
     def _init_camera(self):
         """Initialize and test camera connection"""
@@ -128,14 +132,16 @@ class CameraHandler:
             if len(self.energy_values) > self.window_size:
                 self.energy_values = self.energy_values[-self.window_size:]
                 
-            # Update x-axis to show actual frame numbers
-            start_frame = max(0, self.frame_count - self.window_size)
-            xdata = range(start_frame, start_frame + len(self.energy_values))
-            
-            self.line.set_data(xdata, self.energy_values)
-            self.ax.set_xlim(start_frame, start_frame + self.window_size)
-            self.fig.canvas.draw_idle()
-            self.fig.canvas.flush_events()
+            if self.has_display and self.line is not None:
+                start_frame = max(0, self.frame_count - self.window_size)
+                xdata = range(start_frame, start_frame + len(self.energy_values))
+                self.line.set_data(xdata, self.energy_values)
+                self.ax.set_xlim(start_frame, start_frame + self.window_size)
+                self.fig.canvas.draw_idle()
+                self.fig.canvas.flush_events()
+            else:
+                # Print energy values for headless operation
+                print(f"Frame {self.frame_count}: Energy = {energy:.2f}")
             
     def draw_energy_plot(self, frame, energy):
         """Draw energy plot directly on the frame"""
@@ -196,18 +202,21 @@ class CameraHandler:
         if ret:
             # Scale down and process frame
             height, width = frame.shape[:2]
-            small_frame = cv2.resize(frame, (width//2, height//2), 
-                                   interpolation=cv2.INTER_NEAREST)
+            small_frame = cv2.resize(frame, (width//2, height//2))
             gray_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
             
             # Calculate and plot energy
             energy = self.calculate_frame_energy(gray_frame)
             self.update_energy_plot(energy)
             
-            # Show video frame
+            # Show video frame in separate window
             cv2.imshow(self.window_name, gray_frame)
+            cv2.moveWindow(self.window_name, 0, 0)  # Position window
             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
             self.frame_count += 1
+            
+            # Update plot
+            plt.pause(0.001)  # Allow plot to update
             
             return cv2.waitKey(1) & 0xFF != ord('q')
         return False
