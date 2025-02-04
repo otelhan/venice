@@ -173,3 +173,5 @@ scipy==1.15.1
 six==1.17.0
 threadpoolctl==3.5.0
 websockets==14.2
+pafy
+youtube-dl
