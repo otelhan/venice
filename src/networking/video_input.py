@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 from typing import Optional
-from pytube import YouTube
 import time
+import yt_dlp
 
 class VideoInput:
     def __init__(self):
@@ -15,18 +15,19 @@ class VideoInput:
     def connect_to_stream(self, url: str) -> bool:
         """Connect to YouTube stream"""
         try:
-            # Create YouTube object
-            yt = YouTube(url)
-            # Get the stream with highest resolution
-            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+            print(f"Connecting to: {url}")
             
-            if not stream:
-                print("ERROR: No suitable stream found")
-                return False
+            # Configure yt-dlp
+            ydl_opts = {
+                'format': 'best',  # Get best quality
+                'quiet': True,     # Reduce output
+            }
+            
+            # Get stream URL using yt-dlp
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                stream_url = info['url']
                 
-            # Get the stream URL
-            stream_url = stream.url
-            
             # Open video stream
             self.cap = cv2.VideoCapture(stream_url)
             if not self.cap.isOpened():
@@ -34,7 +35,7 @@ class VideoInput:
                 return False
                 
             self.is_running = True
-            print(f"Connected to stream: {yt.title}")
+            print(f"Connected to stream: {info.get('title', 'Unknown')}")
             return True
             
         except Exception as e:

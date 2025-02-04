@@ -176,3 +176,4 @@ websockets==14.2
 pafy
 youtube-dl
 pytube
+yt-dlp
