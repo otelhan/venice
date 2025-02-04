@@ -175,3 +175,4 @@ threadpoolctl==3.5.0
 websockets==14.2
 pafy
 youtube-dl
+pytube

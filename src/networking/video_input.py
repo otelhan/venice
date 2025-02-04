@@ -1,8 +1,8 @@
 import cv2
-import pafy  # For YouTube streaming
-import time
 import numpy as np
 from typing import Optional
+from pytube import YouTube
+import time
 
 class VideoInput:
     def __init__(self):
@@ -15,19 +15,26 @@ class VideoInput:
     def connect_to_stream(self, url: str) -> bool:
         """Connect to YouTube stream"""
         try:
-            # Create pafy object for the YouTube URL
-            video = pafy.new(url)
-            # Get best quality stream
-            best = video.getbest(preftype="mp4")
+            # Create YouTube object
+            yt = YouTube(url)
+            # Get the stream with highest resolution
+            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+            
+            if not stream:
+                print("ERROR: No suitable stream found")
+                return False
+                
+            # Get the stream URL
+            stream_url = stream.url
             
             # Open video stream
-            self.cap = cv2.VideoCapture(best.url)
+            self.cap = cv2.VideoCapture(stream_url)
             if not self.cap.isOpened():
                 print("ERROR: Could not open stream")
                 return False
                 
             self.is_running = True
-            print(f"Connected to stream: {video.title}")
+            print(f"Connected to stream: {yt.title}")
             return True
             
         except Exception as e:
