@@ -25,6 +25,11 @@ def test_video_input():
     print("\nShowing stream for 30 seconds...")
     print("Press 'q' to quit early")
     
+    print("\nControls:")
+    print("'r' - Select new ROI")
+    print("'c' - Show cropped ROI")
+    print("'q' - Quit")
+    
     start_time = time.time()
     frames = 0
     

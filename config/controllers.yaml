@@ -4,8 +4,21 @@ controllers:
     ip: 192.168.1.74
     last_seen: 1738471877.2202702
     mac: 2c:cf:67:8b:e6:c8
-
 streams:
   venice_live:
-    url: "https://www.youtube.com/live/HpZAez2oYsA?si=S5_605kITNMOowOG"
-    description: "Venice Live Stream"
+    description: Venice Live Stream
+    roi:
+      height: 120
+      selected_cells:
+      - - 16
+        - 5
+      - - 17
+        - 5
+      - - 17
+        - 6
+      - - 16
+        - 6
+      width: 120
+      x: 960
+      y: 300
+    url: https://www.youtube.com/live/HpZAez2oYsA?si=S5_605kITNMOowOG
