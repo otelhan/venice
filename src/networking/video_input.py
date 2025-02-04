@@ -3,6 +3,8 @@ import numpy as np
 from typing import Optional
 import time
 import yt_dlp
+import yaml
+import os
 
 class VideoInput:
     def __init__(self):
@@ -11,6 +13,24 @@ class VideoInput:
         self.frame_count = 0
         self.last_frame = None
         self.is_running = False
+        self.config = self._load_config()
+        
+    def _load_config(self):
+        """Load stream configuration"""
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                 'config', 'controllers.yaml')
+        try:
+            with open(config_path, 'r') as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            return None
+            
+    def get_stream_url(self, stream_name: str = 'venice_live') -> Optional[str]:
+        """Get stream URL from config"""
+        if not self.config or 'streams' not in self.config:
+            return None
+        return self.config['streams'].get(stream_name, {}).get('url')
         
     def connect_to_stream(self, url: str) -> bool:
         """Connect to YouTube stream"""

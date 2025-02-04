@@ -11,8 +11,13 @@ def test_video_input():
     # Create video input
     video = VideoInput()
     
-    # Venice live stream URL (replace with actual URL)
-    url = "https://www.youtube.com/watch?v=ph1vpnYIxJk"
+    # Get stream URL from config
+    url = video.get_stream_url('venice_live')
+    if not url:
+        print("ERROR: No stream URL found in config")
+        return
+        
+    print(f"Attempting to connect to: {url}")
     
     # Connect to stream
     assert video.connect_to_stream(url), "Failed to connect to stream"
