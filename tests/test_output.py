@@ -3,6 +3,7 @@ import glob
 import sys
 import os
 import yaml
+import random
 
 # Get absolute path to lib directory
 lib_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'lib'))
@@ -221,6 +222,66 @@ def move_servo(port, servo_id, position, time_ms):
     finally:
         portHandler.closePort()
 
+def sync_write_position(port, servo_positions, time_ms=1000):
+    """Move multiple servos simultaneously using sync write
+    
+    Args:
+        port: Serial port
+        servo_positions: Dictionary of {servo_id: position}
+        time_ms: Movement time in milliseconds (default 1000)
+    """
+    portHandler = PortHandler(port)
+    if not portHandler.openPort():
+        print("Failed to open port")
+        return False
+        
+    if not portHandler.setBaudRate(1000000):
+        print("Failed to set baudrate")
+        portHandler.closePort()
+        return False
+        
+    packetHandler = sts(portHandler)
+    
+    try:
+        # Set moving speed and acceleration
+        STS_MOVING_SPEED = 2400  # From example
+        STS_MOVING_ACC = 50      # From example
+        
+        print(f"Moving {len(servo_positions)} servos simultaneously...")
+        
+        # Add each servo to the sync write
+        for servo_id, position in servo_positions.items():
+            if not (500 <= position <= 2500):
+                print(f"Warning: Position {position} for servo {servo_id} out of range (500-2500)")
+                continue
+                
+            # Add servo position to sync write
+            sts_addparam_result = packetHandler.SyncWritePosEx(servo_id, position, STS_MOVING_SPEED, STS_MOVING_ACC)
+            if not sts_addparam_result:
+                print(f"Failed to add servo {servo_id} to sync write")
+                return False
+        
+        # Execute the sync write
+        sts_comm_result = packetHandler.groupSyncWrite.txPacket()
+        if sts_comm_result != COMM_SUCCESS:
+            print(f"Failed to execute sync write: {packetHandler.getTxRxResult(sts_comm_result)}")
+            return False
+            
+        # Clear sync write parameter storage
+        packetHandler.groupSyncWrite.clearParam()
+        
+        # Wait for movement to complete
+        time.sleep(time_ms / 1000.0)  # Convert to seconds
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error in sync write: {e}")
+        return False
+        
+    finally:
+        portHandler.closePort()
+
 def test_output_node():
     """Test Waveshare servo board control"""
     print("\nOutput Node Test")
@@ -253,9 +314,12 @@ def test_output_node():
             print("\nCommands:")
             print("1. Scan for servos")
             print("2. Move servo")
-            print("3. Center servo")
+            print("3. Center all servos")
             print("4. Change servo ID")
             print("5. Setup new servo")
+            print("6. Run test sequence")
+            print("7. Check servo limits")
+            print("8. Sync move servos")
             print("q. Quit")
             
             cmd = input("\nEnter command: ").strip().lower()
@@ -299,22 +363,15 @@ def test_output_node():
                     print("Invalid input! Please enter numbers only.")
             
             elif cmd == '3':
-                try:
-                    print("\nAvailable servos:", connected_servos)
-                    servo_id = int(input("Enter servo ID (0-255): "))
-                    
-                    if servo_id not in connected_servos:
-                        print(f"Error: Servo {servo_id} not found! Available servos: {connected_servos}")
-                        continue
-                    
+                print("\nCentering all servos...")
+                for servo_id in connected_servos:
+                    print(f"Centering servo {servo_id}...")
                     success = move_servo(node.servo_controller.port, servo_id, 1500, 1000)  # Center position
                     if success:
-                        print("Servo centered successfully")
+                        print(f"Servo {servo_id} centered successfully")
                     else:
-                        print("Failed to center servo")
-                    
-                except ValueError:
-                    print("Invalid input! Please enter a valid servo ID.")
+                        print(f"Failed to center servo {servo_id}")
+                    time.sleep(0.5)  # Delay between servos
             
             elif cmd == '4':
                 try:
@@ -348,6 +405,101 @@ def test_output_node():
             
             elif cmd == '5':
                 setup_new_servo()
+            
+            elif cmd == '6':
+                print("\nRunning test sequence...")
+                
+                # Test each servo in sequence
+                for i in range(2):  # Changed to 2 rounds
+                    print(f"\nRound {i+1}:")
+                    for servo_id in connected_servos:
+                        # Generate random position between 1000 and 2000
+                        position = random.randint(1000, 2000)
+                        # Random time between 500ms and 2000ms
+                        move_time = random.randint(500, 2000)
+                        
+                        print(f"Moving servo {servo_id} to position {position} over {move_time}ms")
+                        success = move_servo(node.servo_controller.port, servo_id, position, move_time)
+                        
+                        if success:
+                            print(f"Servo {servo_id} moved successfully")
+                        else:
+                            print(f"Failed to move servo {servo_id}")
+                            
+                        # Random delay between 0.5 and 2 seconds before next servo
+                        delay = random.uniform(0.5, 2.0)
+                        print(f"Waiting {delay:.1f} seconds...")
+                        time.sleep(delay)
+                    
+                    # After each round, center all servos
+                    print("\nCentering all servos...")
+                    for servo_id in connected_servos:
+                        move_servo(node.servo_controller.port, servo_id, 1500, 1000)
+                        time.sleep(0.5)
+                    
+                    if i < 1:  # Only wait between rounds, not after last round
+                        print("\nWaiting 2 seconds before next round...")
+                        time.sleep(2)
+                
+                # Final centering to ensure all servos are centered
+                print("\nFinal centering of all servos...")
+                for servo_id in connected_servos:
+                    print(f"Centering servo {servo_id}...")
+                    move_servo(node.servo_controller.port, servo_id, 1500, 1000)
+                    time.sleep(0.5)
+                
+                print("\nTest sequence completed!")
+            
+            elif cmd == '7':
+                try:
+                    print("\nAvailable servos:", connected_servos)
+                    servo_id = int(input("Enter servo ID: "))
+                    
+                    if servo_id not in connected_servos:
+                        print(f"Error: Servo {servo_id} not found!")
+                        continue
+                        
+                    read_servo_limits(node.servo_controller.port, servo_id)
+                    
+                except ValueError:
+                    print("Invalid input! Please enter a valid servo ID.")
+            
+            elif cmd == '8':
+                try:
+                    print("\nAvailable servos:", connected_servos)
+                    positions = {}
+                    
+                    while True:
+                        servo_id = input("\nEnter servo ID (or press Enter when done): ").strip()
+                        if not servo_id:
+                            break
+                            
+                        servo_id = int(servo_id)
+                        if servo_id not in connected_servos:
+                            print(f"Error: Servo {servo_id} not found!")
+                            continue
+                            
+                        position = int(input(f"Enter position for servo {servo_id} (500-2500): "))
+                        if not (500 <= position <= 2500):
+                            print("Error: Position must be between 500 and 2500")
+                            continue
+                            
+                        positions[servo_id] = position
+                    
+                    if positions:
+                        time_ms = int(input("\nEnter movement time in ms (100-5000): "))
+                        if not (100 <= time_ms <= 5000):
+                            print("Error: Time must be between 100 and 5000 ms")
+                            continue
+                            
+                        success = sync_write_position(node.servo_controller.port, positions, time_ms)
+                        if success:
+                            print("Servos moved successfully")
+                        else:
+                            print("Failed to move servos")
+                    
+                except ValueError:
+                    print("Invalid input! Please enter numbers only.")
             
             else:
                 print("Invalid command")
@@ -393,7 +545,7 @@ def save_servo_config(servo_ids):
         print(f"Warning: Could not save servo config: {e}")
 
 def setup_new_servo():
-    """Setup process for a new servo"""
+    """Setup process for a new servo with proper EPROM handling"""
     print("\nNew Servo Setup Process")
     print("----------------------")
     print("IMPORTANT: Connect only ONE new servo at a time!")
@@ -426,15 +578,27 @@ def setup_new_servo():
             
         print(f"Success! Found servo with ID 1 (Model: {model_number})")
         
-        # Read current EEPROM values
-        print("\nReading current EEPROM settings:")
+        # Unlock EPROM first
+        print("Unlocking EPROM...")
+        result, error = packetHandler.write1ByteTxRx(1, 0x37, 0)  # 0x37 = 55 (LOCK register)
+        print(f"Unlock result: {result}, error: {error}")
+        if result != COMM_SUCCESS:
+            print(f"Failed to unlock EPROM: {packetHandler.getTxRxResult(result)}")
+            if error != 0:
+                print(f"Error detail: {packetHandler.getRxPacketError(error)}")
+            return
+            
+        time.sleep(0.1)  # Wait for EPROM
+        
+        # Read current EPROM values
+        print("\nReading current EPROM settings:")
         try:
             current_id = packetHandler.read1ByteTxRx(1, 0x05)[1]  # ID
             baud_rate = packetHandler.read1ByteTxRx(1, 0x06)[1]   # Baud Rate
             print(f"Current ID: {current_id}")
             print(f"Baud Rate: {baud_rate}")
         except:
-            print("Could not read all EEPROM values")
+            print("Could not read all EPROM values")
         
         # Get new ID from user
         while True:
@@ -446,12 +610,28 @@ def setup_new_servo():
             except ValueError:
                 print("Please enter a valid number")
         
-        # Write new ID to EEPROM
+        # Write new ID
         print(f"\nChanging servo ID from 1 to {new_id}...")
-        result = packetHandler.write1ByteTxRx(1, 0x05, new_id)
-        time.sleep(0.5)  # Give time for EEPROM write
+        result, error = packetHandler.write1ByteTxRx(1, 0x05, new_id)  # 0x05 is ID register
+        print(f"Write ID result: {result}, error: {error}")
+        if result != COMM_SUCCESS:
+            print(f"Failed to write new ID: {packetHandler.getTxRxResult(result)}")
+            if error != 0:
+                print(f"Error detail: {packetHandler.getRxPacketError(error)}")
+            return
+            
+        time.sleep(0.5)  # Wait for EPROM write
         
-        # Verify the change
+        # Lock EPROM using original ID
+        print("Locking EPROM...")
+        result, error = packetHandler.write1ByteTxRx(1, 0x37, 1)  # Lock with original ID
+        print(f"Lock result: {result}, error: {error}")
+        if result != COMM_SUCCESS:
+            print(f"Warning - Failed to lock EPROM: {packetHandler.getTxRxResult(result)}")
+            if error != 0:
+                print(f"Error detail: {packetHandler.getRxPacketError(error)}")
+        
+        # Verify change
         print("Verifying new ID...")
         model_number, comm_result, error = packetHandler.ping(new_id)
         if comm_result == COMM_SUCCESS:
@@ -461,6 +641,8 @@ def setup_new_servo():
         else:
             print("Error: Could not verify new ID!")
             print("The servo may need to be reset to factory settings.")
+            if error != 0:
+                print(f"Error detail: {packetHandler.getRxPacketError(error)}")
             
     finally:
         portHandler.closePort()
@@ -530,6 +712,64 @@ def change_servo_id(port, old_id, new_id):
             if error != 0:
                 print(f"Error detail: {packetHandler.getRxPacketError(error)}")
             return False
+            
+    finally:
+        portHandler.closePort()
+
+def read_servo_limits(port, servo_id):
+    """Read min/max position limits and current position"""
+    portHandler = PortHandler(port)
+    if not portHandler.openPort() or not portHandler.setBaudRate(1000000):
+        print("Failed to open port")
+        return None
+        
+    packetHandler = sts(portHandler)
+    
+    try:
+        # First check if servo responds
+        print(f"Reading limits for servo {servo_id}...")
+        model_number, comm_result, error = packetHandler.ping(servo_id)
+        if comm_result != COMM_SUCCESS:
+            print(f"Error: Cannot find servo {servo_id}")
+            return None
+            
+        try:
+            # Read current position
+            curr_pos_result = packetHandler.read4ByteTxRx(servo_id, STS_PRESENT_POSITION_L)
+            if curr_pos_result[0] == COMM_SUCCESS:
+                curr_pos = curr_pos_result[1]
+                curr_deg = (curr_pos / 4095.0) * 360.0
+                print(f"\nCurrent position: {curr_pos} ({curr_deg:.1f}°)")
+            else:
+                print("Failed to read current position")
+            
+            # Read min position (read individual bytes)
+            print("\nReading min position...")
+            min_pos_l = packetHandler.read1ByteTxRx(servo_id, 0x09)[1]  # Low byte
+            min_pos_h = packetHandler.read1ByteTxRx(servo_id, 0x0A)[1]  # High byte
+            min_pos = (min_pos_h << 8) | min_pos_l
+            print(f"Min position bytes: low=0x{min_pos_l:02X}, high=0x{min_pos_h:02X}")
+            print(f"Min position: {min_pos} ({(min_pos / 4095.0 * 360.0):.1f}°)")
+            
+            # Read max position (read individual bytes)
+            print("\nReading max position...")
+            max_pos_l = packetHandler.read1ByteTxRx(servo_id, 0x0B)[1]  # Low byte
+            max_pos_h = packetHandler.read1ByteTxRx(servo_id, 0x0C)[1]  # High byte
+            max_pos = (max_pos_h << 8) | max_pos_l
+            print(f"Max position bytes: low=0x{max_pos_l:02X}, high=0x{max_pos_h:02X}")
+            print(f"Max position: {max_pos} ({(max_pos / 4095.0 * 360.0):.1f}°)")
+            
+            # Read mode to check if servo is in wheel mode
+            mode_result = packetHandler.read1ByteTxRx(servo_id, 0x0F)  # Mode register
+            if mode_result[0] == COMM_SUCCESS:
+                mode = mode_result[1]
+                print(f"\nServo mode: {mode} ({'wheel' if mode == 1 else 'position'} mode)")
+            
+            return (min_pos, max_pos)
+                
+        except Exception as e:
+            print(f"Error reading positions: {e}")
+            return None
             
     finally:
         portHandler.closePort()
