@@ -1,33 +1,19 @@
-# Project specific
-input_videos/
-input_videos/*
-*.mp4
-*.avi
-*.mov
-
-# Python
-__pycache__/
-*.py[cod]
-*.class
-.Python
-venv/
-.pytest_cache/
+# Python dependencies
+lib/
 *.pyc
+__pycache__/
+.pytest_cache/
 
-# IDE
+# IDE files
 .vscode/
 .idea/
-*.swp
 
-# OS
-.DS_Store
+# Environment
+venv/
+env/
 .env
-Thumbs.db
 
-# Build
-dist/
+# Arduino build files
+*.hex
+*.elf
 build/
-*.egg-info/
-
-# Logs
-*.log
