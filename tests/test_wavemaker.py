@@ -1,30 +1,67 @@
 import serial
 import time
+import sys
+import glob
+
+def get_serial_ports():
+    """Get list of available serial ports for current platform"""
+    if sys.platform.startswith('darwin'):  # macOS
+        ports = glob.glob('/dev/tty.*')
+        # Common Mac port patterns
+        return [p for p in ports if any(pattern in p for pattern in 
+               ['usbmodem', 'usbserial', 'SLAB_USBtoUART'])]
+    
+    elif sys.platform.startswith('linux'):  # Linux/Raspberry Pi
+        return [
+            '/dev/ttyACM0',
+            '/dev/ttyACM1',
+            '/dev/ttyUSB0',
+            '/dev/ttyUSB1'
+        ]
+    else:
+        return []  # Add Windows support if needed
 
 def test_wavemaker():
     """Test wavemaker control"""
     print("\nWavemaker Control Test")
     print("---------------------")
     
-    # Try different possible ports on Raspberry Pi
-    ports = [
-        '/dev/ttyACM0',
-        '/dev/ttyACM1',
-        '/dev/ttyUSB0',
-        '/dev/ttyUSB1'
-    ]
+    # Get available ports for current platform
+    ports = get_serial_ports()
     
     # List available ports
-    print("\nAvailable ports:")
+    print("\nScanning available ports...")
+    available_ports = []
     for port in ports:
         try:
-            serial.Serial(port)
+            s = serial.Serial(port, timeout=0.1)
+            s.close()
+            available_ports.append(port)
             print(f"- {port} (available)")
         except:
             print(f"- {port} (not available)")
     
+    if not available_ports:
+        print("\nNo available ports found!")
+        return
+    
     # Connect to port
-    port = input("\nEnter port to use (e.g. /dev/ttyACM0): ").strip()
+    if len(available_ports) == 1:
+        port = available_ports[0]
+        print(f"\nUsing only available port: {port}")
+    else:
+        print("\nMultiple ports available. Please select one:")
+        for i, port in enumerate(available_ports):
+            print(f"{i+1}. {port}")
+        while True:
+            try:
+                choice = int(input("\nEnter port number: ").strip())
+                if 1 <= choice <= len(available_ports):
+                    port = available_ports[choice-1]
+                    break
+                print("Invalid choice")
+            except ValueError:
+                print("Please enter a number")
     
     try:
         print(f"\nConnecting to {port}...")
