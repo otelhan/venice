@@ -28,15 +28,13 @@ def test_wavemaker():
     
     try:
         print(f"\nConnecting to {port}...")
-        # Set a shorter timeout to prevent hanging
         serial_port = serial.Serial(port, 9600, timeout=2)
         print("Connected!")
         
-        # Wait for device ready and clear any startup messages
+        # Clear any startup messages
         time.sleep(2)
-        if serial_port.in_waiting:
-            startup = serial_port.readline().decode().strip()
-            print(f"Startup message: {startup}")
+        while serial_port.in_waiting:
+            print(f"Startup: {serial_port.readline().decode().strip()}")
         
         while True:
             print("\nCommands:")
@@ -51,45 +49,40 @@ def test_wavemaker():
             if cmd == 'q':
                 break
             elif cmd == '1':
-                print("Sending: on")
+                print("\nSending: on")
                 serial_port.write(b"on\n")
                 serial_port.flush()
-                try:
-                    response = serial_port.readline()
-                    if response:
-                        print(f"Response: {response.decode().strip()}")
-                    else:
-                        print("No response received (timeout)")
-                except Exception as e:
-                    print(f"Error reading response: {e}")
+                time.sleep(0.5)  # Give device time to respond
+                
+                # Read and clear any pending data
+                while serial_port.in_waiting:
+                    response = serial_port.readline().decode().strip()
+                    print(f"Response: {response}")
+                print("Ready for next command...")
+                
             elif cmd == '2':
-                print("Sending: off")
+                print("\nSending: off")
                 serial_port.write(b"off\n")
                 serial_port.flush()
-                try:
-                    response = serial_port.readline()
-                    if response:
-                        print(f"Response: {response.decode().strip()}")
-                    else:
-                        print("No response received (timeout)")
-                except Exception as e:
-                    print(f"Error reading response: {e}")
+                time.sleep(0.5)
+                
+                while serial_port.in_waiting:
+                    response = serial_port.readline().decode().strip()
+                    print(f"Response: {response}")
+                    
             elif cmd == '3':
                 speed = input("Enter speed (20-127): ").strip()
                 try:
                     speed_val = int(speed)
                     if 20 <= speed_val <= 127:
-                        print(f"Sending: {speed}")
+                        print(f"\nSending: {speed}")
                         serial_port.write(f"{speed}\n".encode())
                         serial_port.flush()
-                        try:
-                            response = serial_port.readline()
-                            if response:
-                                print(f"Response: {response.decode().strip()}")
-                            else:
-                                print("No response received (timeout)")
-                        except Exception as e:
-                            print(f"Error reading response: {e}")
+                        time.sleep(0.5)
+                        
+                        while serial_port.in_waiting:
+                            response = serial_port.readline().decode().strip()
+                            print(f"Response: {response}")
                     else:
                         print("Speed must be between 20 and 127")
                 except ValueError:
