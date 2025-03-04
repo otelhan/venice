@@ -8,17 +8,32 @@ streams:
   venice_live:
     description: Venice Live Stream
     roi:
-      height: 120
+      cell_size: 40
+      coordinates:
+        height: 120
+        width: 80
+        x: 160
+        y: 560
       selected_cells:
-      - - 16
-        - 5
-      - - 17
-        - 5
-      - - 17
-        - 6
-      - - 16
-        - 6
-      width: 120
-      x: 960
-      y: 300
+      - - 5
+        - 14
+      - - 5
+        - 15
+      - - 4
+        - 16
+      - - 4
+        - 15
+    training:
+      end_time: '2025-02-09 21:08:07'
+      last_update: '2025-02-09 21:08:07'
+      metrics:
+        accuracy: 1.0
+        f1: 0.0
+        precision: 0.0
+        recall: 0.0
+        test_size: 2
+        train_size: 5
+      start_time: '2025-02-09 21:07:04'
+      total_frames: 2100
+      updates_performed: 7
     url: https://www.youtube.com/live/HpZAez2oYsA?si=S5_605kITNMOowOG

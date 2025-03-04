@@ -1,67 +1,36 @@
 import serial
 import time
-import glob
-
-def send_command(serial_port, cmd, wait_time=1):
-    """Send command and wait for response"""
-    print(f"\nSending: {cmd}")
-    
-    # Clear any pending data
-    serial_port.reset_input_buffer()
-    serial_port.reset_output_buffer()
-    
-    # Send command
-    serial_port.write(f"{cmd}\n".encode())
-    serial_port.flush()
-    
-    # Wait for response
-    response = serial_port.readline().decode().strip()
-    print(f"Response: {response}")
-    time.sleep(wait_time)
-    return response
 
 def test_wavemaker():
     """Test wavemaker control"""
     print("\nWavemaker Control Test")
     print("---------------------")
     
-    # Try different possible ports
+    # Try different possible ports on Raspberry Pi
     ports = [
-        '/dev/ttyACM0',        # Linux/Raspberry Pi
+        '/dev/ttyACM0',
         '/dev/ttyACM1',
         '/dev/ttyUSB0',
-        '/dev/ttyUSB1',
-        'COM3',                # Windows
-        'COM4',
-        '/dev/tty.usbmodem*'   # Mac
+        '/dev/ttyUSB1'
     ]
     
     # List available ports
-    available_ports = []
-    for pattern in ports:
-        available_ports.extend(glob.glob(pattern))
-    
     print("\nAvailable ports:")
-    for port in available_ports:
-        print(f"- {port}")
-    
-    # Connect to first available port
-    serial_port = None
-    for port in available_ports:
+    for port in ports:
         try:
-            print(f"\nTrying to connect to {port}...")
-            serial_port = serial.Serial(port, 9600, timeout=1)
-            print(f"Connected to {port}")
-            break
-        except serial.SerialException as e:
-            print(f"Failed to connect to {port}: {e}")
-            continue
+            serial.Serial(port)
+            print(f"- {port} (available)")
+        except:
+            print(f"- {port} (not available)")
     
-    if not serial_port:
-        print("ERROR: Could not connect to wavemaker!")
-        return
+    # Connect to port
+    port = input("\nEnter port to use (e.g. /dev/ttyACM0): ").strip()
     
     try:
+        print(f"\nConnecting to {port}...")
+        serial_port = serial.Serial(port, 9600, timeout=1)
+        print("Connected!")
+        
         # Wait for device ready
         time.sleep(2)
         serial_port.reset_input_buffer()
@@ -79,15 +48,18 @@ def test_wavemaker():
             if cmd == 'q':
                 break
             elif cmd == '1':
-                send_command(serial_port, "on")
+                serial_port.write(b"on\n")
+                print(f"Response: {serial_port.readline().decode().strip()}")
             elif cmd == '2':
-                send_command(serial_port, "off")
+                serial_port.write(b"off\n")
+                print(f"Response: {serial_port.readline().decode().strip()}")
             elif cmd == '3':
                 speed = input("Enter speed (20-127): ").strip()
                 try:
                     speed_val = int(speed)
                     if 20 <= speed_val <= 127:
-                        send_command(serial_port, str(speed_val))
+                        serial_port.write(f"{speed}\n".encode())
+                        print(f"Response: {serial_port.readline().decode().strip()}")
                     else:
                         print("Speed must be between 20 and 127")
                 except ValueError:
@@ -95,26 +67,27 @@ def test_wavemaker():
             elif cmd == '4':
                 print("\nRunning test sequence...")
                 # Turn on
-                send_command(serial_port, "on")
+                serial_port.write(b"on\n")
+                print(f"Response: {serial_port.readline().decode().strip()}")
                 time.sleep(1)
                 
                 # Test different speeds
                 test_speeds = [20, 50, 80, 127]
                 for speed in test_speeds:
                     print(f"\nTesting speed: {speed}")
-                    send_command(serial_port, str(speed))
+                    serial_port.write(f"{speed}\n".encode())
+                    print(f"Response: {serial_port.readline().decode().strip()}")
                     time.sleep(2)
                 
                 # Turn off
-                send_command(serial_port, "off")
-            else:
-                print("Invalid command")
+                serial_port.write(b"off\n")
+                print(f"Response: {serial_port.readline().decode().strip()}")
     
     except Exception as e:
-        print(f"Error during test: {e}")
+        print(f"Error: {e}")
     
     finally:
-        if serial_port:
+        if 'serial_port' in locals():
             serial_port.close()
             print("\nSerial port closed")
 
