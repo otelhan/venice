@@ -28,12 +28,15 @@ def test_wavemaker():
     
     try:
         print(f"\nConnecting to {port}...")
-        serial_port = serial.Serial(port, 9600, timeout=1)
+        # Set a shorter timeout to prevent hanging
+        serial_port = serial.Serial(port, 9600, timeout=2)
         print("Connected!")
         
-        # Wait for device ready
+        # Wait for device ready and clear any startup messages
         time.sleep(2)
-        serial_port.reset_input_buffer()
+        if serial_port.in_waiting:
+            startup = serial_port.readline().decode().strip()
+            print(f"Startup message: {startup}")
         
         while True:
             print("\nCommands:")
@@ -48,18 +51,45 @@ def test_wavemaker():
             if cmd == 'q':
                 break
             elif cmd == '1':
+                print("Sending: on")
                 serial_port.write(b"on\n")
-                print(f"Response: {serial_port.readline().decode().strip()}")
+                serial_port.flush()
+                try:
+                    response = serial_port.readline()
+                    if response:
+                        print(f"Response: {response.decode().strip()}")
+                    else:
+                        print("No response received (timeout)")
+                except Exception as e:
+                    print(f"Error reading response: {e}")
             elif cmd == '2':
+                print("Sending: off")
                 serial_port.write(b"off\n")
-                print(f"Response: {serial_port.readline().decode().strip()}")
+                serial_port.flush()
+                try:
+                    response = serial_port.readline()
+                    if response:
+                        print(f"Response: {response.decode().strip()}")
+                    else:
+                        print("No response received (timeout)")
+                except Exception as e:
+                    print(f"Error reading response: {e}")
             elif cmd == '3':
                 speed = input("Enter speed (20-127): ").strip()
                 try:
                     speed_val = int(speed)
                     if 20 <= speed_val <= 127:
+                        print(f"Sending: {speed}")
                         serial_port.write(f"{speed}\n".encode())
-                        print(f"Response: {serial_port.readline().decode().strip()}")
+                        serial_port.flush()
+                        try:
+                            response = serial_port.readline()
+                            if response:
+                                print(f"Response: {response.decode().strip()}")
+                            else:
+                                print("No response received (timeout)")
+                        except Exception as e:
+                            print(f"Error reading response: {e}")
                     else:
                         print("Speed must be between 20 and 127")
                 except ValueError:
@@ -92,4 +122,7 @@ def test_wavemaker():
             print("\nSerial port closed")
 
 if __name__ == "__main__":
-    test_wavemaker() 
+    try:
+        test_wavemaker()
+    except KeyboardInterrupt:
+        print("\nProgram terminated by user") 
