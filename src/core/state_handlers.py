@@ -27,8 +27,8 @@ class StateHandler:
         
         # Initialize camera
         self.camera = CameraHandler()  # Initialize camera handler
-        if not self.camera.isOpened():
-            print("ERROR: Could not open camera")
+        if not self.camera.is_running:
+            print("WARNING: Camera not initialized")
         
         # Setup energy plot
         plt.ion()
@@ -180,9 +180,9 @@ class StateHandler:
             self.camera.stop_camera()
 
     def __del__(self):
-        """Cleanup"""
-        if self.camera is not None:
-            self.camera.release()
+        """Cleanup when object is destroyed"""
+        if hasattr(self, 'camera'):
+            self.camera.stop_camera()
         cv2.destroyAllWindows()
         plt.close('all')
 

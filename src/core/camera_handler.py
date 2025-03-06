@@ -3,7 +3,7 @@ import glob
 import os
 import numpy as np
 import matplotlib
-matplotlib.use('TkAgg')  # Use TkAgg backend for local display
+matplotlib.use('Agg')  # Use Agg backend for headless operation
 import matplotlib.pyplot as plt
 from threading import Lock
 import time
@@ -42,13 +42,6 @@ class CameraHandler:
             cap = cv2.VideoCapture(self.camera_index)
             if not cap.isOpened():
                 print("ERROR: Could not open camera")
-                return False
-                
-            # Try to read a frame
-            ret, frame = cap.read()
-            if not ret:
-                print("ERROR: Could not read from camera")
-                cap.release()
                 return False
                 
             # Camera works, release it (we'll reopen when needed)
