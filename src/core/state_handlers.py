@@ -142,11 +142,15 @@ class StateHandler:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
             
+            # Start camera if display enabled
+            if self.camera.show_display:
+                self.camera.start_camera()
+            
             # Turn on wavemaker first
             print("\nTurning wavemaker ON...")
             self.serial.write(b"on\n")
             response = self.serial.readline().decode().strip()
-            print(f"Response: {response}")
+            print(f"Wavemaker ON response: {response}")
             
             # Wait a moment after turning on
             time.sleep(1)
@@ -160,11 +164,14 @@ class StateHandler:
                 response = self.serial.readline().decode().strip()
                 print(f"Response: {response}")
                 
-                # Update camera feed and energy plot if display is enabled
-                if self.camera.show_display:
-                    frame = self.camera.get_frame()
-                    if frame is not None:
-                        energy = self.camera.calculate_frame_energy(frame)
+                # Always capture and process frame for energy calculation
+                frame = self.camera.get_frame()
+                if frame is not None:
+                    energy = self.camera.calculate_frame_energy(frame)
+                    print(f"Frame {i} energy: {energy:.2f}")
+                    
+                    # Only show visual output if display is enabled
+                    if self.camera.show_display:
                         self.camera.update_energy_plot(energy)
                         if self.camera.show_camera:
                             self.camera.show_frame()
@@ -176,7 +183,7 @@ class StateHandler:
             print("\nTurning wavemaker OFF...")
             self.serial.write(b"off\n")
             response = self.serial.readline().decode().strip()
-            print(f"Response: {response}")
+            print(f"Wavemaker OFF response: {response}")
             
             return True
             
@@ -192,9 +199,8 @@ class StateHandler:
             
             return True
         finally:
-            # Cleanup
-            if self.camera.show_display:
-                self.camera.stop_camera()
+            # Always stop camera
+            self.camera.stop_camera()
 
     def __del__(self):
         """Cleanup when object is destroyed"""
