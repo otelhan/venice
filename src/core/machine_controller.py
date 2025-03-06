@@ -5,9 +5,10 @@ import serial
 import serial.tools.list_ports
 
 class MachineController:
-    def __init__(self):
+    def __init__(self, config=None):
         self.current_state = None
-        self.state_handler = StateHandler()
+        self.display_config = config.get('display', {}) if config else {}
+        self.state_handler = StateHandler(self.display_config)
         self.movement_buffer = []  # Store received movements
         self.serial = None
         if not self._init_serial():

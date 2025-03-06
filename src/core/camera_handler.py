@@ -3,7 +3,7 @@ import glob
 import os
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # Use Agg backend for headless operation
+matplotlib.use('TkAgg')  # Use TkAgg for display
 import matplotlib.pyplot as plt
 from threading import Lock
 import time
@@ -24,7 +24,7 @@ class CameraHandler:
         self.prev_frame = None
         self.plot_lock = Lock()  # Add thread safety
         
-        # Setup energy plot for local display
+        # Setup energy plot for display
         plt.ion()  # Interactive mode
         self.fig, self.ax = plt.subplots(figsize=(8, 4))
         self.line, = self.ax.plot([], [], 'b-', linewidth=2)
@@ -32,8 +32,7 @@ class CameraHandler:
         self.ax.set_xlabel('Frame Number')
         self.ax.set_ylabel('Energy (Entropy)')
         self.ax.grid(True)
-        self.fig.canvas.manager.window.attributes('-topmost', 1)  # Keep window on top
-        plt.show()  # Show the window
+        plt.show(block=False)  # Show but don't block
         
     def _init_camera(self):
         """Initialize and test camera connection"""
@@ -125,16 +124,20 @@ class CameraHandler:
             if len(self.energy_values) > self.window_size:
                 self.energy_values = self.energy_values[-self.window_size:]
                 
-            if self.has_display and self.line is not None:
-                start_frame = max(0, self.frame_count - self.window_size)
-                xdata = range(start_frame, start_frame + len(self.energy_values))
-                self.line.set_data(xdata, self.energy_values)
-                self.ax.set_xlim(start_frame, start_frame + self.window_size)
+            # Update live plot
+            start_frame = max(0, self.frame_count - self.window_size)
+            xdata = range(start_frame, start_frame + len(self.energy_values))
+            self.line.set_data(xdata, self.energy_values)
+            self.ax.set_xlim(start_frame, start_frame + self.window_size)
+            
+            try:
                 self.fig.canvas.draw_idle()
                 self.fig.canvas.flush_events()
-            else:
-                # Print energy values for headless operation
-                print(f"Frame {self.frame_count}: Energy = {energy:.2f}")
+            except Exception as e:
+                print(f"Plot update error: {e}")
+            
+            # Print energy value
+            print(f"Energy: {energy:.2f}")
             
     def draw_energy_plot(self, frame, energy):
         """Draw energy plot directly on the frame"""

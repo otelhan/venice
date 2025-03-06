@@ -15,7 +15,7 @@ from src.core.states import MachineState
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
 class StateHandler:
-    def __init__(self):
+    def __init__(self, display_config=None):
         self.serial_port = None
         self.port_name = None
         self.baud_rate = 9600
@@ -26,7 +26,7 @@ class StateHandler:
         self.serial = None
         
         # Initialize camera
-        self.camera = CameraHandler()  # Initialize camera handler
+        self.camera = CameraHandler(display_config)
         if not self.camera.is_running:
             print("WARNING: Camera not initialized")
         
