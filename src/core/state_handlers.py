@@ -134,7 +134,7 @@ class StateHandler:
             print(f"Error scaling movement: {e}")
             return 127  # Default to max on error
 
-    def drive_wavemaker(self):
+    async def drive_wavemaker(self):
         """Drive the wavemaker with movement data"""
         if not self.serial:
             print("ERROR: No serial connection to KB2040")
