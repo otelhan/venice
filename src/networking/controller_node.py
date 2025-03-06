@@ -9,31 +9,34 @@ from src.core.states import MachineState
 from src.core.config_handler import ConfigHandler
 
 class ControllerNode:
-    def __init__(self, name=None, port=8765):
+    def __init__(self, name, port=8765):
+        self.name = name
         self.port = port
-        self.config_handler = ConfigHandler()
-        if not self.config_handler.load_config():
-            print("Warning: Running with unconfigured controller")
         
-        # Initialize with specific name
-        self.controller_name = name or self.config_handler.get_controller_name()
-        if not self.controller_name:
-            raise ValueError("Controller name must be provided")
+        # Load config
+        self.config = self._load_config()
+        if not self.config:
+            raise Exception("Failed to load config")
             
-        # Get config for this controller
-        self.controller_config = self.config_handler.config['controllers'].get(self.controller_name)
+        # Get controller specific config
+        self.controller_config = self.config['controllers'].get(name)
         if not self.controller_config:
-            raise ValueError(f"No configuration found for controller {self.controller_name}")
+            raise Exception(f"No config found for controller {name}")
             
+        print(f"\nInitializing controller {name} with config:")
+        print(f"Display settings: {self.controller_config.get('display', {})}")
+        
+        # Initialize controller with config
+        self.controller = MachineController(config=self.controller_config)
+        
         self.mac = self.controller_config['mac']
         self.ip = self.controller_config['ip']
         
         print(f"Controller initialized:")
-        print(f"- Name: {self.controller_name}")
+        print(f"- Name: {self.name}")
         print(f"- MAC: {self.mac}")
         print(f"- IP: {self.ip}")
         
-        self.controller = MachineController()
         self.server = None
         
         # Initialize to IDLE state
@@ -105,14 +108,14 @@ class ControllerNode:
                             print(f"Executing command: {command}")
                             await self.execute_command(command)
                             response = {
-                                "controller_name": self.controller_name,
+                                "controller_name": self.name,
                                 "mac": self.mac,
                                 "status": "success",
                                 "message": f"Executed command: {command}"
                             }
                         else:
                             response = {
-                                "controller_name": self.controller_name,
+                                "controller_name": self.name,
                                 "mac": self.mac,
                                 "status": "error",
                                 "message": "MAC address mismatch"
@@ -133,7 +136,7 @@ class ControllerNode:
                             self.controller.handle_current_state()
                             
                             response = {
-                                "controller_name": self.controller_name,
+                                "controller_name": self.name,
                                 "mac": self.mac,
                                 "status": "success",
                                 "message": f"Received {len(movements)} movements and started wavemaker"
@@ -146,7 +149,7 @@ class ControllerNode:
                     elif message_type == 'status_request':
                         # Handle status request
                         response = {
-                            "controller_name": self.controller_name,
+                            "controller_name": self.name,
                             "mac": self.mac,
                             "status": "success",
                             "state": self.controller.current_state.name if self.controller.current_state else "IDLE",
@@ -155,7 +158,7 @@ class ControllerNode:
                         }
                     else:
                         response = {
-                            "controller_name": self.controller_name,
+                            "controller_name": self.name,
                             "mac": self.mac,
                             "status": "error",
                             "message": f"Unknown message type: {message_type}"
@@ -202,7 +205,7 @@ class ControllerNode:
 
     async def send_data_to(self, target_name, data):
         """Send data to another controller"""
-        target = self.config_handler.config['controllers'].get(target_name)
+        target = self.config['controllers'].get(target_name)
         if not target:
             print(f"Unknown target controller: {target_name}")
             return False
@@ -212,7 +215,7 @@ class ControllerNode:
             async with websockets.connect(uri) as websocket:
                 message = {
                     "type": "data",
-                    "source": self.controller_name,
+                    "source": self.name,
                     "data": data,
                     "timestamp": time.time()
                 }

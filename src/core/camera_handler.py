@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')  # Use TkAgg for display
 import matplotlib.pyplot as plt
-from threading import Lock, Thread, Event
+from threading import Lock
 import time
 
 class CameraHandler:
@@ -16,7 +16,10 @@ class CameraHandler:
         self.show_camera = self.display_config.get('show_camera', False)
         self.show_plots = self.display_config.get('show_plots', False)
         
-        print(f"Display config: {self.display_config}")  # Debug print
+        print(f"Camera handler display config:")
+        print(f"- enabled: {self.show_display}")
+        print(f"- show_camera: {self.show_camera}")
+        print(f"- show_plots: {self.show_plots}")
         
         # Initialize camera attributes
         self.camera = None
@@ -232,79 +235,4 @@ class CameraHandler:
         
     def __del__(self):
         """Cleanup when object is destroyed"""
-        self.stop_camera()
-
-    def start_camera_thread(self):
-        """Start camera capture thread"""
-        print("Starting camera threads...")
-        self.running = True
-        
-        # Start camera capture thread
-        self.camera_thread = Thread(target=self._camera_loop)
-        self.camera_thread.daemon = True
-        self.camera_thread.start()
-        
-        # Start display thread if needed
-        if self.show_display:
-            self.display_thread = Thread(target=self._display_loop)
-            self.display_thread.daemon = True
-            self.display_thread.start()
-        
-        print("Camera threads started")
-
-    def _camera_loop(self):
-        """Camera capture thread loop"""
-        if not self.start_camera():
-            return
-            
-        while self.running:
-            try:
-                ret, frame = self.camera.read()
-                if ret:
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    with self.plot_lock:
-                        self.current_frame = frame
-                        self.current_energy = self.calculate_frame_energy(gray)
-                    self.frame_ready.set()
-                time.sleep(0.01)
-            except Exception as e:
-                print(f"Camera error: {e}")
-                break
-
-    def _display_loop(self):
-        """Display update thread loop"""
-        while self.running:
-            if self.frame_ready.wait(timeout=1.0):
-                with self.plot_lock:
-                    frame = self.current_frame
-                    energy = self.current_energy
-                
-                if self.show_camera:
-                    cv2.imshow('Camera Test', frame)
-                    cv2.waitKey(1)
-                    
-                if self.show_plots:
-                    self.update_energy_plot(energy)
-                    
-                self.frame_ready.clear()
-
-    def stop_camera(self):
-        """Stop camera and display threads"""
-        print("Stopping camera threads...")
-        self.running = False
-        
-        if self.camera_thread:
-            self.camera_thread.join(timeout=2)
-        if self.display_thread:
-            self.display_thread.join(timeout=2)
-            
-        if hasattr(self, 'camera') and self.camera:
-            self.camera.release()
-            self.is_running = False
-            
-        if self.show_camera:
-            cv2.destroyAllWindows()
-        if self.show_plots:
-            plt.close()
-            
-        print("Camera threads stopped") 
+        self.stop_camera() 
