@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')  # Use TkAgg for display
 import matplotlib.pyplot as plt
-from threading import Lock
+from threading import Lock, Thread, Event
 import time
 
 class CameraHandler:
@@ -25,6 +25,14 @@ class CameraHandler:
         self.energy_values = []
         self.prev_frame = None
         self.plot_lock = Lock()
+        
+        # Thread control
+        self.camera_thread = None
+        self.display_thread = None
+        self.running = False
+        self.frame_ready = Event()
+        self.current_frame = None
+        self.current_energy = 0
         
         # Create windows and setup plotting if display is enabled
         if self.show_camera:
@@ -107,31 +115,15 @@ class CameraHandler:
                 plt.close()
             
     def get_frame(self):
-        """Get a frame from the camera"""
-        if not self.is_running:
-            if not self.start_camera():
-                return None
-                
-        try:
-            ret, frame = self.camera.read()
-            if not ret:
-                print("ERROR: Could not read frame")
-                return None
-                
-            # Convert to grayscale
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
-            # Show camera feed if enabled
-            if self.show_camera:
-                cv2.imshow('Camera Test', frame)
-                cv2.waitKey(1)
-            
-            return gray
-            
-        except Exception as e:
-            print(f"Error reading frame: {e}")
-            return None
-            
+        """Get latest frame and energy"""
+        if self.frame_ready.wait(timeout=1.0):
+            with self.plot_lock:
+                frame = self.current_frame
+                energy = self.current_energy
+            self.frame_ready.clear()
+            return frame, energy
+        return None, 0
+
     def init_analyzer(self, frame_shape):
         """Initialize the optimized analyzer with frame shape"""
         h, w = frame_shape
@@ -244,4 +236,79 @@ class CameraHandler:
         
     def __del__(self):
         """Cleanup when object is destroyed"""
-        self.stop_camera() 
+        self.stop_camera()
+
+    def start_camera_thread(self):
+        """Start camera capture thread"""
+        print("Starting camera threads...")
+        self.running = True
+        
+        # Start camera capture thread
+        self.camera_thread = Thread(target=self._camera_loop)
+        self.camera_thread.daemon = True
+        self.camera_thread.start()
+        
+        # Start display thread if needed
+        if self.show_display:
+            self.display_thread = Thread(target=self._display_loop)
+            self.display_thread.daemon = True
+            self.display_thread.start()
+        
+        print("Camera threads started")
+
+    def _camera_loop(self):
+        """Camera capture thread loop"""
+        if not self.start_camera():
+            return
+            
+        while self.running:
+            try:
+                ret, frame = self.camera.read()
+                if ret:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    with self.plot_lock:
+                        self.current_frame = frame
+                        self.current_energy = self.calculate_frame_energy(gray)
+                    self.frame_ready.set()
+                time.sleep(0.01)
+            except Exception as e:
+                print(f"Camera error: {e}")
+                break
+
+    def _display_loop(self):
+        """Display update thread loop"""
+        while self.running:
+            if self.frame_ready.wait(timeout=1.0):
+                with self.plot_lock:
+                    frame = self.current_frame
+                    energy = self.current_energy
+                
+                if self.show_camera:
+                    cv2.imshow('Camera Test', frame)
+                    cv2.waitKey(1)
+                    
+                if self.show_plots:
+                    self.update_energy_plot(energy)
+                    
+                self.frame_ready.clear()
+
+    def stop_camera(self):
+        """Stop camera and display threads"""
+        print("Stopping camera threads...")
+        self.running = False
+        
+        if self.camera_thread:
+            self.camera_thread.join(timeout=2)
+        if self.display_thread:
+            self.display_thread.join(timeout=2)
+            
+        if hasattr(self, 'camera') and self.camera:
+            self.camera.release()
+            self.is_running = False
+            
+        if self.show_camera:
+            cv2.destroyAllWindows()
+        if self.show_plots:
+            plt.close()
+            
+        print("Camera threads stopped") 
