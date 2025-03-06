@@ -25,6 +25,7 @@ class CameraHandler:
         self.energy_values = []
         self.prev_frame = None
         self.plot_lock = Lock()
+        self.window_name = "Live Camera Feed"  # Add window name
         
         # Initialize matplotlib backend based on config
         if self.show_plots:

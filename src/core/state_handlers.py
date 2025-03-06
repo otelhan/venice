@@ -160,12 +160,14 @@ class StateHandler:
                 response = self.serial.readline().decode().strip()
                 print(f"Response: {response}")
                 
-                # Update camera feed and energy plot
-                frame = self.camera.get_frame()
-                if frame is not None:
-                    energy = self.camera.calculate_frame_energy(frame)
-                    self.camera.update_energy_plot(energy)
-                    self.camera.show_frame()
+                # Update camera feed and energy plot if display is enabled
+                if self.camera.show_display:
+                    frame = self.camera.get_frame()
+                    if frame is not None:
+                        energy = self.camera.calculate_frame_energy(frame)
+                        self.camera.update_energy_plot(energy)
+                        if self.camera.show_camera:
+                            self.camera.show_frame()
                 
                 # Wait 1 second between movements
                 time.sleep(1)
@@ -191,7 +193,8 @@ class StateHandler:
             return True
         finally:
             # Cleanup
-            self.camera.stop_camera()
+            if self.camera.show_display:
+                self.camera.stop_camera()
 
     def __del__(self):
         """Cleanup when object is destroyed"""
