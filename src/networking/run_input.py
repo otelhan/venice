@@ -84,5 +84,21 @@ async def run_input_node(input_node):
         except Exception as e:
             print(f"\nError: {e}")
 
+async def main():
+    input_node = InputNode()
+    await input_node.discover_controllers()
+    
+    # Collect movement data
+    await input_node.collect_movements()
+    
+    # Send to specific controller by name or MAC
+    controller_name = "res01"  # or use MAC address
+    await input_node.send_movement_data(controller_name)
+    
+    # Or send to multiple controllers
+    for controller in ["res01", "res02", "res03", "res04"]:
+        print(f"\nSending to {controller}...")
+        await input_node.send_movement_data(controller)
+
 if __name__ == "__main__":
-    asyncio.run(run_input_node(InputNode())) 
+    asyncio.run(main()) 

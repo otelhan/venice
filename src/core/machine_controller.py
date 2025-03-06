@@ -1,5 +1,6 @@
-from .states import MachineState
-from .state_handlers import StateHandler
+from src.core.states import MachineState
+from src.core.state_handlers import StateHandler
+from src.core.camera_handler import CameraHandler
 import serial
 import serial.tools.list_ports
 

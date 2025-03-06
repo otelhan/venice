@@ -10,6 +10,7 @@ import threading
 from queue import Queue
 import os
 import traceback
+from src.core.states import MachineState
 
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
@@ -25,7 +26,7 @@ class StateHandler:
         self.serial = None
         
         # Initialize camera
-        self.camera = cv2.VideoCapture(0)
+        self.camera = CameraHandler()  # Initialize camera handler
         if not self.camera.isOpened():
             print("ERROR: Could not open camera")
         
@@ -141,56 +142,42 @@ class StateHandler:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
             
-            # Initialize previous frame
-            self.prev_frame = None
+            # Turn on wavemaker first
+            self.serial.write(b"on\n")
+            response = self.serial.readline().decode().strip()
+            print(f"Wavemaker ON response: {response}")
             
+            # Process each movement
             for movement in self.movement_buffer:
-                # Scale movement to motor range
-                scaled_movement = self.scale_movement(movement)
-                
                 # Send movement value to KB2040
-                command = f"{scaled_movement}\n"
+                command = f"{movement}\n"
                 self.serial.write(command.encode())
                 response = self.serial.readline().decode().strip()
-                print(f"Original: {movement}, Scaled: {scaled_movement}, Response: {response}")
+                print(f"Movement: {movement}, Response: {response}")
                 
-                # Update camera feed and calculate energy
-                ret, frame = self.camera.read()
-                if ret:
-                    # Process frame and calculate energy
-                    energy = self.calculate_frame_energy(frame)
-                    
-                    # Show processed frame
-                    height, width = frame.shape[:2]
-                    small_frame = cv2.resize(frame, (width//2, height//2))
-                    gray_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-                    cv2.imshow('Camera Feed', gray_frame)
-                    cv2.waitKey(1)
-                    
-                    # Update energy plot
-                    self.update_energy_plot(energy)
-                    plt.pause(0.001)
+                # Update camera feed and energy plot
+                frame = self.camera.get_frame()
+                if frame is not None:
+                    energy = self.camera.calculate_frame_energy(frame)
+                    self.camera.update_energy_plot(energy)
+                    self.camera.show_frame()
+                
+                time.sleep(0.1)  # Small delay between commands
             
-            # Set to max position when done
-            final_command = "127\n"
-            self.serial.write(final_command.encode())
-            print("Setting wiper to maximum position")
-            
-            # Cleanup windows before returning
-            cv2.destroyAllWindows()
-            plt.close('all')
+            # Turn off wavemaker
+            self.serial.write(b"off\n")
+            response = self.serial.readline().decode().strip()
+            print(f"Wavemaker OFF response: {response}")
             
             return True
             
         except Exception as e:
             print(f"Error driving wavemaker: {e}")
             traceback.print_exc()
-            
-            # Cleanup on error
-            cv2.destroyAllWindows()
-            plt.close('all')
-            
             return True
+        finally:
+            # Cleanup
+            self.camera.stop_camera()
 
     def __del__(self):
         """Cleanup"""

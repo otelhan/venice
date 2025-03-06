@@ -1,32 +1,16 @@
 import asyncio
-import signal
 from src.networking.controller_node import ControllerNode
+import argparse
 
 async def main():
-    print("\nStarting Controller Node")
-    print("----------------------")
-    controller = ControllerNode()
-    
-    def signal_handler():
-        print("\nShutdown signal received")
-        asyncio.create_task(controller.stop())
-    
-    # Register signal handlers
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        asyncio.get_event_loop().add_signal_handler(
-            sig,
-            signal_handler
-        )
-    
-    try:
-        await controller.start()
-    except KeyboardInterrupt:
-        print("\nController shutdown requested")
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        print("Cleaning up...")
-        await controller.stop()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('name', help='Controller name (e.g., res01)')
+    args = parser.parse_args()
+
+    # Initialize controller with name
+    controller = ControllerNode(name=args.name, port=8765)
+    await controller.start()
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

@@ -9,20 +9,32 @@ from src.core.states import MachineState
 from src.core.config_handler import ConfigHandler
 
 class ControllerNode:
-    def __init__(self, port=8765):
+    def __init__(self, name=None, port=8765):
         self.port = port
         self.config_handler = ConfigHandler()
         if not self.config_handler.load_config():
             print("Warning: Running with unconfigured controller")
         
-        self.controller_name = self.config_handler.get_controller_name()
-        self.mac = self.config_handler.current_mac
-        self.controller = MachineController()
-        self.server = None
+        # Initialize with specific name
+        self.controller_name = name or self.config_handler.get_controller_name()
+        if not self.controller_name:
+            raise ValueError("Controller name must be provided")
+            
+        # Get config for this controller
+        self.controller_config = self.config_handler.config['controllers'].get(self.controller_name)
+        if not self.controller_config:
+            raise ValueError(f"No configuration found for controller {self.controller_name}")
+            
+        self.mac = self.controller_config['mac']
+        self.ip = self.controller_config['ip']
         
         print(f"Controller initialized:")
-        print(f"- Name: {self.controller_name or 'Unknown'}")
+        print(f"- Name: {self.controller_name}")
         print(f"- MAC: {self.mac}")
+        print(f"- IP: {self.ip}")
+        
+        self.controller = MachineController()
+        self.server = None
         
         # Initialize to IDLE state
         self.controller.transition_to(MachineState.IDLE)
@@ -79,7 +91,8 @@ class ControllerNode:
         """Handle incoming WebSocket messages"""
         try:
             async for message in websocket:
-                print(f"Received message: {message}")  # Debug log
+                print(f"\nReceived message: {message}")  # Debug log
+                
                 try:
                     data = json.loads(message)
                     message_type = data.get('type')
@@ -111,12 +124,8 @@ class ControllerNode:
                         
                         # Scale movements to motor range (20-127)
                         if movements:
-                            max_movement = max(movements)
-                            scaled_movements = [max(20, min(127, int(m * 127 / max_movement))) 
-                                             for m in movements]
-                            
                             # Store movements for driving wavemaker
-                            self.controller.movement_buffer = scaled_movements
+                            self.controller.movement_buffer = movements
                             
                             # Automatically transition to DRIVE_WAVEMAKER state
                             print("Transitioning to DRIVE_WAVEMAKER state...")
@@ -131,8 +140,6 @@ class ControllerNode:
                             }
                         else:
                             response = {
-                                "controller_name": self.controller_name,
-                                "mac": self.mac,
                                 "status": "error",
                                 "message": "No movement data in packet"
                             }
@@ -158,12 +165,7 @@ class ControllerNode:
                     await websocket.send(json.dumps(response))
                     
                 except json.JSONDecodeError:
-                    await websocket.send(json.dumps({
-                        "controller_name": self.controller_name,
-                        "mac": self.mac,
-                        "status": "error",
-                        "message": "Invalid JSON format"
-                    }))
+                    print("Error: Invalid JSON format")
                     
         except websockets.exceptions.ConnectionClosed:
             print("Client connection closed")
@@ -196,4 +198,28 @@ class ControllerNode:
                 return False
         except Exception as e:
             print(f"Error in execute_command: {e}")
+            return False
+
+    async def send_data_to(self, target_name, data):
+        """Send data to another controller"""
+        target = self.config_handler.config['controllers'].get(target_name)
+        if not target:
+            print(f"Unknown target controller: {target_name}")
+            return False
+            
+        try:
+            uri = f"ws://{target['ip']}:{self.port}"
+            async with websockets.connect(uri) as websocket:
+                message = {
+                    "type": "data",
+                    "source": self.controller_name,
+                    "data": data,
+                    "timestamp": time.time()
+                }
+                await websocket.send(json.dumps(message))
+                response = await websocket.recv()
+                print(f"Response from {target_name}: {response}")
+                return True
+        except Exception as e:
+            print(f"Error sending data to {target_name}: {e}")
             return False 

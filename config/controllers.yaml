@@ -1,9 +1,25 @@
 controllers:
-  res01:
-    description: Venice Controller 01
+  tester:
+    description: Test Controller
+    ip: 192.168.1.106
+    mac: a4:cf:99:57:e6:d2
+  res00:
+    description: Reservoir Controller 00
     ip: 192.168.1.74
     last_seen: 1738471877.2202702
-    mac: 2c:cf:67:8b:e6:c8
+    mac: 2c:cf:67:8b:24:f6
+  res01:
+    description: Reservoir Controller 01
+    ip: 192.168.1.178
+    mac: 2c:cf:67:8c:50:b7
+  res02:
+    description: Reservoir Controller 02
+    ip: 192.168.1.30
+    mac: 2c:cf:67:8b:2b:d4
+  res03:
+    description: Reservoir Controller 03
+    ip: 192.168.1.254
+    mac: 2c:cf:67:8b:fe:ab
 streams:
   venice_live:
     description: Venice Live Stream
