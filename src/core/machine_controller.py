@@ -7,11 +7,17 @@ import serial.tools.list_ports
 class MachineController:
     def __init__(self, config=None):
         self.current_state = None
-        self.config = config or {}  # Store full config
+        self.config = config or {}
         self.display_config = config.get('display', {}) if config else {}
+        
+        # Print config values
+        print("\nController Configuration:")
+        print(f"Full config: {self.config}")
+        print(f"Display config: {self.display_config}")
+        
         self.state_handler = StateHandler(
             display_config=self.display_config,
-            controller_config=self.config  # Pass full config
+            controller_config=self.config
         )
         self.movement_buffer = []  # Store received movements
         self.serial = None

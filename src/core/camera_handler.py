@@ -16,6 +16,13 @@ class CameraHandler:
         self.show_camera = self.display_config.get('show_camera', False)
         self.show_plots = self.display_config.get('show_plots', False)
         
+        # Print display settings
+        print("\nCamera Display Settings:")
+        print(f"Display config: {self.display_config}")
+        print(f"Show display: {self.show_display}")
+        print(f"Show camera: {self.show_camera}")
+        print(f"Show plots: {self.show_plots}")
+        
         # Initialize camera attributes
         self.camera = None
         self.is_running = False
