@@ -16,11 +16,6 @@ class CameraHandler:
         self.show_camera = self.display_config.get('show_camera', False)
         self.show_plots = self.display_config.get('show_plots', False)
         
-        print(f"Camera handler display config:")
-        print(f"- enabled: {self.show_display}")
-        print(f"- show_camera: {self.show_camera}")
-        print(f"- show_plots: {self.show_plots}")
-        
         # Initialize camera attributes
         self.camera = None
         self.is_running = False
@@ -30,6 +25,20 @@ class CameraHandler:
         self.energy_values = []
         self.prev_frame = None
         self.plot_lock = Lock()
+        
+        # Create windows and setup plotting if display is enabled
+        if self.show_camera:
+            cv2.namedWindow('Camera Test', cv2.WINDOW_NORMAL)
+        
+        if self.show_plots:
+            plt.ion()  # Interactive mode
+            self.fig, self.ax = plt.subplots(figsize=(10, 6))
+            self.line, = self.ax.plot([], [], 'b-', linewidth=2)
+            self.ax.set_xlim(0, 100)
+            self.ax.set_ylim(0, 8)
+            self.ax.set_title('Energy Values')
+            self.ax.grid(True)
+            plt.show()
         
         # Initialize camera
         if not self._init_camera():
@@ -109,7 +118,7 @@ class CameraHandler:
                 print("ERROR: Could not read frame")
                 return None
                 
-            # Convert to grayscale for energy calculation
+            # Convert to grayscale
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             
             # Show camera feed if enabled
@@ -122,7 +131,7 @@ class CameraHandler:
         except Exception as e:
             print(f"Error reading frame: {e}")
             return None
-
+            
     def init_analyzer(self, frame_shape):
         """Initialize the optimized analyzer with frame shape"""
         h, w = frame_shape
@@ -146,10 +155,10 @@ class CameraHandler:
         return entropy
         
     def update_energy_plot(self, energy):
-        """Update the energy plot"""
+        """Update the energy plot with thread safety"""
         if not self.show_plots:
             return
-            
+        
         with self.plot_lock:
             self.energy_values.append(energy)
             if len(self.energy_values) > 100:
@@ -157,7 +166,7 @@ class CameraHandler:
             self.line.set_data(range(len(self.energy_values)), self.energy_values)
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
-            
+        
         print(f"Energy: {energy:.2f}")
         
     def draw_energy_plot(self, frame, energy):

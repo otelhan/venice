@@ -145,8 +145,11 @@ class StateHandler:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
             
-            # Start camera thread
-            self.camera.start_camera_thread()
+            # Initialize energy collection
+            energy_values = []
+            
+            # Start camera
+            self.camera.start_camera()
             
             # Turn on wavemaker first
             print("\nTurning wavemaker ON...")
@@ -165,10 +168,19 @@ class StateHandler:
                 response = self.serial.readline().decode().strip()
                 print(f"Response: {response}")
                 
-                # Get latest frame and energy
-                frame, energy = self.camera.get_frame()
+                # Capture and process frame
+                frame = self.camera.get_frame()
                 if frame is not None:
+                    energy = self.camera.calculate_frame_energy(frame)
                     print(f"Frame {i} energy: {energy:.2f}")
+                    
+                    # Scale energy to motor range (20-127)
+                    scaled_energy = int(20 + (energy * (127 - 20) / 8))
+                    scaled_energy = max(20, min(127, scaled_energy))
+                    energy_values.append(scaled_energy)
+                    
+                    # Update plot
+                    self.camera.update_energy_plot(energy)
                 
                 time.sleep(1)  # Wait between movements
             
