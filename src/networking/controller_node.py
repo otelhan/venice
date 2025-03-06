@@ -4,27 +4,29 @@ import json
 import uuid
 import time
 import socket
+import os
+import yaml
 from src.core.machine_controller import MachineController
 from src.core.states import MachineState
 from src.core.config_handler import ConfigHandler
 
 class ControllerNode:
-    def __init__(self, name=None, port=8765):
-        self.port = port
-        self.config_handler = ConfigHandler()
-        if not self.config_handler.load_config():
-            print("Warning: Running with unconfigured controller")
+    def __init__(self, controller_name):
+        self.controller_name = controller_name
+        self.config = self._load_config()
         
-        # Initialize with specific name
-        self.controller_name = name or self.config_handler.get_controller_name()
-        if not self.controller_name:
-            raise ValueError("Controller name must be provided")
+        # Get controller-specific config
+        if self.config and 'controllers' in self.config:
+            self.controller_config = self.config['controllers'].get(controller_name, {})
+            print(f"\nLoaded config for {controller_name}:")
+            print(f"Controller config: {self.controller_config}")
+        else:
+            self.controller_config = {}
+            print("No controller config found!")
             
-        # Get config for this controller
-        self.controller_config = self.config_handler.config['controllers'].get(self.controller_name)
-        if not self.controller_config:
-            raise ValueError(f"No configuration found for controller {self.controller_name}")
-            
+        # Initialize controller with its config
+        self.controller = MachineController(config=self.controller_config)
+        
         self.mac = self.controller_config['mac']
         self.ip = self.controller_config['ip']
         
@@ -33,12 +35,21 @@ class ControllerNode:
         print(f"- MAC: {self.mac}")
         print(f"- IP: {self.ip}")
         
-        self.controller = MachineController()
         self.server = None
         
         # Initialize to IDLE state
         self.controller.transition_to(MachineState.IDLE)
         
+    def _load_config(self):
+        """Load configuration from YAML"""
+        try:
+            config_path = os.path.join('config', 'controllers.yaml')
+            with open(config_path, 'r') as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            return None
+    
     def _get_mac(self):
         return ':'.join(['{:02x}'.format((uuid.getnode() >> elements) & 0xff)
                         for elements in range(0,8*6,8)][::-1])
