@@ -17,7 +17,7 @@ import websockets
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
 class StateHandler:
-    def __init__(self, display_config=None):
+    def __init__(self, display_config=None, controller_config=None):
         self.serial_port = None
         self.port_name = None
         self.baud_rate = 9600
@@ -26,6 +26,7 @@ class StateHandler:
         self.serial_queue = Queue()
         self.serial_thread = None
         self.serial = None
+        self.config = controller_config or {}  # Store full config
         
         # Initialize camera
         self.camera = CameraHandler(display_config)
@@ -205,7 +206,7 @@ class StateHandler:
                     },
                     'timestamp': time.time(),
                     'metadata': {
-                        'source': self.controller_name,
+                        'source': self.config.get('name', 'unknown'),
                         'type': 'energy_values',
                         'count': len(energy_values)
                     }

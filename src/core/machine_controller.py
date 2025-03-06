@@ -7,14 +7,18 @@ import serial.tools.list_ports
 class MachineController:
     def __init__(self, config=None):
         self.current_state = None
+        self.config = config or {}  # Store full config
         self.display_config = config.get('display', {}) if config else {}
-        self.state_handler = StateHandler(self.display_config)
+        self.state_handler = StateHandler(
+            display_config=self.display_config,
+            controller_config=self.config  # Pass full config
+        )
         self.movement_buffer = []  # Store received movements
         self.serial = None
         if not self._init_serial():
             print("WARNING: Failed to initialize KB2040 connection")
         
-    def handle_current_state(self):
+    async def handle_current_state(self):
         """Handle the current state"""
         print(f"\nHandling state: {self.current_state.name}")  # Debug print
         
@@ -24,7 +28,7 @@ class MachineController:
                 print(f"Movement buffer size: {len(self.movement_buffer)}")  # Debug print
                 self.state_handler.movement_buffer = self.movement_buffer
                 self.state_handler.serial = self.serial
-                next_state = self.state_handler.drive_wavemaker()
+                next_state = await self.state_handler.drive_wavemaker()
                 if next_state:
                     print("Transitioning back to IDLE")  # Debug print
                     self.transition_to(MachineState.IDLE)
