@@ -69,8 +69,21 @@ class CameraHandler:
                 print("ERROR: Could not start camera")
                 return False
                 
+            # Test read a frame
+            ret, frame = self.camera.read()
+            if not ret:
+                print("ERROR: Could not read from camera")
+                self.camera.release()
+                return False
+                
             self.is_running = True
-            print("Camera started")
+            print("Camera started successfully")
+            
+            # Create window if camera display is enabled
+            if self.show_camera:
+                cv2.namedWindow(self.window_name)
+                print("Camera window created")
+            
             return True
             
         except Exception as e:
@@ -84,6 +97,11 @@ class CameraHandler:
             self.is_running = False
             print("Camera stopped")
             
+            # Destroy window if it exists
+            if self.show_camera:
+                cv2.destroyWindow(self.window_name)
+                print("Camera window closed")
+            
     def get_frame(self):
         """Get a frame from the camera"""
         if not self.is_running:
@@ -95,6 +113,22 @@ class CameraHandler:
             if not ret:
                 print("ERROR: Could not read frame")
                 return None
+                
+            # If camera display is enabled, show the frame
+            if self.show_camera:
+                # Scale down and convert to grayscale
+                height, width = frame.shape[:2]
+                small_frame = cv2.resize(frame, (width//2, height//2))
+                gray_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+                
+                # Show video frame in separate window
+                cv2.imshow(self.window_name, gray_frame)
+                cv2.moveWindow(self.window_name, 0, 0)  # Position window at top-left
+                cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
+                
+                # Process any window events
+                cv2.waitKey(1)
+            
             return frame
             
         except Exception as e:
