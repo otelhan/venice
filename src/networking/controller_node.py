@@ -14,10 +14,11 @@ class ControllerNode:
         self.port = port
         
         # Load config
-        self.config = self._load_config()
-        if not self.config:
+        self.config_handler = ConfigHandler()
+        if not self.config_handler.load_config():
             raise Exception("Failed to load config")
-            
+        self.config = self.config_handler.config
+        
         # Get controller specific config
         self.controller_config = self.config['controllers'].get(name)
         if not self.controller_config:
