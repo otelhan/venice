@@ -11,6 +11,8 @@ from queue import Queue
 import os
 import traceback
 from src.core.states import MachineState
+import json
+import websockets
 
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
@@ -142,6 +144,9 @@ class StateHandler:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
             
+            # Initialize energy collection
+            energy_values = []
+            
             # Start camera if display enabled
             if self.camera.show_display:
                 self.camera.start_camera()
@@ -152,8 +157,7 @@ class StateHandler:
             response = self.serial.readline().decode().strip()
             print(f"Wavemaker ON response: {response}")
             
-            # Wait a moment after turning on
-            time.sleep(1)
+            time.sleep(1)  # Wait after turning on
             
             # Process each movement
             for i, movement in enumerate(self.movement_buffer, 1):
@@ -170,36 +174,66 @@ class StateHandler:
                     energy = self.camera.calculate_frame_energy(frame)
                     print(f"Frame {i} energy: {energy:.2f}")
                     
+                    # Scale energy to motor range (20-127)
+                    scaled_energy = int(20 + (energy * (127 - 20) / 8))  # Assuming max energy is ~8
+                    scaled_energy = max(20, min(127, scaled_energy))
+                    energy_values.append(scaled_energy)
+                    
                     # Only show visual output if display is enabled
                     if self.camera.show_display:
                         self.camera.update_energy_plot(energy)
                         if self.camera.show_camera:
                             self.camera.show_frame()
                 
-                # Wait 1 second between movements
-                time.sleep(1)
+                time.sleep(1)  # Wait between movements
             
-            # Turn off wavemaker when done
+            # Turn off wavemaker
             print("\nTurning wavemaker OFF...")
             self.serial.write(b"off\n")
             response = self.serial.readline().decode().strip()
             print(f"Wavemaker OFF response: {response}")
+            
+            # Forward energy data to destination if configured
+            if energy_values and 'destination' in self.config:
+                dest = self.config['destination']
+                print(f"\nForwarding {len(energy_values)} energy values to {dest}")
+                
+                data_packet = {
+                    'type': 'data',
+                    'data': {
+                        'movements': energy_values
+                    },
+                    'timestamp': time.time(),
+                    'metadata': {
+                        'source': self.controller_name,
+                        'type': 'energy_values',
+                        'count': len(energy_values)
+                    }
+                }
+                
+                try:
+                    # Get destination controller config
+                    dest_controller = self.config['controllers'][dest]
+                    uri = f"ws://{dest_controller['ip']}:8765"
+                    
+                    async with websockets.connect(uri) as websocket:
+                        await websocket.send(json.dumps(data_packet))
+                        response = await websocket.recv()
+                        print(f"Forward response: {response}")
+                except Exception as e:
+                    print(f"Error forwarding to {dest}: {e}")
             
             return True
             
         except Exception as e:
             print(f"Error driving wavemaker: {e}")
             traceback.print_exc()
-            
-            # Make sure to turn off wavemaker on error
             try:
-                self.serial.write(b"off\n")
+                self.serial.write(b"off\n")  # Make sure to turn off on error
             except:
                 pass
-            
             return True
         finally:
-            # Always stop camera
             self.camera.stop_camera()
 
     def __del__(self):
