@@ -9,31 +9,51 @@ from threading import Lock
 import time
 
 class CameraHandler:
-    def __init__(self):
+    def __init__(self, display_config=None):
+        # Set display options from config
+        self.display_config = display_config or {}
+        self.show_display = self.display_config.get('enabled', False)
+        self.show_camera = self.display_config.get('show_camera', False)
+        self.show_plots = self.display_config.get('show_plots', False)
+        
+        # Initialize camera attributes
         self.camera = None
         self.is_running = False
-        self.camera_index = 0  # Default camera
-        self.has_display = True  # Force display since we're running locally
+        self.camera_index = 0
+        self.frame_count = 0
+        self.window_size = 100
+        self.energy_values = []
+        self.prev_frame = None
+        self.plot_lock = Lock()
+        
+        # Initialize matplotlib backend based on config
+        if self.show_plots:
+            matplotlib.use('TkAgg')
+            plt.ion()  # Interactive mode
+        else:
+            matplotlib.use('Agg')
+            plt.ioff()  # Non-interactive mode
+            
         if not self._init_camera():
             print("WARNING: Failed to initialize camera")
-        self.window_name = "Live Camera Feed"
-        self.frame_count = 0
-        self.window_size = 100  # Show last 100 frames
-        self.energy_values = []
-        self.analyzer = None  # Will be initialized when we get first frame
-        self.prev_frame = None
-        self.plot_lock = Lock()  # Add thread safety
+            
+        self.setup_plot()
         
-        # Setup energy plot for display
-        plt.ion()  # Interactive mode
+    def setup_plot(self):
+        """Setup plotting based on display config"""
         self.fig, self.ax = plt.subplots(figsize=(8, 4))
         self.line, = self.ax.plot([], [], 'b-', linewidth=2)
-        self.ax.set_ylim(0, 8)  # Adjust for entropy values
+        self.ax.set_ylim(0, 8)
         self.ax.set_xlabel('Frame Number')
         self.ax.set_ylabel('Energy (Entropy)')
         self.ax.grid(True)
-        plt.show(block=False)  # Show but don't block
         
+        if self.show_plots:
+            plt.show(block=False)
+        else:
+            self.fig.savefig('energy_plot.png')
+            plt.close(self.fig)
+            
     def _init_camera(self):
         """Initialize and test camera connection"""
         try:
@@ -73,7 +93,7 @@ class CameraHandler:
             
     def stop_camera(self):
         """Stop the camera"""
-        if self.camera and self.is_running:
+        if hasattr(self, 'camera') and self.camera and self.is_running:
             self.camera.release()
             self.is_running = False
             print("Camera stopped")
@@ -219,4 +239,5 @@ class CameraHandler:
         
     def __del__(self):
         """Cleanup when object is destroyed"""
-        self.stop_camera() 
+        if hasattr(self, 'camera'):
+            self.stop_camera() 
