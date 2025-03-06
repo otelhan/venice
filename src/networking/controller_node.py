@@ -11,8 +11,9 @@ from src.core.states import MachineState
 from src.core.config_handler import ConfigHandler
 
 class ControllerNode:
-    def __init__(self, controller_name):
+    def __init__(self, controller_name, port=8765):
         self.controller_name = controller_name
+        self.port = port
         self.config = self._load_config()
         
         # Get controller-specific config
@@ -30,10 +31,11 @@ class ControllerNode:
         self.mac = self.controller_config['mac']
         self.ip = self.controller_config['ip']
         
-        print(f"Controller initialized:")
+        print(f"\nController initialized:")
         print(f"- Name: {self.controller_name}")
         print(f"- MAC: {self.mac}")
         print(f"- IP: {self.ip}")
+        print(f"- Display config: {self.controller_config.get('display', {})}")
         
         self.server = None
         
