@@ -16,6 +16,8 @@ class CameraHandler:
         self.show_camera = self.display_config.get('show_camera', False)
         self.show_plots = self.display_config.get('show_plots', False)
         
+        print(f"Display config: {self.display_config}")  # Debug print
+        
         # Initialize camera attributes
         self.camera = None
         self.is_running = False
@@ -25,28 +27,6 @@ class CameraHandler:
         self.energy_values = []
         self.prev_frame = None
         self.plot_lock = Lock()
-        
-        # Thread control
-        self.camera_thread = None
-        self.display_thread = None
-        self.running = False
-        self.frame_ready = Event()
-        self.current_frame = None
-        self.current_energy = 0
-        
-        # Create windows and setup plotting if display is enabled
-        if self.show_camera:
-            cv2.namedWindow('Camera Test', cv2.WINDOW_NORMAL)
-        
-        if self.show_plots:
-            plt.ion()  # Interactive mode
-            self.fig, self.ax = plt.subplots(figsize=(10, 6))
-            self.line, = self.ax.plot([], [], 'b-', linewidth=2)
-            self.ax.set_xlim(0, 100)
-            self.ax.set_ylim(0, 8)
-            self.ax.set_title('Energy Values')
-            self.ax.grid(True)
-            plt.show()
         
         # Initialize camera
         if not self._init_camera():
@@ -115,14 +95,30 @@ class CameraHandler:
                 plt.close()
             
     def get_frame(self):
-        """Get latest frame and energy"""
-        if self.frame_ready.wait(timeout=1.0):
-            with self.plot_lock:
-                frame = self.current_frame
-                energy = self.current_energy
-            self.frame_ready.clear()
-            return frame, energy
-        return None, 0
+        """Get a frame from the camera"""
+        if not self.is_running:
+            if not self.start_camera():
+                return None
+                
+        try:
+            ret, frame = self.camera.read()
+            if not ret:
+                print("ERROR: Could not read frame")
+                return None
+                
+            # Convert to grayscale for energy calculation
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # Show camera feed if enabled
+            if self.show_camera:
+                cv2.imshow('Camera Test', frame)
+                cv2.waitKey(1)
+            
+            return gray
+            
+        except Exception as e:
+            print(f"Error reading frame: {e}")
+            return None
 
     def init_analyzer(self, frame_shape):
         """Initialize the optimized analyzer with frame shape"""
@@ -147,10 +143,10 @@ class CameraHandler:
         return entropy
         
     def update_energy_plot(self, energy):
-        """Update the energy plot with thread safety"""
+        """Update the energy plot"""
         if not self.show_plots:
             return
-        
+            
         with self.plot_lock:
             self.energy_values.append(energy)
             if len(self.energy_values) > 100:
@@ -158,7 +154,7 @@ class CameraHandler:
             self.line.set_data(range(len(self.energy_values)), self.energy_values)
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
-        
+            
         print(f"Energy: {energy:.2f}")
         
     def draw_energy_plot(self, frame, energy):

@@ -145,8 +145,23 @@ class StateHandler:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
             
-            # Start camera thread
-            self.camera.start_camera_thread()
+            # Initialize display first
+            if self.camera.show_display:
+                print("Initializing display...")
+                if self.camera.show_camera:
+                    cv2.namedWindow('Camera Test', cv2.WINDOW_NORMAL)
+                if self.camera.show_plots:
+                    plt.ion()
+                    self.camera.fig, self.camera.ax = plt.subplots(figsize=(10, 6))
+                    self.camera.line, = self.camera.ax.plot([], [], 'b-', linewidth=2)
+                    self.camera.ax.set_xlim(0, 100)
+                    self.camera.ax.set_ylim(0, 8)
+                    self.camera.ax.set_title('Energy Values')
+                    self.camera.ax.grid(True)
+                    plt.show()
+            
+            # Start camera
+            self.camera.start_camera()
             
             # Turn on wavemaker first
             print("\nTurning wavemaker ON...")
@@ -158,17 +173,21 @@ class StateHandler:
             
             # Process each movement
             for i, movement in enumerate(self.movement_buffer, 1):
-                # Send movement value to KB2040
                 command = f"{movement}\n"
                 print(f"\nSending movement {i}/30: {movement}")
                 self.serial.write(command.encode())
                 response = self.serial.readline().decode().strip()
                 print(f"Response: {response}")
                 
-                # Get latest frame and energy
-                frame, energy = self.camera.get_frame()
+                # Capture and process frame
+                frame = self.camera.get_frame()
                 if frame is not None:
+                    energy = self.camera.calculate_frame_energy(frame)
                     print(f"Frame {i} energy: {energy:.2f}")
+                    
+                    # Update display
+                    if self.camera.show_plots:
+                        self.camera.update_energy_plot(energy)
                 
                 time.sleep(1)  # Wait between movements
             
