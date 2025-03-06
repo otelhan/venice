@@ -26,17 +26,17 @@ class CameraHandler:
         self.prev_frame = None
         self.plot_lock = Lock()
         
-        # Create windows if display is enabled
+        # Create windows and setup plotting if display is enabled
         if self.show_camera:
-            cv2.namedWindow('Camera Feed', cv2.WINDOW_NORMAL)
+            cv2.namedWindow('Camera Test', cv2.WINDOW_NORMAL)
         
         if self.show_plots:
-            plt.ion()  # Interactive mode for matplotlib
-            self.fig, self.ax = plt.subplots()
-            self.line, = self.ax.plot([], [])
-            self.ax.set_xlim(0, self.window_size)
+            plt.ion()  # Interactive mode
+            self.fig, self.ax = plt.subplots(figsize=(10, 6))
+            self.line, = self.ax.plot([], [], 'b-', linewidth=2)
+            self.ax.set_xlim(0, 100)
             self.ax.set_ylim(0, 8)
-            self.ax.set_title('Frame Energy')
+            self.ax.set_title('Energy Values')
             self.ax.grid(True)
             plt.show()
         
@@ -85,7 +85,7 @@ class CameraHandler:
             
             # Create window if camera display is enabled
             if self.show_camera:
-                cv2.namedWindow('Camera Feed')
+                cv2.namedWindow('Camera Test')
                 print("Camera window created")
             
             return True
@@ -118,12 +118,12 @@ class CameraHandler:
                 print("ERROR: Could not read frame")
                 return None
                 
-            # Process frame
+            # Convert to grayscale
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             
-            # Show frame if camera display is enabled
+            # Show camera feed if enabled
             if self.show_camera:
-                cv2.imshow('Camera Feed', frame)
+                cv2.imshow('Camera Test', frame)
                 cv2.waitKey(1)
             
             return gray
@@ -156,22 +156,16 @@ class CameraHandler:
         
     def update_energy_plot(self, energy):
         """Update the energy plot with thread safety"""
+        if not self.show_plots:
+            return
+        
         with self.plot_lock:
             self.energy_values.append(energy)
-            if len(self.energy_values) > self.window_size:
+            if len(self.energy_values) > 100:
                 self.energy_values.pop(0)
-            
-            if self.show_plots:
-                # Update live plot
-                self.line.set_data(range(len(self.energy_values)), self.energy_values)
-                self.fig.canvas.draw()
-                self.fig.canvas.flush_events()
-            else:
-                # Save to file if not displaying
-                try:
-                    self.fig.savefig('energy_plot.png')
-                except Exception as e:
-                    print(f"Plot save error: {e}")
+            self.line.set_data(range(len(self.energy_values)), self.energy_values)
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
         
         print(f"Energy: {energy:.2f}")
         
@@ -242,7 +236,7 @@ class CameraHandler:
             self.update_energy_plot(energy)
             
             # Show video frame in separate window
-            cv2.imshow('Camera Feed', gray_frame)
+            cv2.imshow('Camera Test', gray_frame)
             cv2.waitKey(1)
             
             return True
