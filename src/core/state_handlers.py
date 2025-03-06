@@ -135,12 +135,12 @@ class StateHandler:
             print(f"Error scaling movement: {e}")
             return 127  # Default to max on error
 
-    async def drive_wavemaker(self):
+    def drive_wavemaker(self):
         """Drive the wavemaker with movement data"""
         if not self.serial:
             print("ERROR: No serial connection to KB2040")
             return True
-            
+        
         try:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
@@ -148,9 +148,8 @@ class StateHandler:
             # Initialize energy collection
             energy_values = []
             
-            # Start camera if display enabled
-            if self.camera.show_display:
-                self.camera.start_camera()
+            # Start camera
+            self.camera.start_camera()
             
             # Turn on wavemaker first
             print("\nTurning wavemaker ON...")
@@ -169,22 +168,19 @@ class StateHandler:
                 response = self.serial.readline().decode().strip()
                 print(f"Response: {response}")
                 
-                # Always capture and process frame for energy calculation
+                # Capture and process frame
                 frame = self.camera.get_frame()
                 if frame is not None:
                     energy = self.camera.calculate_frame_energy(frame)
                     print(f"Frame {i} energy: {energy:.2f}")
                     
                     # Scale energy to motor range (20-127)
-                    scaled_energy = int(20 + (energy * (127 - 20) / 8))  # Assuming max energy is ~8
+                    scaled_energy = int(20 + (energy * (127 - 20) / 8))
                     scaled_energy = max(20, min(127, scaled_energy))
                     energy_values.append(scaled_energy)
                     
-                    # Only show visual output if display is enabled
-                    if self.camera.show_display:
-                        self.camera.update_energy_plot(energy)
-                        if self.camera.show_camera:
-                            self.camera.show_frame()
+                    # Update plot
+                    self.camera.update_energy_plot(energy)
                 
                 time.sleep(1)  # Wait between movements
             
@@ -194,43 +190,13 @@ class StateHandler:
             response = self.serial.readline().decode().strip()
             print(f"Wavemaker OFF response: {response}")
             
-            # Forward energy data to destination if configured
-            if energy_values and 'destination' in self.config:
-                dest = self.config['destination']
-                print(f"\nForwarding {len(energy_values)} energy values to {dest}")
-                
-                data_packet = {
-                    'type': 'data',
-                    'data': {
-                        'movements': energy_values
-                    },
-                    'timestamp': time.time(),
-                    'metadata': {
-                        'source': self.config.get('name', 'unknown'),
-                        'type': 'energy_values',
-                        'count': len(energy_values)
-                    }
-                }
-                
-                try:
-                    # Get destination controller config
-                    dest_controller = self.config['controllers'][dest]
-                    uri = f"ws://{dest_controller['ip']}:8765"
-                    
-                    async with websockets.connect(uri) as websocket:
-                        await websocket.send(json.dumps(data_packet))
-                        response = await websocket.recv()
-                        print(f"Forward response: {response}")
-                except Exception as e:
-                    print(f"Error forwarding to {dest}: {e}")
-            
             return True
             
         except Exception as e:
             print(f"Error driving wavemaker: {e}")
             traceback.print_exc()
             try:
-                self.serial.write(b"off\n")  # Make sure to turn off on error
+                self.serial.write(b"off\n")
             except:
                 pass
             return True

@@ -27,30 +27,19 @@ class CameraHandler:
         self.plot_lock = Lock()
         self.window_name = "Live Camera Feed"
         
-        # Initialize matplotlib backend based on config
-        if self.show_plots:
-            matplotlib.use('TkAgg')
-            plt.ion()  # Interactive mode
-            
-            # Create plot window
-            self.fig, self.ax = plt.subplots(figsize=(8, 4))
-            self.line, = self.ax.plot([], [], 'b-', linewidth=2)
-            self.ax.set_ylim(0, 8)
-            self.ax.set_xlabel('Frame Number')
-            self.ax.set_ylabel('Energy (Entropy)')
-            self.ax.set_title('Frame Energy')
-            self.ax.grid(True)
-            
-            # Show plot window
-            plt.show(block=False)
-            plt.pause(0.1)  # Give time for window to appear
-        else:
-            matplotlib.use('Agg')
-            plt.ioff()
-            
+        # Initialize camera
         if not self._init_camera():
             print("WARNING: Failed to initialize camera")
-            
+        
+        # Setup simple plotting
+        self.fig, self.ax = plt.subplots(figsize=(8, 4))
+        self.line, = self.ax.plot([], [], 'b-', linewidth=2)
+        self.ax.set_ylim(0, 8)
+        self.ax.set_xlabel('Frame Number')
+        self.ax.set_ylabel('Energy (Entropy)')
+        self.ax.set_title('Frame Energy')
+        self.ax.grid(True)
+        
     def _init_camera(self):
         """Initialize and test camera connection"""
         try:
@@ -136,26 +125,21 @@ class CameraHandler:
         
     def update_energy_plot(self, energy):
         """Update the energy plot with thread safety"""
-        if not self.show_plots:
-            return
-        
         with self.plot_lock:
             self.energy_values.append(energy)
             if len(self.energy_values) > self.window_size:
                 self.energy_values = self.energy_values[-self.window_size:]
                 
-            # Update live plot
-            start_frame = max(0, self.frame_count - self.window_size)
-            xdata = range(start_frame, start_frame + len(self.energy_values))
+            # Update plot data
+            xdata = range(len(self.energy_values))
             self.line.set_data(xdata, self.energy_values)
-            self.ax.set_xlim(start_frame, start_frame + self.window_size)
+            self.ax.set_xlim(0, self.window_size)
             
+            # Save plot to file
             try:
-                self.fig.canvas.draw()
-                self.fig.canvas.flush_events()
-                plt.pause(0.01)  # Give time for plot to update
+                self.fig.savefig('energy_plot.png')
             except Exception as e:
-                print(f"Plot update error: {e}")
+                print(f"Plot save error: {e}")
             
             # Print energy value
             print(f"Energy: {energy:.2f}")
