@@ -25,20 +25,24 @@ class CameraHandler:
         self.energy_values = []
         self.prev_frame = None
         self.plot_lock = Lock()
-        self.window_name = "Live Camera Feed"
+        
+        # Create windows if display is enabled
+        if self.show_camera:
+            cv2.namedWindow('Camera Feed', cv2.WINDOW_NORMAL)
+        
+        if self.show_plots:
+            plt.ion()  # Interactive mode for matplotlib
+            self.fig, self.ax = plt.subplots()
+            self.line, = self.ax.plot([], [])
+            self.ax.set_xlim(0, self.window_size)
+            self.ax.set_ylim(0, 8)
+            self.ax.set_title('Frame Energy')
+            self.ax.grid(True)
+            plt.show()
         
         # Initialize camera
         if not self._init_camera():
             print("WARNING: Failed to initialize camera")
-        
-        # Setup simple plotting
-        self.fig, self.ax = plt.subplots(figsize=(8, 4))
-        self.line, = self.ax.plot([], [], 'b-', linewidth=2)
-        self.ax.set_ylim(0, 8)
-        self.ax.set_xlabel('Frame Number')
-        self.ax.set_ylabel('Energy (Entropy)')
-        self.ax.set_title('Frame Energy')
-        self.ax.grid(True)
         
     def _init_camera(self):
         """Initialize and test camera connection"""
@@ -81,7 +85,7 @@ class CameraHandler:
             
             # Create window if camera display is enabled
             if self.show_camera:
-                cv2.namedWindow(self.window_name)
+                cv2.namedWindow('Camera Feed')
                 print("Camera window created")
             
             return True
@@ -97,10 +101,10 @@ class CameraHandler:
             self.is_running = False
             print("Camera stopped")
             
-            # Destroy window if it exists
             if self.show_camera:
-                cv2.destroyWindow(self.window_name)
-                print("Camera window closed")
+                cv2.destroyAllWindows()
+            if self.show_plots:
+                plt.close()
             
     def get_frame(self):
         """Get a frame from the camera"""
@@ -114,22 +118,15 @@ class CameraHandler:
                 print("ERROR: Could not read frame")
                 return None
                 
-            # If camera display is enabled, show the frame
+            # Process frame
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # Show frame if camera display is enabled
             if self.show_camera:
-                # Scale down and convert to grayscale
-                height, width = frame.shape[:2]
-                small_frame = cv2.resize(frame, (width//2, height//2))
-                gray_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-                
-                # Show video frame in separate window
-                cv2.imshow(self.window_name, gray_frame)
-                cv2.moveWindow(self.window_name, 0, 0)  # Position window at top-left
-                cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
-                
-                # Process any window events
+                cv2.imshow('Camera Feed', frame)
                 cv2.waitKey(1)
             
-            return frame
+            return gray
             
         except Exception as e:
             print(f"Error reading frame: {e}")
@@ -162,22 +159,22 @@ class CameraHandler:
         with self.plot_lock:
             self.energy_values.append(energy)
             if len(self.energy_values) > self.window_size:
-                self.energy_values = self.energy_values[-self.window_size:]
-                
-            # Update plot data
-            xdata = range(len(self.energy_values))
-            self.line.set_data(xdata, self.energy_values)
-            self.ax.set_xlim(0, self.window_size)
+                self.energy_values.pop(0)
             
-            # Save plot to file
-            try:
-                self.fig.savefig('energy_plot.png')
-            except Exception as e:
-                print(f"Plot save error: {e}")
-            
-            # Print energy value
-            print(f"Energy: {energy:.2f}")
-            
+            if self.show_plots:
+                # Update live plot
+                self.line.set_data(range(len(self.energy_values)), self.energy_values)
+                self.fig.canvas.draw()
+                self.fig.canvas.flush_events()
+            else:
+                # Save to file if not displaying
+                try:
+                    self.fig.savefig('energy_plot.png')
+                except Exception as e:
+                    print(f"Plot save error: {e}")
+        
+        print(f"Energy: {energy:.2f}")
+        
     def draw_energy_plot(self, frame, energy):
         """Draw energy plot directly on the frame"""
         # Add energy to history with sliding window
@@ -245,18 +242,12 @@ class CameraHandler:
             self.update_energy_plot(energy)
             
             # Show video frame in separate window
-            cv2.imshow(self.window_name, gray_frame)
-            cv2.moveWindow(self.window_name, 0, 0)  # Position window
-            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
-            self.frame_count += 1
+            cv2.imshow('Camera Feed', gray_frame)
+            cv2.waitKey(1)
             
-            # Update plot
-            plt.pause(0.001)  # Allow plot to update
-            
-            return cv2.waitKey(1) & 0xFF != ord('q')
+            return True
         return False
         
     def __del__(self):
         """Cleanup when object is destroyed"""
-        if hasattr(self, 'camera'):
-            self.stop_camera() 
+        self.stop_camera() 
