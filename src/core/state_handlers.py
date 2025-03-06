@@ -143,17 +143,22 @@ class StateHandler:
             print(f"Processing {len(self.movement_buffer)} movements")
             
             # Turn on wavemaker first
+            print("\nTurning wavemaker ON...")
             self.serial.write(b"on\n")
             response = self.serial.readline().decode().strip()
-            print(f"Wavemaker ON response: {response}")
+            print(f"Response: {response}")
+            
+            # Wait a moment after turning on
+            time.sleep(1)
             
             # Process each movement
-            for movement in self.movement_buffer:
+            for i, movement in enumerate(self.movement_buffer, 1):
                 # Send movement value to KB2040
                 command = f"{movement}\n"
+                print(f"\nSending movement {i}/30: {movement}")
                 self.serial.write(command.encode())
                 response = self.serial.readline().decode().strip()
-                print(f"Movement: {movement}, Response: {response}")
+                print(f"Response: {response}")
                 
                 # Update camera feed and energy plot
                 frame = self.camera.get_frame()
@@ -162,18 +167,27 @@ class StateHandler:
                     self.camera.update_energy_plot(energy)
                     self.camera.show_frame()
                 
-                time.sleep(0.1)  # Small delay between commands
+                # Wait 1 second between movements
+                time.sleep(1)
             
-            # Turn off wavemaker
+            # Turn off wavemaker when done
+            print("\nTurning wavemaker OFF...")
             self.serial.write(b"off\n")
             response = self.serial.readline().decode().strip()
-            print(f"Wavemaker OFF response: {response}")
+            print(f"Response: {response}")
             
             return True
             
         except Exception as e:
             print(f"Error driving wavemaker: {e}")
             traceback.print_exc()
+            
+            # Make sure to turn off wavemaker on error
+            try:
+                self.serial.write(b"off\n")
+            except:
+                pass
+            
             return True
         finally:
             # Cleanup
