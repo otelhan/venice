@@ -135,21 +135,20 @@ class ControllerNode:
                         movements = data.get('data', {}).get('movements', [])
                         print(f"Received {len(movements)} movements")
                         
-                        # Scale movements to motor range (20-127)
                         if movements:
                             # Store movements for driving wavemaker
                             self.controller.movement_buffer = movements
                             
-                            # Automatically transition to DRIVE_WAVEMAKER state
+                            # Transition and await state handling
                             print("Transitioning to DRIVE_WAVEMAKER state...")
                             self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                            self.controller.handle_current_state()
+                            await self.controller.handle_current_state()
                             
                             response = {
                                 "controller_name": self.controller_name,
                                 "mac": self.mac,
                                 "status": "success",
-                                "message": f"Received {len(movements)} movements and started wavemaker"
+                                "message": f"Received {len(movements)} movements and processed wavemaker"
                             }
                         else:
                             response = {
