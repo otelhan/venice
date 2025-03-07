@@ -14,7 +14,8 @@ class ControllerNode:
     def __init__(self, controller_name, port=8765):
         self.controller_name = controller_name
         self.port = port
-        self.config = self._load_config()
+        self.config = self._load_config()  # Full config with all controllers
+        print("\nFull config loaded:", self.config)  # Debug print
         
         # Incoming buffer structure
         self.incoming_buffer = []  # List of movement arrays
@@ -24,15 +25,17 @@ class ControllerNode:
         # Get controller-specific config
         if self.config and 'controllers' in self.config:
             self.controller_config = self.config['controllers'].get(controller_name, {})
-            print(f"\nLoaded config for {controller_name}:")
-            print(f"Controller config: {self.controller_config}")
+            print(f"\nController-specific config for {controller_name}:", self.controller_config)
             print(f"Destination: {self.controller_config.get('destination', 'None')}")
         else:
             self.controller_config = {}
             print("No controller config found!")
             
-        # Initialize controller with its config
-        self.controller = MachineController(config=self.controller_config)
+        # Initialize controller with both configs
+        self.controller = MachineController(
+            config=self.controller_config,  # Controller-specific config
+            full_config=self.config        # Full config with all controllers
+        )
         self.controller.node = self  # Give controller reference to this node
         
         self.mac = self.controller_config['mac']

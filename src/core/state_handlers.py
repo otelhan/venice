@@ -18,7 +18,7 @@ import asyncio
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
 class StateHandler:
-    def __init__(self, display_config=None, controller_config=None):
+    def __init__(self, display_config=None, controller_config=None, full_config=None):
         self.serial_port = None
         self.port_name = None
         self.baud_rate = 9600
@@ -28,21 +28,16 @@ class StateHandler:
         self.serial_thread = None
         self.serial = None
         self.display_config = display_config or {}
-        self.config = controller_config  # Store the full controller config
+        self.config = controller_config  # Store controller-specific config
+        self.full_config = full_config or {}  # Store full config with all controllers
         
-        # Store full controllers config for resolving destinations
-        if controller_config and 'controllers' in controller_config:
-            self.controllers = controller_config['controllers']
-        else:
-            self.controllers = {}
-        
-        print(f"StateHandler config: {self.config}")  # Add this debug print
-        print(f"StateHandler destination: {self.config.get('destination', 'None')}")  # Add this
+        print(f"StateHandler config: {self.config}")
+        print(f"StateHandler destination: {self.config.get('destination', 'None')}")
         
         # Initialize camera
-        self.camera = CameraHandler(display_config)
-        if not self.camera.is_running:
-            print("WARNING: Camera not initialized")
+        self.camera = None
+        if self.display_config.get('show_camera', False):
+            self.camera = CameraHandler(self.display_config)
         
         # Remove the wavemaker plot setup
         self.energy_values = []
@@ -241,16 +236,16 @@ class StateHandler:
         try:
             print(f"\nPreparing to send data to {destination}")
             
-            # Get destination controller config
-            if not self.config or 'controllers' not in self.config:
+            # Get destination controller config from full config
+            if not self.full_config or 'controllers' not in self.full_config:
                 print("No controller configuration found!")
                 print("Config:", self.config)
                 return False
             
-            dest_config = self.config['controllers'].get(destination)
+            dest_config = self.full_config['controllers'].get(destination)
             if not dest_config:
                 print(f"Unknown destination controller: {destination}")
-                print("Available controllers:", list(self.config['controllers'].keys()))
+                print("Available controllers:", list(self.full_config['controllers'].keys()))
                 return False
             
             # Print connection details

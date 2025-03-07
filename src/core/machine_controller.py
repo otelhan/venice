@@ -5,9 +5,10 @@ import serial
 import serial.tools.list_ports
 
 class MachineController:
-    def __init__(self, config=None):
+    def __init__(self, config=None, full_config=None):
         self.current_state = None
         self.config = config or {}
+        self.full_config = full_config or {}  # Store full config
         self.display_config = config.get('display', {}) if config else {}
         
         # Add retry counter and limit
@@ -22,7 +23,8 @@ class MachineController:
         
         self.state_handler = StateHandler(
             display_config=self.display_config,
-            controller_config=self.config
+            controller_config=self.config,
+            full_config=self.full_config  # Pass full config to StateHandler
         )
         self.movement_buffer = []  # Store received movements
         self.serial = None
