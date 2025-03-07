@@ -33,18 +33,9 @@ class StateHandler:
         if not self.camera.is_running:
             print("WARNING: Camera not initialized")
         
-        # Setup energy plot
-        plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(8, 4))
-        self.line, = self.ax.plot([], [], 'b-', linewidth=2)
-        self.ax.set_ylim(0, 255)
-        self.ax.set_xlabel('Frame')
-        self.ax.set_ylabel('Movement Value')
-        self.ax.set_title('Wavemaker Control Values')
-        self.ax.grid(True)
+        # Remove the wavemaker plot setup
         self.energy_values = []
         self.window_size = 100
-        plt.show()
         
     def find_kb2040_port(self):
         """Find the KB2040 port"""
@@ -95,7 +86,9 @@ class StateHandler:
                 break
                 
     def calculate_frame_energy(self, frame):
-        """Calculate frame energy using ROI and movement detection"""
+        """Calculate frame energy using ROI and movement detection.
+        This is only used for video input not camera"""
+        
         try:
             # Scale down frame
             height, width = frame.shape[:2]
