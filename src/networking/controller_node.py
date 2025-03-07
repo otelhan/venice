@@ -163,7 +163,7 @@ class ControllerNode:
                 # Process immediately if IDLE
                 self.controller.movement_buffer = movements
                 self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                self.controller.handle_current_state()
+                await self.controller.handle_current_state()  # Await the async call
                 return {"status": "ok"}
             else:
                 # Buffer message if busy (except during SEND_DATA state)

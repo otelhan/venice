@@ -29,7 +29,7 @@ class MachineController:
         if not self._init_serial():
             print("WARNING: Failed to initialize KB2040 connection")
         
-    def handle_current_state(self):
+    async def handle_current_state(self):
         """Handle the current state"""
         print(f"\nHandling state: {self.current_state.name}")
         
@@ -45,7 +45,7 @@ class MachineController:
                         self.node.clear_incoming_buffer()
                     self.transition_to(MachineState.SEND_DATA)
                     self.send_retries = 0
-                    self.handle_current_state()  # Call handle_current_state again after transition
+                    await self.handle_current_state()  # Await the async call
                 
         elif self.current_state == MachineState.SEND_DATA:
             # Get destination from config
@@ -53,7 +53,7 @@ class MachineController:
             if dest:
                 print(f"\nAttempting to send data to {dest}")
                 print(f"Current retry count: {self.send_retries}/{self.max_retries}")
-                success = self.state_handler.send_data(dest)
+                success = await self.state_handler.send_data(dest)  # Await the async call
                 if success:
                     print("Data sent successfully")
                     self.send_retries = 0

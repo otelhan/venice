@@ -29,6 +29,13 @@ class StateHandler:
         self.serial = None
         self.display_config = display_config or {}
         self.config = controller_config  # Store the full controller config
+        
+        # Store full controllers config for resolving destinations
+        if controller_config and 'controllers' in controller_config:
+            self.controllers = controller_config['controllers']
+        else:
+            self.controllers = {}
+        
         print(f"StateHandler config: {self.config}")  # Add this debug print
         print(f"StateHandler destination: {self.config.get('destination', 'None')}")  # Add this
         
