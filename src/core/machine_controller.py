@@ -10,6 +10,10 @@ class MachineController:
         self.config = config or {}
         self.display_config = config.get('display', {}) if config else {}
         
+        # Add retry counter and limit
+        self.send_retries = 0
+        self.max_retries = 3
+        
         # Print config values
         print("\nController Configuration:")
         print(f"Full config: {self.config}")
@@ -40,23 +44,31 @@ class MachineController:
                     if hasattr(self, 'node'):  # Reference to ControllerNode
                         self.node.clear_incoming_buffer()
                     self.transition_to(MachineState.SEND_DATA)
+                    self.send_retries = 0  # Reset retry counter
                 
         elif self.current_state == MachineState.SEND_DATA:
             # Get destination from config
             dest = self.config.get('destination')
             if dest:
-                print(f"Sending data to destination: {dest}")
+                print(f"Sending data to destination: {dest} (Attempt {self.send_retries + 1}/{self.max_retries})")
                 success = self.state_handler.send_data(dest)
                 if success:
                     print("Data sent successfully")
+                    self.send_retries = 0  # Reset counter on success
+                    print("Transitioning back to IDLE")
+                    self.transition_to(MachineState.IDLE)
                 else:
-                    print("Failed to send data")
+                    self.send_retries += 1
+                    if self.send_retries >= self.max_retries:
+                        print(f"Failed to send after {self.max_retries} attempts")
+                        print("Transitioning back to IDLE")
+                        self.transition_to(MachineState.IDLE)
+                    else:
+                        print(f"Retrying... ({self.send_retries}/{self.max_retries})")
             else:
                 print("No destination configured")
-            
-            # Return to IDLE after sending
-            print("Transitioning back to IDLE")
-            self.transition_to(MachineState.IDLE)
+                print("Transitioning back to IDLE")
+                self.transition_to(MachineState.IDLE)
     
     def transition_to(self, new_state: MachineState):
         """Transition to a new state"""
