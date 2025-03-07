@@ -35,7 +35,7 @@ class CameraHandler:
         
         # Create windows and setup plotting if display is enabled
         if self.show_camera:
-            cv2.namedWindow('Camera Test', cv2.WINDOW_NORMAL)
+            cv2.namedWindow('Camera Feed', cv2.WINDOW_NORMAL)  # Changed name to be clearer
         
         if self.show_plots:
             plt.ion()  # Interactive mode
