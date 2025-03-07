@@ -18,6 +18,7 @@ class MachineController:
         print("\nController Configuration:")
         print(f"Full config: {self.config}")
         print(f"Display config: {self.display_config}")
+        print(f"Destination: {self.config.get('destination', 'None')}")  # Print destination
         
         self.state_handler = StateHandler(
             display_config=self.display_config,
@@ -50,11 +51,12 @@ class MachineController:
             # Get destination from config
             dest = self.config.get('destination')
             if dest:
-                print(f"Sending data to destination: {dest} (Attempt {self.send_retries + 1}/{self.max_retries})")
+                print(f"\nAttempting to send data to {dest}")
+                print(f"Current retry count: {self.send_retries}/{self.max_retries}")
                 success = self.state_handler.send_data(dest)
                 if success:
                     print("Data sent successfully")
-                    self.send_retries = 0  # Reset counter on success
+                    self.send_retries = 0
                     print("Transitioning back to IDLE")
                     self.transition_to(MachineState.IDLE)
                 else:
@@ -66,7 +68,8 @@ class MachineController:
                     else:
                         print(f"Retrying... ({self.send_retries}/{self.max_retries})")
             else:
-                print("No destination configured")
+                print("\nNo destination configured in config!")
+                print("Config:", self.config)
                 print("Transitioning back to IDLE")
                 self.transition_to(MachineState.IDLE)
     

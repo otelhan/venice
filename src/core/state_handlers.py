@@ -229,36 +229,33 @@ class StateHandler:
     async def send_data(self, destination):
         """Send collected data to destination controller"""
         try:
+            print(f"\nPreparing to send data to {destination}")
+            
             # Get destination controller config
             if not self.config or 'controllers' not in self.config:
                 print("No controller configuration found!")
+                print("Config:", self.config)
                 return False
             
             dest_config = self.config['controllers'].get(destination)
             if not dest_config:
                 print(f"Unknown destination controller: {destination}")
+                print("Available controllers:", list(self.config['controllers'].keys()))
                 return False
             
-            # Prepare data packet
-            data_packet = {
-                'type': 'data',
-                'data': {
-                    'movements': self.outgoing_buffer['movements'],
-                    'energy_values': self.outgoing_buffer['energy_values'],
-                    'timestamps': self.outgoing_buffer['timestamps']
-                },
-                'metadata': {
-                    'source': self.config.get('name', 'unknown'),
-                    'type': 'processed_movements'
-                }
-            }
+            # Print connection details
+            print(f"Destination IP: {dest_config['ip']}")
+            print(f"Destination MAC: {dest_config['mac']}")
             
             # Send to destination with connection timeout and retries
             uri = f"ws://{dest_config['ip']}:8765"
-            max_connection_attempts = 2  # Only try to connect twice
-            connection_timeout = 3  # 3 seconds for connection attempt
+            print(f"Connecting to: {uri}")
+            
+            max_connection_attempts = 2
+            connection_timeout = 3
             
             for attempt in range(max_connection_attempts):
+                print(f"\nConnection attempt {attempt + 1}/{max_connection_attempts}")
                 try:
                     # Use asyncio.wait_for for the entire connection attempt
                     async with await asyncio.wait_for(
@@ -267,7 +264,7 @@ class StateHandler:
                     ) as websocket:
                         try:
                             await asyncio.wait_for(
-                                websocket.send(json.dumps(data_packet)),
+                                websocket.send(json.dumps(self.outgoing_buffer)),
                                 timeout=3  # 3 second timeout for send
                             )
                             response = await asyncio.wait_for(
