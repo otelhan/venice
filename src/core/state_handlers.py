@@ -284,8 +284,7 @@ class StateHandler:
                             continue  # Try next connection attempt
                             
                 except (asyncio.TimeoutError,
-                        websockets.exceptions.ConnectionError, 
-                        websockets.exceptions.InvalidStatusCode,
+                        websockets.exceptions.WebSocketException,  # Use generic WebSocket exception
                         ConnectionRefusedError) as e:
                     print(f"Connection attempt {attempt + 1} failed: {e}")
                     if attempt < max_connection_attempts - 1:
