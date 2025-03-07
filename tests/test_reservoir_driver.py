@@ -9,8 +9,11 @@ from src.networking.input_node import InputNode
 
 class ReservoirTester:
     def __init__(self):
-        self.input_node = InputNode()
         self.config = self._load_config()
+        # Initialize input node with config
+        self.input_node = InputNode()
+        self.input_node.config = self.config
+        self.input_node.controllers = self.config.get('controllers', {})
         self.packet_count = 0
         
     def _load_config(self):
@@ -30,14 +33,22 @@ class ReservoirTester:
         
     async def send_to_controllers(self, controller_names):
         """Send movement data to specified controllers"""
+        # Generate random movement data first
+        self.movement_buffer = self.generate_movement_data()
+        self.input_node.movement_buffer = self.movement_buffer
+        
         for controller in controller_names:
             try:
+                if controller not in self.config['controllers']:
+                    print(f"\nController {controller} not found in config!")
+                    print(f"Available controllers: {list(self.config['controllers'].keys())}")
+                    continue
+                    
                 print(f"\nSending to {controller}...")
                 response = await self.input_node.send_movement_data(controller)
                 
                 if response.get('status') == 'rejected':
                     print(f"Message rejected by {controller}: {response.get('message')}")
-                    # Controller is busy but we can continue with other controllers
                     continue
                 elif response.get('status') == 'error':
                     print(f"Error from {controller}: {response.get('message')}")
