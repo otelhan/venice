@@ -41,11 +41,11 @@ class MachineController:
                 next_state = self.state_handler.drive_wavemaker()
                 if next_state:
                     print("Transitioning to SEND_DATA")
-                    # Clear message buffer before transitioning to SEND_DATA
-                    if hasattr(self, 'node'):  # Reference to ControllerNode
+                    if hasattr(self, 'node'):
                         self.node.clear_incoming_buffer()
                     self.transition_to(MachineState.SEND_DATA)
-                    self.send_retries = 0  # Reset retry counter
+                    self.send_retries = 0
+                    self.handle_current_state()  # Call handle_current_state again after transition
                 
         elif self.current_state == MachineState.SEND_DATA:
             # Get destination from config
