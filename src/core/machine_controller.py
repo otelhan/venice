@@ -3,6 +3,7 @@ from src.core.state_handlers import StateHandler
 from src.core.camera_handler import CameraHandler
 import serial
 import serial.tools.list_ports
+import asyncio
 
 class MachineController:
     def __init__(self, config=None, full_config=None):
@@ -50,19 +51,18 @@ class MachineController:
                     await self.handle_current_state()
                 
         elif self.current_state == MachineState.SEND_DATA:
-            # Get destination from config
             dest = self.config.get('destination')
             if dest:
                 print(f"\nAttempting to send data to {dest}")
                 print(f"Current retry count: {self.send_retries}/{self.max_retries}")
-                success = await self.state_handler.send_data(dest)
                 
+                success = await self.state_handler.send_data(dest)
                 if success:
-                    print("Data sent successfully")
+                    print("Data accepted by destination")
                     self.send_retries = 0
                     print("Transitioning back to IDLE")
                     self.transition_to(MachineState.IDLE)
-                    # Process any buffered messages
+                    await asyncio.sleep(1)  # Give time for state change to settle
                     if hasattr(self, 'node'):
                         await self.node.process_buffer()
                 else:
@@ -71,12 +71,12 @@ class MachineController:
                         print(f"Failed to send after {self.max_retries} attempts")
                         print("Transitioning back to IDLE")
                         self.transition_to(MachineState.IDLE)
-                        # Process any buffered messages
+                        await asyncio.sleep(1)  # Give time for state change to settle
                         if hasattr(self, 'node'):
                             await self.node.process_buffer()
                     else:
-                        print(f"Retrying... ({self.send_retries}/{self.max_retries})")
-                        # Try again immediately
+                        print(f"Retrying in 2 seconds... ({self.send_retries}/{self.max_retries})")
+                        await asyncio.sleep(2)  # Wait before retry
                         await self.handle_current_state()
             else:
                 print("\nNo destination configured in config!")

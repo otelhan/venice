@@ -267,52 +267,42 @@ class StateHandler:
             }
             
             print(f"Converted {len(energy_values)} energy values to movements")
-            
-            # Print connection details
             print(f"Destination IP: {dest_config['ip']}")
             print(f"Destination MAC: {dest_config['mac']}")
             
-            # Send to destination with connection timeout and retries
             uri = f"ws://{dest_config['ip']}:8765"
             print(f"Connecting to: {uri}")
             
-            max_connection_attempts = 2
-            connection_timeout = 3
-            
-            for attempt in range(max_connection_attempts):
-                print(f"\nConnection attempt {attempt + 1}/{max_connection_attempts}")
-                try:
-                    async with await asyncio.wait_for(
-                        websockets.connect(uri), 
-                        timeout=connection_timeout
-                    ) as websocket:
-                        try:
-                            await asyncio.wait_for(
-                                websocket.send(json.dumps(movement_data)),
-                                timeout=3
-                            )
-                            response = await asyncio.wait_for(
-                                websocket.recv(),
-                                timeout=3
-                            )
-                            print(f"Response from {destination}: {response}")
-                            return True
+            try:
+                async with await asyncio.wait_for(
+                    websockets.connect(uri), 
+                    timeout=5
+                ) as websocket:
+                    try:
+                        await asyncio.wait_for(
+                            websocket.send(json.dumps(movement_data)),
+                            timeout=3
+                        )
+                        response = await asyncio.wait_for(
+                            websocket.recv(),
+                            timeout=3
+                        )
+                        response_data = json.loads(response)
+                        print(f"Response from {destination}: {response_data}")
+                        
+                        # Return True for both success and rejection
+                        # This lets MachineController handle the retry logic
+                        return True
                             
-                        except asyncio.TimeoutError:
-                            print(f"Timeout waiting for response from {destination}")
-                            continue
-                            
-                except (asyncio.TimeoutError,
-                        websockets.exceptions.WebSocketException,
-                        ConnectionRefusedError) as e:
-                    print(f"Connection attempt {attempt + 1} failed: {e}")
-                    if attempt < max_connection_attempts - 1:
-                        print("Retrying connection...")
-                        await asyncio.sleep(1)
-                    continue
-                
-            print(f"Failed to connect to {destination} after {max_connection_attempts} attempts")
-            return False
+                    except asyncio.TimeoutError:
+                        print(f"Timeout waiting for response from {destination}")
+                        return False
+                        
+            except (asyncio.TimeoutError,
+                    websockets.exceptions.WebSocketException,
+                    ConnectionRefusedError) as e:
+                print(f"Connection failed: {e}")
+                return False
             
         except Exception as e:
             print(f"Error sending data: {e}")
