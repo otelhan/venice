@@ -231,6 +231,15 @@ class StateHandler:
         except Exception as e:
             print(f"Error updating plot: {e}")
 
+    def _energy_to_movement(self, energy_value):
+        """Convert energy value to movement value (20-127)"""
+        # Assuming energy values are in range 0-8
+        # Map to 20-127 range using non-linear transformation
+        normalized = min(max(energy_value / 8.0, 0), 1)  # Normalize to 0-1
+        # Apply non-linear transformation (squared) to emphasize higher energies
+        movement = int(20 + (normalized * normalized * (127 - 20)))
+        return min(max(movement, 20), 127)  # Ensure within bounds
+
     async def send_data(self, destination):
         """Send collected data to destination controller"""
         try:
@@ -248,6 +257,17 @@ class StateHandler:
                 print("Available controllers:", list(self.full_config['controllers'].keys()))
                 return False
             
+            # Convert energy values to movement values
+            energy_values = self.outgoing_buffer.get('energy_values', [])
+            movement_data = {
+                'type': 'data',
+                'data': {
+                    'movements': [self._energy_to_movement(e) for e in energy_values]
+                }
+            }
+            
+            print(f"Converted {len(energy_values)} energy values to movements")
+            
             # Print connection details
             print(f"Destination IP: {dest_config['ip']}")
             print(f"Destination MAC: {dest_config['mac']}")
@@ -262,34 +282,33 @@ class StateHandler:
             for attempt in range(max_connection_attempts):
                 print(f"\nConnection attempt {attempt + 1}/{max_connection_attempts}")
                 try:
-                    # Use asyncio.wait_for for the entire connection attempt
                     async with await asyncio.wait_for(
                         websockets.connect(uri), 
                         timeout=connection_timeout
                     ) as websocket:
                         try:
                             await asyncio.wait_for(
-                                websocket.send(json.dumps(self.outgoing_buffer)),
-                                timeout=3  # 3 second timeout for send
+                                websocket.send(json.dumps(movement_data)),
+                                timeout=3
                             )
                             response = await asyncio.wait_for(
                                 websocket.recv(),
-                                timeout=3  # 3 second timeout for receive
+                                timeout=3
                             )
                             print(f"Response from {destination}: {response}")
                             return True
                             
                         except asyncio.TimeoutError:
                             print(f"Timeout waiting for response from {destination}")
-                            continue  # Try next connection attempt
+                            continue
                             
                 except (asyncio.TimeoutError,
-                        websockets.exceptions.WebSocketException,  # Use generic WebSocket exception
+                        websockets.exceptions.WebSocketException,
                         ConnectionRefusedError) as e:
                     print(f"Connection attempt {attempt + 1} failed: {e}")
                     if attempt < max_connection_attempts - 1:
                         print("Retrying connection...")
-                        await asyncio.sleep(1)  # Wait 1 second between attempts
+                        await asyncio.sleep(1)
                     continue
                 
             print(f"Failed to connect to {destination} after {max_connection_attempts} attempts")
