@@ -109,35 +109,16 @@ class ControllerNode:
             print("Controller stopped")
     
     async def _handle_connection(self, websocket):
-        """Handle websocket connection - removed path parameter"""
+        """Handle websocket connection"""
         try:
             async for message in websocket:
                 try:
                     data = json.loads(message)
                     print(f"\nReceived message: {data['type']}")
                     
-                    if not hasattr(self, 'movement_buffer'):
-                        self.movement_buffer = []
-                        
                     response = await self.handle_message(data)
                     await websocket.send(json.dumps(response))
                     
-                    # Check buffer when returning to IDLE
-                    if self.controller.current_state == MachineState.IDLE:
-                        await self.process_buffer()
-                        
-                except json.JSONDecodeError as e:
-                    print(f"Invalid JSON received: {e}")
-                    await websocket.send(json.dumps({
-                        "status": "error",
-                        "message": "Invalid JSON format"
-                    }))
-                except KeyError as e:
-                    print(f"Missing required field: {e}")
-                    await websocket.send(json.dumps({
-                        "status": "error",
-                        "message": f"Missing field: {str(e)}"
-                    }))
                 except Exception as e:
                     print(f"Error processing message: {e}")
                     await websocket.send(json.dumps({
@@ -146,7 +127,7 @@ class ControllerNode:
                     }))
                 
         except websockets.exceptions.ConnectionClosed:
-            print("Connection closed")
+            print("Connection closed normally")
         except Exception as e:
             print(f"Connection error: {e}")
     
@@ -162,27 +143,34 @@ class ControllerNode:
             if len(movements) != self.max_movements_per_message:
                 return {"status": "error", "message": "Invalid number of movements"}
 
-            if self.controller.current_state == MachineState.IDLE:
+            # Check current state
+            if self.controller.current_state == MachineState.SEND_DATA:
+                print("\nRejecting incoming data - currently sending data")
+                return {"status": "rejected", "message": "In SEND_DATA state"}
+                
+            elif self.controller.current_state == MachineState.DRIVE_WAVEMAKER:
+                print("\nRejecting incoming data - currently driving wavemaker")
+                return {"status": "rejected", "message": "In DRIVE_WAVEMAKER state"}
+                
+            elif self.controller.current_state == MachineState.IDLE:
                 # Process immediately if IDLE
+                print("\nAccepting incoming data in IDLE state")
                 self.controller.movement_buffer = movements
                 self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                await self.controller.handle_current_state()  # Await the async call
-                return {"status": "ok"}
+                await self.controller.handle_current_state()
+                return {"status": "ok", "message": "Data accepted and processed"}
+                
             else:
-                # Buffer message if busy (except during SEND_DATA state)
-                if self.controller.current_state != MachineState.SEND_DATA:
-                    if len(self.incoming_buffer) < self.max_incoming_buffer:
-                        print(f"\nController busy ({self.controller.current_state.name}), buffering movements")
-                        self.incoming_buffer.append(movements)
-                        print(f"Incoming buffer size: {len(self.incoming_buffer)}/{self.max_incoming_buffer}")
-                        return {"status": "buffered"}
-                    else:
-                        print(f"\nIncoming buffer full ({self.max_incoming_buffer} sets), rejecting new movements")
-                        return {"status": "rejected", "message": "Buffer full"}
+                # Buffer message if in other states
+                if len(self.incoming_buffer) < self.max_incoming_buffer:
+                    print(f"\nBuffering data - current state: {self.controller.current_state.name}")
+                    self.incoming_buffer.append(movements)
+                    print(f"Buffer size: {len(self.incoming_buffer)}/{self.max_incoming_buffer}")
+                    return {"status": "buffered", "message": "Data queued for processing"}
                 else:
-                    print("\nIn SEND_DATA state, rejecting incoming movements")
-                    return {"status": "rejected", "message": "In SEND_DATA state"}
-        
+                    print("\nRejecting data - buffer full")
+                    return {"status": "rejected", "message": "Buffer full"}
+
         return {"status": "ok"}
 
     def clear_incoming_buffer(self):
