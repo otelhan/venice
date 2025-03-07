@@ -24,26 +24,39 @@ class MachineController:
         if not self._init_serial():
             print("WARNING: Failed to initialize KB2040 connection")
         
-    async def handle_current_state(self):
+    def handle_current_state(self):
         """Handle the current state"""
         print(f"\nHandling state: {self.current_state.name}")
         
         if self.current_state == MachineState.DRIVE_WAVEMAKER:
-            next_state = await self.state_handler.drive_wavemaker()
-            if next_state:
-                self.transition_to(next_state)
-            
+            if self.movement_buffer and self.serial:
+                print(f"Movement buffer size: {len(self.movement_buffer)}")
+                self.state_handler.movement_buffer = self.movement_buffer
+                self.state_handler.serial = self.serial
+                next_state = self.state_handler.drive_wavemaker()
+                if next_state:
+                    print("Transitioning to SEND_DATA")
+                    # Clear message buffer before transitioning to SEND_DATA
+                    if hasattr(self, 'node'):  # Reference to ControllerNode
+                        self.node.clear_buffer()
+                    self.transition_to(MachineState.SEND_DATA)
+                
         elif self.current_state == MachineState.SEND_DATA:
-            next_state = await self.state_handler.send_data()
-            if next_state:
-                self.transition_to(next_state)
+            # Get destination from config
+            dest = self.config.get('destination')
+            if dest:
+                print(f"Sending data to destination: {dest}")
+                success = self.state_handler.send_data(dest)
+                if success:
+                    print("Data sent successfully")
+                else:
+                    print("Failed to send data")
+            else:
+                print("No destination configured")
             
-        elif self.current_state == MachineState.COLLECT_SIGNAL:
-            result = self.state_handler.collect_signal()
-            if result == 'd':
-                self.transition_to(MachineState.DRIVE_WAVEMAKER)
-            elif result == 'q':
-                return 'q'
+            # Return to IDLE after sending
+            print("Transitioning back to IDLE")
+            self.transition_to(MachineState.IDLE)
     
     def transition_to(self, new_state: MachineState):
         """Transition to a new state"""

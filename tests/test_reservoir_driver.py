@@ -30,57 +30,24 @@ class ReservoirTester:
         
     async def send_to_controllers(self, controller_names):
         """Send movement data to specified controllers"""
-        if not self.config or 'controllers' not in self.config:
-            print("No controller configuration found!")
-            return
-            
-        # Generate random movement data
-        movements = self.generate_movement_data()
-        self.packet_count += 1
-        
-        # Print movement data in a readable format
-        print("\n=== Movement Packet #{} ===".format(self.packet_count))
-        print("Values:")
-        for i, value in enumerate(movements, 1):
-            print(f"{i:2d}: {value:3d}", end='   ')
-            if i % 5 == 0:  # New line every 5 values
-                print()
-        if len(movements) % 5 != 0:
-            print()  # Add final newline if needed
-        print("Average: {:.1f}".format(sum(movements)/len(movements)))
-        print("Min: {}, Max: {}".format(min(movements), max(movements)))
-        
-        # Send to each specified controller
-        for name in controller_names:
-            if name in self.config['controllers']:
-                controller = self.config['controllers'][name]
-                print(f"\nSending to {name} ({controller['ip']})...")
+        for controller in controller_names:
+            try:
+                print(f"\nSending to {controller}...")
+                response = await self.input_node.send_movement_data(controller)
                 
-                data_packet = {
-                    'type': 'data',  # Add message type
-                    'data': {  # Nest data under 'data' key
-                        'movements': movements
-                    },
-                    'timestamp': time.time(),
-                    'metadata': {
-                        'source': 'reservoir_tester',
-                        'type': 'test_movements',
-                        'count': len(movements),
-                        'packet_id': self.packet_count
-                    }
-                }
+                if response.get('status') == 'rejected':
+                    print(f"Message rejected by {controller}: {response.get('message')}")
+                    # Controller is busy but we can continue with other controllers
+                    continue
+                elif response.get('status') == 'error':
+                    print(f"Error from {controller}: {response.get('message')}")
+                    continue
+                    
+                print(f"Successfully sent to {controller}")
                 
-                try:
-                    # Connect directly to controller's websocket
-                    uri = f"ws://{controller['ip']}:8765"
-                    async with websockets.connect(uri) as websocket:
-                        await websocket.send(json.dumps(data_packet))
-                        response = await websocket.recv()
-                        print(f"Response: {response}")
-                except Exception as e:
-                    print(f"Error sending to {name}: {e}")
-            else:
-                print(f"Unknown controller: {name}")
+            except Exception as e:
+                print(f"Error sending to {controller}: {e}")
+                continue
 
 async def main():
     tester = ReservoirTester()

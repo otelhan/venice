@@ -210,8 +210,7 @@ class InputNode:
                 self.movement_buffer = movements
                 print(f"\nCollected {len(movements)} measurements")
                 plt.close('all')  # Close plot windows after collection
-                return True
-            return False
+
             
         except Exception as e:
             print(f"Error during movement collection: {e}")
@@ -221,19 +220,30 @@ class InputNode:
             plt.close('all')  # Ensure all plot windows are closed
         
     async def send_movement_data(self, controller_id):
-        """Send collected movement data to controller"""
-        if not self.movement_buffer:
-            print("No movement data to send!")
-            return
-            
-        data_packet = {
-            'movements': self.movement_buffer,
-            'timestamp': time.time(),
-            'metadata': {
-                'source': 'input_node',
-                'video': 'Ponte delle Guglie_night.mp4',
-                'frames': len(self.movement_buffer)
-            }
-        }
-        
-        await self.send_data(controller_id, data_packet) 
+        """Send movement data to a specific controller"""
+        try:
+            uri = f"ws://{self.controllers[controller_id]['ip']}:8765"
+            async with websockets.connect(uri) as websocket:
+                data_packet = {
+                    'type': 'data',
+                    'data': {
+                        'movements': self.movement_buffer
+                    }
+                }
+                
+                await websocket.send(json.dumps(data_packet))
+                response = await websocket.recv()
+                response_data = json.loads(response)
+                
+                if response_data.get('status') == 'rejected':
+                    print(f"Message rejected by {controller_id}: {response_data.get('message')}")
+                elif response_data.get('status') == 'error':
+                    print(f"Error from {controller_id}: {response_data.get('message')}")
+                else:
+                    print(f"Message accepted by {controller_id}")
+                    
+                return response_data
+                
+        except Exception as e:
+            print(f"Error sending to {controller_id}: {e}")
+            return {"status": "error", "message": str(e)} 

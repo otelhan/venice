@@ -27,7 +27,6 @@ class StateHandler:
         self.serial_thread = None
         self.serial = None
         self.config = controller_config or {}  # Store full config
-        self.destination = self.config.get('destination')
         
         # Initialize camera
         self.camera = CameraHandler(display_config)
@@ -37,6 +36,14 @@ class StateHandler:
         # Remove the wavemaker plot setup
         self.energy_values = []
         self.window_size = 100
+        
+        # Outgoing buffer for collected energy values
+        self.outgoing_buffer = {
+            'movements': [],  # Store movement commands (20-127)
+            'energy_values': [],  # Store corresponding energy readings
+            'timestamps': []  # Store timestamps for each reading
+        }
+        self.max_buffer_size = 30  # Maximum number of values to store
         
     def find_kb2040_port(self):
         """Find the KB2040 port"""
@@ -129,44 +136,7 @@ class StateHandler:
             print(f"Error scaling movement: {e}")
             return 127  # Default to max on error
 
-    async def send_data(self):
-        """Handle SEND_DATA state"""
-        if not self.energy_values:
-            print("No energy data to send")
-            return MachineState.IDLE
-
-        if not self.destination:
-            print("No destination controller configured")
-            return MachineState.IDLE
-
-        try:
-            # Get destination controller info
-            dest_config = self.config['controllers'][self.destination]
-            uri = f"ws://{dest_config['ip']}:8765"
-
-            data_packet = {
-                'type': 'energy_data',
-                'source': self.config['name'],
-                'data': {
-                    'energy_values': self.energy_values,
-                    'timestamp': time.time()
-                }
-            }
-
-            # Send data to next controller
-            print(f"\nSending energy data to {self.destination}")
-            async with websockets.connect(uri) as websocket:
-                await websocket.send(json.dumps(data_packet))
-                response = await websocket.recv()
-                print(f"Response from {self.destination}: {response}")
-                
-            return MachineState.IDLE
-
-        except Exception as e:
-            print(f"Error sending data to {self.destination}: {e}")
-            return MachineState.IDLE
-
-    async def drive_wavemaker(self):
+    def drive_wavemaker(self):
         """Drive the wavemaker with movement data"""
         if not self.serial:
             print("ERROR: No serial connection to KB2040")
@@ -176,13 +146,10 @@ class StateHandler:
             print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} movements")
             
-            # Initialize energy collection
-            self.energy_values = []  # Store as instance variable
-            
             # Start camera
             self.camera.start_camera()
             
-            # Turn on wavemaker first
+            # Turn on wavemaker
             print("\nTurning wavemaker ON...")
             self.serial.write(b"on\n")
             response = self.serial.readline().decode().strip()
@@ -205,33 +172,34 @@ class StateHandler:
                     energy = self.camera.calculate_frame_energy(frame)
                     print(f"Frame {i} energy: {energy:.2f}")
                     
-                    # Scale energy to motor range (20-127)
-                    scaled_energy = int(20 + (energy * (127 - 20) / 8))
-                    scaled_energy = max(20, min(127, scaled_energy))
-                    self.energy_values.append(scaled_energy)
+                    # Store in outgoing buffer
+                    self.outgoing_buffer['movements'].append(movement)
+                    self.outgoing_buffer['energy_values'].append(energy)
+                    self.outgoing_buffer['timestamps'].append(time.time())
+                    
+                    # Maintain buffer size
+                    if len(self.outgoing_buffer['movements']) > self.max_buffer_size:
+                        self.outgoing_buffer['movements'].pop(0)
+                        self.outgoing_buffer['energy_values'].pop(0)
+                        self.outgoing_buffer['timestamps'].pop(0)
                     
                     # Update plot
                     self.camera.update_energy_plot(energy)
                 
                 time.sleep(1)  # Wait between movements
             
-            # Turn off wavemaker
-            print("\nTurning wavemaker OFF...")
-            self.serial.write(b"off\n")
-            response = self.serial.readline().decode().strip()
-            print(f"Wavemaker OFF response: {response}")
-            
-            # After wavemaker control, transition to SEND_DATA state
-            if self.energy_values:
-                return MachineState.SEND_DATA
-            
-            return MachineState.IDLE
+            return True
             
         except Exception as e:
             print(f"Error driving wavemaker: {e}")
-            return MachineState.IDLE
+            return True
         finally:
-            self.camera.stop_camera()
+            # Turn off wavemaker
+            try:
+                print("\nTurning wavemaker OFF...")
+                self.serial.write(b"off\n")
+            except:
+                pass
 
     def __del__(self):
         """Cleanup when object is destroyed"""
@@ -256,3 +224,42 @@ class StateHandler:
             
         except Exception as e:
             print(f"Error updating plot: {e}")
+
+    async def send_data(self, destination):
+        """Send collected data to destination controller"""
+        try:
+            # Get destination controller config
+            if not self.config or 'controllers' not in self.config:
+                print("No controller configuration found!")
+                return False
+            
+            dest_config = self.config['controllers'].get(destination)
+            if not dest_config:
+                print(f"Unknown destination controller: {destination}")
+                return False
+            
+            # Prepare data packet with outgoing buffer
+            data_packet = {
+                'type': 'data',
+                'data': {
+                    'movements': self.outgoing_buffer['movements'],
+                    'energy_values': self.outgoing_buffer['energy_values'],
+                    'timestamps': self.outgoing_buffer['timestamps']
+                },
+                'metadata': {
+                    'source': self.config.get('name', 'unknown'),
+                    'type': 'processed_movements'
+                }
+            }
+            
+            # Send to destination
+            uri = f"ws://{dest_config['ip']}:8765"
+            async with websockets.connect(uri) as websocket:
+                await websocket.send(json.dumps(data_packet))
+                response = await websocket.recv()
+                print(f"Response from {destination}: {response}")
+                return True
+                
+        except Exception as e:
+            print(f"Error sending data: {e}")
+            return False

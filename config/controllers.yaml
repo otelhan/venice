@@ -10,6 +10,7 @@ controllers:
   res00:
     description: Reservoir Controller 00
     ip: 192.168.1.74
+    last_seen: 1738471877.2202702
     mac: 2c:cf:67:8b:24:f6
     destination: res01
     display:
@@ -20,7 +21,6 @@ controllers:
     description: Reservoir Controller 01
     ip: 192.168.1.178
     mac: 2c:cf:67:8c:50:b7
-    destination: res02
     display:
       enabled: true
       show_camera: true
@@ -29,7 +29,6 @@ controllers:
     description: Reservoir Controller 02
     ip: 192.168.1.30
     mac: 2c:cf:67:8b:2b:d4
-    destination: res03
     display:
       enabled: true
       show_camera: true
@@ -38,7 +37,6 @@ controllers:
     description: Reservoir Controller 03
     ip: 192.168.1.254
     mac: 2c:cf:67:8b:fe:ab
-    destination: res00
     display:
       enabled: true
       show_camera: true

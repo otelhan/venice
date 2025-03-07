@@ -16,6 +16,11 @@ class ControllerNode:
         self.port = port
         self.config = self._load_config()
         
+        # Incoming buffer structure
+        self.incoming_buffer = []  # List of movement arrays
+        self.max_incoming_buffer = 6  # Reduced to 6 sets of movements
+        self.max_movements_per_message = 30  # Each message has 30 values (20-127)
+        
         # Get controller-specific config
         if self.config and 'controllers' in self.config:
             self.controller_config = self.config['controllers'].get(controller_name, {})
@@ -27,6 +32,7 @@ class ControllerNode:
             
         # Initialize controller with its config
         self.controller = MachineController(config=self.controller_config)
+        self.controller.node = self  # Give controller reference to this node
         
         self.mac = self.controller_config['mac']
         self.ip = self.controller_config['ip']
@@ -60,7 +66,7 @@ class ControllerNode:
         """Start the WebSocket server"""
         try:
             self.server = await websockets.serve(
-                self.handle_message, 
+                self._handle_connection, 
                 "0.0.0.0",  # Listen on all interfaces
                 self.port
             )
@@ -100,102 +106,69 @@ class ControllerNode:
             await self.cleanup_port()
             print("Controller stopped")
     
-    async def handle_message(self, websocket):
-        """Handle incoming WebSocket messages"""
+    async def _handle_connection(self, websocket, path):
+        """Handle websocket connection"""
         try:
             async for message in websocket:
-                print(f"\nReceived message: {message}")  # Debug log
+                data = json.loads(message)
+                response = await self.handle_message(data)
+                await websocket.send(json.dumps(response))
                 
-                try:
-                    data = json.loads(message)
-                    msg_type = data.get('type')
+                # Check buffer when returning to IDLE
+                if self.controller.current_state == MachineState.IDLE:
+                    await self.process_buffer()
                     
-                    if msg_type == 'command':
-                        command = data.get('command')
-                        target_mac = data.get('mac')
-                        
-                        if target_mac == self.mac or target_mac == "00:00:00:00:00:00":
-                            print(f"Executing command: {command}")
-                            await self.execute_command(command)
-                            response = {
-                                "controller_name": self.controller_name,
-                                "mac": self.mac,
-                                "status": "success",
-                                "message": f"Executed command: {command}"
-                            }
-                        else:
-                            response = {
-                                "controller_name": self.controller_name,
-                                "mac": self.mac,
-                                "status": "error",
-                                "message": "MAC address mismatch"
-                            }
-                    elif msg_type == 'data':
-                        # Handle movement data
-                        movements = data.get('data', {}).get('movements', [])
-                        print(f"Received {len(movements)} movements")
-                        
-                        if movements:
-                            # Store movements for driving wavemaker
-                            self.controller.movement_buffer = movements
-                            
-                            # Transition and await state handling
-                            print("Transitioning to DRIVE_WAVEMAKER state...")
-                            self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                            await self.controller.handle_current_state()
-                            
-                            response = {
-                                "controller_name": self.controller_name,
-                                "mac": self.mac,
-                                "status": "success",
-                                "message": f"Received {len(movements)} movements and processed wavemaker"
-                            }
-                        else:
-                            response = {
-                                "status": "error",
-                                "message": "No movement data in packet"
-                            }
-                    elif msg_type == 'status_request':
-                        # Handle status request
-                        response = {
-                            "controller_name": self.controller_name,
-                            "mac": self.mac,
-                            "status": "success",
-                            "state": self.controller.current_state.name if self.controller.current_state else "IDLE",
-                            "uptime": time.time(),  # You could track actual uptime if needed
-                            "message": "Controller is running"
-                        }
-                    elif msg_type == 'energy_data':
-                        # Handle incoming energy data
-                        source = data.get('source')
-                        energy_values = data['data']['energy_values']
-                        print(f"\nReceived energy data from {source}")
-                        print(f"Energy values: {len(energy_values)} measurements")
-                        
-                        # Store energy values for next wavemaker cycle
-                        self.controller.movement_buffer = energy_values
-                        # Transition to DRIVE_WAVEMAKER state
-                        self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                        return {'status': 'ok', 'message': 'Energy data received'}
-                    else:
-                        response = {
-                            "controller_name": self.controller_name,
-                            "mac": self.mac,
-                            "status": "error",
-                            "message": f"Unknown message type: {msg_type}"
-                        }
-                    
-                    print(f"Sending response: {response}")  # Debug log
-                    await websocket.send(json.dumps(response))
-                    
-                except json.JSONDecodeError:
-                    print("Error: Invalid JSON format")
-                    
-        except websockets.exceptions.ConnectionClosed:
-            print("Client connection closed")
         except Exception as e:
-            print(f"Error handling message: {e}")
+            print(f"Error handling connection: {e}")
     
+    async def handle_message(self, message):
+        """Handle incoming websocket message"""
+        if message['type'] == 'data':
+            movements = message['data']['movements']
+            
+            # Validate movement values
+            if not all(20 <= x <= 127 for x in movements):
+                return {"status": "error", "message": "Invalid movement values"}
+                
+            if len(movements) != self.max_movements_per_message:
+                return {"status": "error", "message": "Invalid number of movements"}
+
+            if self.controller.current_state == MachineState.IDLE:
+                # Process immediately if IDLE
+                self.controller.movement_buffer = movements
+                self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
+                self.controller.handle_current_state()
+                return {"status": "ok"}
+            else:
+                # Buffer message if busy (except during SEND_DATA state)
+                if self.controller.current_state != MachineState.SEND_DATA:
+                    if len(self.incoming_buffer) < self.max_incoming_buffer:
+                        print(f"\nController busy ({self.controller.current_state.name}), buffering movements")
+                        self.incoming_buffer.append(movements)
+                        print(f"Incoming buffer size: {len(self.incoming_buffer)}/{self.max_incoming_buffer}")
+                        return {"status": "buffered"}
+                    else:
+                        print(f"\nIncoming buffer full ({self.max_incoming_buffer} sets), rejecting new movements")
+                        return {"status": "rejected", "message": "Buffer full"}
+                else:
+                    print("\nIn SEND_DATA state, rejecting incoming movements")
+                    return {"status": "rejected", "message": "In SEND_DATA state"}
+        
+        return {"status": "ok"}
+
+    def clear_incoming_buffer(self):
+        """Clear the incoming message buffer"""
+        buffer_size = len(self.incoming_buffer)
+        self.incoming_buffer.clear()
+        print(f"\nCleared incoming buffer ({buffer_size} sets of movements dropped)")
+
+    async def process_buffer(self):
+        """Process buffered messages when returning to IDLE"""
+        if self.incoming_buffer and self.controller.current_state == MachineState.IDLE:
+            print(f"\nProcessing {len(self.incoming_buffer)} buffered sets of movements")
+            message = self.incoming_buffer.pop(0)  # Get oldest set of movements
+            await self.handle_message({'type': 'data', 'data': {'movements': message}})
+
     async def execute_command(self, command):
         """Execute a command"""
         print(f"Executing command: {command}")  # Debug log
