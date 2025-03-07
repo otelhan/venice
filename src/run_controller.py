@@ -3,6 +3,8 @@ from src.networking.controller_node import ControllerNode
 import argparse
 import signal
 import sys
+import cv2
+import matplotlib.pyplot as plt
 
 async def main():
     # Parse command line arguments
@@ -24,10 +26,19 @@ async def main():
         # Start keyboard input monitoring
         async def check_input():
             while True:
-                cmd = await asyncio.get_event_loop().run_in_executor(None, input)
-                if cmd.lower() == 'q':
-                    print("\nShutting down controller...")
-                    sys.exit(0)
+                try:
+                    cmd = await asyncio.get_event_loop().run_in_executor(None, input)
+                    if cmd.lower() == 'q':
+                        print("\nShutting down controller...")
+                        # Cleanup before exit
+                        if hasattr(controller, 'state_handler'):
+                            if hasattr(controller.state_handler, 'camera'):
+                                controller.state_handler.camera.stop_camera()
+                        cv2.destroyAllWindows()
+                        plt.close('all')
+                        sys.exit(0)
+                except Exception as e:
+                    print(f"Error in input handling: {e}")
                 await asyncio.sleep(0.1)
         
         # Run both the controller and input checking
