@@ -33,7 +33,7 @@ class CameraHandler:
         self.prev_frame = None
         self.plot_lock = Lock()
         
-        # Create windows and setup plotting if display is enabled
+        # Create persistent windows
         if self.show_camera:
             cv2.namedWindow('Camera Test', cv2.WINDOW_NORMAL)
         
@@ -102,17 +102,13 @@ class CameraHandler:
             return False
             
     def stop_camera(self):
-        """Stop the camera"""
-        if hasattr(self, 'camera') and self.camera and self.is_running:
+        """Stop the camera but keep windows open"""
+        if self.camera:
             self.camera.release()
+            self.camera = None
             self.is_running = False
-            print("Camera stopped")
-            
-            if self.show_camera:
-                cv2.destroyAllWindows()
-            if self.show_plots:
-                plt.close()
-            
+        # Don't destroy windows here
+        
     def get_frame(self):
         """Get a frame from the camera"""
         if not self.is_running:
@@ -250,5 +246,8 @@ class CameraHandler:
         return False
         
     def __del__(self):
-        """Cleanup when object is destroyed"""
-        self.stop_camera() 
+        """Only destroy windows when object is destroyed"""
+        if self.camera:
+            self.camera.release()
+        cv2.destroyAllWindows()
+        plt.close('all') 
