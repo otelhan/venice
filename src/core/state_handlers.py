@@ -27,6 +27,7 @@ class StateHandler:
         self.serial_thread = None
         self.serial = None
         self.config = controller_config or {}  # Store full config
+        self.destination = self.config.get('destination')
         
         # Initialize camera
         self.camera = CameraHandler(display_config)
@@ -128,7 +129,44 @@ class StateHandler:
             print(f"Error scaling movement: {e}")
             return 127  # Default to max on error
 
-    def drive_wavemaker(self):
+    async def send_data(self):
+        """Handle SEND_DATA state"""
+        if not self.energy_values:
+            print("No energy data to send")
+            return MachineState.IDLE
+
+        if not self.destination:
+            print("No destination controller configured")
+            return MachineState.IDLE
+
+        try:
+            # Get destination controller info
+            dest_config = self.config['controllers'][self.destination]
+            uri = f"ws://{dest_config['ip']}:8765"
+
+            data_packet = {
+                'type': 'energy_data',
+                'source': self.config['name'],
+                'data': {
+                    'energy_values': self.energy_values,
+                    'timestamp': time.time()
+                }
+            }
+
+            # Send data to next controller
+            print(f"\nSending energy data to {self.destination}")
+            async with websockets.connect(uri) as websocket:
+                await websocket.send(json.dumps(data_packet))
+                response = await websocket.recv()
+                print(f"Response from {self.destination}: {response}")
+                
+            return MachineState.IDLE
+
+        except Exception as e:
+            print(f"Error sending data to {self.destination}: {e}")
+            return MachineState.IDLE
+
+    async def drive_wavemaker(self):
         """Drive the wavemaker with movement data"""
         if not self.serial:
             print("ERROR: No serial connection to KB2040")
@@ -139,7 +177,7 @@ class StateHandler:
             print(f"Processing {len(self.movement_buffer)} movements")
             
             # Initialize energy collection
-            energy_values = []
+            self.energy_values = []  # Store as instance variable
             
             # Start camera
             self.camera.start_camera()
@@ -170,7 +208,7 @@ class StateHandler:
                     # Scale energy to motor range (20-127)
                     scaled_energy = int(20 + (energy * (127 - 20) / 8))
                     scaled_energy = max(20, min(127, scaled_energy))
-                    energy_values.append(scaled_energy)
+                    self.energy_values.append(scaled_energy)
                     
                     # Update plot
                     self.camera.update_energy_plot(energy)
@@ -183,16 +221,15 @@ class StateHandler:
             response = self.serial.readline().decode().strip()
             print(f"Wavemaker OFF response: {response}")
             
-            return True
+            # After wavemaker control, transition to SEND_DATA state
+            if self.energy_values:
+                return MachineState.SEND_DATA
+            
+            return MachineState.IDLE
             
         except Exception as e:
             print(f"Error driving wavemaker: {e}")
-            traceback.print_exc()
-            try:
-                self.serial.write(b"off\n")
-            except:
-                pass
-            return True
+            return MachineState.IDLE
         finally:
             self.camera.stop_camera()
 

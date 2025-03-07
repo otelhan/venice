@@ -108,9 +108,9 @@ class ControllerNode:
                 
                 try:
                     data = json.loads(message)
-                    message_type = data.get('type')
+                    msg_type = data.get('type')
                     
-                    if message_type == 'command':
+                    if msg_type == 'command':
                         command = data.get('command')
                         target_mac = data.get('mac')
                         
@@ -130,7 +130,7 @@ class ControllerNode:
                                 "status": "error",
                                 "message": "MAC address mismatch"
                             }
-                    elif message_type == 'data':
+                    elif msg_type == 'data':
                         # Handle movement data
                         movements = data.get('data', {}).get('movements', [])
                         print(f"Received {len(movements)} movements")
@@ -156,7 +156,7 @@ class ControllerNode:
                                 "status": "error",
                                 "message": "No movement data in packet"
                             }
-                    elif message_type == 'status_request':
+                    elif msg_type == 'status_request':
                         # Handle status request
                         response = {
                             "controller_name": self.controller_name,
@@ -166,12 +166,24 @@ class ControllerNode:
                             "uptime": time.time(),  # You could track actual uptime if needed
                             "message": "Controller is running"
                         }
+                    elif msg_type == 'energy_data':
+                        # Handle incoming energy data
+                        source = data.get('source')
+                        energy_values = data['data']['energy_values']
+                        print(f"\nReceived energy data from {source}")
+                        print(f"Energy values: {len(energy_values)} measurements")
+                        
+                        # Store energy values for next wavemaker cycle
+                        self.controller.movement_buffer = energy_values
+                        # Transition to DRIVE_WAVEMAKER state
+                        self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
+                        return {'status': 'ok', 'message': 'Energy data received'}
                     else:
                         response = {
                             "controller_name": self.controller_name,
                             "mac": self.mac,
                             "status": "error",
-                            "message": f"Unknown message type: {message_type}"
+                            "message": f"Unknown message type: {msg_type}"
                         }
                     
                     print(f"Sending response: {response}")  # Debug log

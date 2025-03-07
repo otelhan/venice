@@ -39,7 +39,7 @@ class CameraHandler:
         
         if self.show_plots:
             plt.ion()  # Interactive mode
-            self.fig, self.ax = plt.subplots(figsize=(10, 6))
+            self.fig, self.ax = plt.subplots(figsize=(6, 3))
             self.line, = self.ax.plot([], [], 'b-', linewidth=2)
             self.ax.set_xlim(0, 100)
             self.ax.set_ylim(0, 8)

@@ -24,19 +24,26 @@ class MachineController:
         if not self._init_serial():
             print("WARNING: Failed to initialize KB2040 connection")
         
-    def handle_current_state(self):
+    async def handle_current_state(self):
         """Handle the current state"""
         print(f"\nHandling state: {self.current_state.name}")
         
         if self.current_state == MachineState.DRIVE_WAVEMAKER:
-            if self.movement_buffer and self.serial:
-                print(f"Movement buffer size: {len(self.movement_buffer)}")
-                self.state_handler.movement_buffer = self.movement_buffer
-                self.state_handler.serial = self.serial
-                next_state = self.state_handler.drive_wavemaker()
-                if next_state:
-                    print("Transitioning back to IDLE")
-                    self.transition_to(MachineState.IDLE)
+            next_state = await self.state_handler.drive_wavemaker()
+            if next_state:
+                self.transition_to(next_state)
+            
+        elif self.current_state == MachineState.SEND_DATA:
+            next_state = await self.state_handler.send_data()
+            if next_state:
+                self.transition_to(next_state)
+            
+        elif self.current_state == MachineState.COLLECT_SIGNAL:
+            result = self.state_handler.collect_signal()
+            if result == 'd':
+                self.transition_to(MachineState.DRIVE_WAVEMAKER)
+            elif result == 'q':
+                return 'q'
     
     def transition_to(self, new_state: MachineState):
         """Transition to a new state"""
