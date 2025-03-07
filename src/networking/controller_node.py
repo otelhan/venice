@@ -65,18 +65,16 @@ class ControllerNode:
     async def start(self):
         """Start the WebSocket server"""
         try:
-            self.server = await websockets.serve(
+            # Updated to use newer websockets API
+            async with websockets.serve(
                 self._handle_connection, 
                 "0.0.0.0",  # Listen on all interfaces
                 self.port
-            )
-            print(f"Controller {self.mac} listening on port {self.port}")
-            # Keep the server running
-            while True:
-                try:
-                    await asyncio.sleep(1)
-                except asyncio.CancelledError:
-                    break
+            ) as server:
+                self.server = server
+                print(f"Controller {self.mac} listening on port {self.port}")
+                await asyncio.Future()  # run forever
+                
         except OSError as e:
             if e.errno == 48:  # Address already in use
                 print(f"Port {self.port} is already in use. Trying to clean up...")
@@ -106,20 +104,47 @@ class ControllerNode:
             await self.cleanup_port()
             print("Controller stopped")
     
-    async def _handle_connection(self, websocket, path):
-        """Handle websocket connection"""
+    async def _handle_connection(self, websocket):
+        """Handle websocket connection - removed path parameter"""
         try:
             async for message in websocket:
-                data = json.loads(message)
-                response = await self.handle_message(data)
-                await websocket.send(json.dumps(response))
-                
-                # Check buffer when returning to IDLE
-                if self.controller.current_state == MachineState.IDLE:
-                    await self.process_buffer()
+                try:
+                    data = json.loads(message)
+                    print(f"\nReceived message: {data['type']}")
                     
+                    if not hasattr(self, 'movement_buffer'):
+                        self.movement_buffer = []
+                        
+                    response = await self.handle_message(data)
+                    await websocket.send(json.dumps(response))
+                    
+                    # Check buffer when returning to IDLE
+                    if self.controller.current_state == MachineState.IDLE:
+                        await self.process_buffer()
+                        
+                except json.JSONDecodeError as e:
+                    print(f"Invalid JSON received: {e}")
+                    await websocket.send(json.dumps({
+                        "status": "error",
+                        "message": "Invalid JSON format"
+                    }))
+                except KeyError as e:
+                    print(f"Missing required field: {e}")
+                    await websocket.send(json.dumps({
+                        "status": "error",
+                        "message": f"Missing field: {str(e)}"
+                    }))
+                except Exception as e:
+                    print(f"Error processing message: {e}")
+                    await websocket.send(json.dumps({
+                        "status": "error",
+                        "message": str(e)
+                    }))
+                
+        except websockets.exceptions.ConnectionClosed:
+            print("Connection closed")
         except Exception as e:
-            print(f"Error handling connection: {e}")
+            print(f"Connection error: {e}")
     
     async def handle_message(self, message):
         """Handle incoming websocket message"""
