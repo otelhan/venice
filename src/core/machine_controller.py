@@ -38,7 +38,7 @@ class MachineController:
                     print("Transitioning to SEND_DATA")
                     # Clear message buffer before transitioning to SEND_DATA
                     if hasattr(self, 'node'):  # Reference to ControllerNode
-                        self.node.clear_buffer()
+                        self.node.clear_incoming_buffer()
                     self.transition_to(MachineState.SEND_DATA)
                 
         elif self.current_state == MachineState.SEND_DATA:

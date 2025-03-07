@@ -11,11 +11,27 @@ import yaml
 
 class InputNode:
     def __init__(self, controller_port=8765):
-        self.controllers = {}
         self.controller_port = controller_port
         self.processor = VideoProcessor()
         self.movement_buffer = []
-        self.config = None
+        
+        # Load config with correct path
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # Go up one more level
+            'config', 
+            'controllers.yaml'
+        )
+        print(f"Loading config from: {config_path}")  # Debug print
+        
+        try:
+            with open(config_path, 'r') as f:
+                self.config = yaml.safe_load(f)
+                self.controllers = self.config.get('controllers', {})
+                print(f"Loaded controllers: {list(self.controllers.keys())}")  # Debug print
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            self.config = None
+            self.controllers = {}
         
     def get_controller_name(self, mac):
         """Get controller name from MAC address"""
@@ -222,7 +238,13 @@ class InputNode:
     async def send_movement_data(self, controller_id):
         """Send movement data to a specific controller"""
         try:
+            if not self.movement_buffer:
+                print("No movement data to send!")
+                return {"status": "error", "message": "No movement data"}
+            
             uri = f"ws://{self.controllers[controller_id]['ip']}:8765"
+            print(f"Connecting to {uri}")
+            
             async with websockets.connect(uri) as websocket:
                 data_packet = {
                     'type': 'data',
@@ -231,19 +253,30 @@ class InputNode:
                     }
                 }
                 
+                print(f"Sending {len(self.movement_buffer)} movements")
                 await websocket.send(json.dumps(data_packet))
-                response = await websocket.recv()
-                response_data = json.loads(response)
                 
-                if response_data.get('status') == 'rejected':
-                    print(f"Message rejected by {controller_id}: {response_data.get('message')}")
-                elif response_data.get('status') == 'error':
-                    print(f"Error from {controller_id}: {response_data.get('message')}")
-                else:
-                    print(f"Message accepted by {controller_id}")
+                try:
+                    response = await websocket.recv()
+                    response_data = json.loads(response)
+                    print(f"Received response: {response_data}")
                     
-                return response_data
+                    if response_data.get('status') == 'rejected':
+                        print(f"Message rejected by {controller_id}: {response_data.get('message')}")
+                    elif response_data.get('status') == 'error':
+                        print(f"Error from {controller_id}: {response_data.get('message')}")
+                    else:
+                        print(f"Message accepted by {controller_id}")
+                        
+                    return response_data
+                    
+                except json.JSONDecodeError as e:
+                    print(f"Invalid response from server: {e}")
+                    return {"status": "error", "message": "Invalid server response"}
                 
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"WebSocket connection closed: {e.code} {e.reason}")
+            return {"status": "error", "message": f"Connection closed: {e.reason}"}
         except Exception as e:
             print(f"Error sending to {controller_id}: {e}")
             return {"status": "error", "message": str(e)} 
