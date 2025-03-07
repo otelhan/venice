@@ -13,6 +13,7 @@ import traceback
 from src.core.states import MachineState
 import json
 import websockets
+import asyncio
 
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
@@ -238,7 +239,7 @@ class StateHandler:
                 print(f"Unknown destination controller: {destination}")
                 return False
             
-            # Prepare data packet with outgoing buffer
+            # Prepare data packet
             data_packet = {
                 'type': 'data',
                 'data': {
@@ -252,14 +253,47 @@ class StateHandler:
                 }
             }
             
-            # Send to destination
+            # Send to destination with connection timeout and retries
             uri = f"ws://{dest_config['ip']}:8765"
-            async with websockets.connect(uri) as websocket:
-                await websocket.send(json.dumps(data_packet))
-                response = await websocket.recv()
-                print(f"Response from {destination}: {response}")
-                return True
+            max_connection_attempts = 2  # Only try to connect twice
+            connection_timeout = 3  # 3 seconds for connection attempt
+            
+            for attempt in range(max_connection_attempts):
+                try:
+                    # Use asyncio.wait_for for the entire connection attempt
+                    async with await asyncio.wait_for(
+                        websockets.connect(uri), 
+                        timeout=connection_timeout
+                    ) as websocket:
+                        try:
+                            await asyncio.wait_for(
+                                websocket.send(json.dumps(data_packet)),
+                                timeout=3  # 3 second timeout for send
+                            )
+                            response = await asyncio.wait_for(
+                                websocket.recv(),
+                                timeout=3  # 3 second timeout for receive
+                            )
+                            print(f"Response from {destination}: {response}")
+                            return True
+                            
+                        except asyncio.TimeoutError:
+                            print(f"Timeout waiting for response from {destination}")
+                            continue  # Try next connection attempt
+                            
+                except (asyncio.TimeoutError,
+                        websockets.exceptions.ConnectionError, 
+                        websockets.exceptions.InvalidStatusCode,
+                        ConnectionRefusedError) as e:
+                    print(f"Connection attempt {attempt + 1} failed: {e}")
+                    if attempt < max_connection_attempts - 1:
+                        print("Retrying connection...")
+                        await asyncio.sleep(1)  # Wait 1 second between attempts
+                    continue
                 
+            print(f"Failed to connect to {destination} after {max_connection_attempts} attempts")
+            return False
+            
         except Exception as e:
             print(f"Error sending data: {e}")
             return False
