@@ -26,6 +26,7 @@ class ControllerNode:
             self.controller_config = self.config['controllers'].get(controller_name, {})
             print(f"\nLoaded config for {controller_name}:")
             print(f"Controller config: {self.controller_config}")
+            print(f"Destination: {self.controller_config.get('destination', 'None')}")
         else:
             self.controller_config = {}
             print("No controller config found!")

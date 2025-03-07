@@ -27,7 +27,10 @@ class StateHandler:
         self.serial_queue = Queue()
         self.serial_thread = None
         self.serial = None
-        self.config = controller_config or {}  # Store full config
+        self.display_config = display_config or {}
+        self.config = controller_config  # Store the full controller config
+        print(f"StateHandler config: {self.config}")  # Add this debug print
+        print(f"StateHandler destination: {self.config.get('destination', 'None')}")  # Add this
         
         # Initialize camera
         self.camera = CameraHandler(display_config)
