@@ -47,7 +47,7 @@ class MachineController:
                         self.node.clear_incoming_buffer()
                     self.transition_to(MachineState.SEND_DATA)
                     self.send_retries = 0
-                    await self.handle_current_state()  # Await the async call
+                    await self.handle_current_state()
                 
         elif self.current_state == MachineState.SEND_DATA:
             # Get destination from config
@@ -55,25 +55,37 @@ class MachineController:
             if dest:
                 print(f"\nAttempting to send data to {dest}")
                 print(f"Current retry count: {self.send_retries}/{self.max_retries}")
-                success = await self.state_handler.send_data(dest)  # Await the async call
+                success = await self.state_handler.send_data(dest)
+                
                 if success:
                     print("Data sent successfully")
                     self.send_retries = 0
                     print("Transitioning back to IDLE")
                     self.transition_to(MachineState.IDLE)
+                    # Process any buffered messages
+                    if hasattr(self, 'node'):
+                        await self.node.process_buffer()
                 else:
                     self.send_retries += 1
                     if self.send_retries >= self.max_retries:
                         print(f"Failed to send after {self.max_retries} attempts")
                         print("Transitioning back to IDLE")
                         self.transition_to(MachineState.IDLE)
+                        # Process any buffered messages
+                        if hasattr(self, 'node'):
+                            await self.node.process_buffer()
                     else:
                         print(f"Retrying... ({self.send_retries}/{self.max_retries})")
+                        # Try again immediately
+                        await self.handle_current_state()
             else:
                 print("\nNo destination configured in config!")
                 print("Config:", self.config)
                 print("Transitioning back to IDLE")
                 self.transition_to(MachineState.IDLE)
+                # Process any buffered messages
+                if hasattr(self, 'node'):
+                    await self.node.process_buffer()
     
     def transition_to(self, new_state: MachineState):
         """Transition to a new state"""
