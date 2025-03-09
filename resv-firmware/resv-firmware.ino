@@ -66,7 +66,7 @@ void loop() {
         }
         else if (input == "off") {
             digitalWrite(RELAY_PIN, LOW);
-            digitalWrite(LED_PIN, LOW);
+            digitalWarrite(LED_PIN, LOW);
             relay_on = false;
             Serial.println("OFF_OK");
         }

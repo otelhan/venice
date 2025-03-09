@@ -48,6 +48,7 @@ class ControllerNode:
         print(f"- Display config: {self.controller_config.get('display', {})}")
         
         self.server = None
+        self.current_connection = None  # Track the single active connection
         
         # Initialize to IDLE state
         self.controller.transition_to(MachineState.IDLE)
@@ -69,11 +70,13 @@ class ControllerNode:
     async def start(self):
         """Start the WebSocket server"""
         try:
-            # Updated to use newer websockets API
+            # Simple server setup - one connection at a time
             async with websockets.serve(
                 self._handle_connection, 
                 "0.0.0.0",  # Listen on all interfaces
-                self.port
+                self.port,
+                max_size=None,  # No message size limit
+                max_queue=1     # Only queue one connection
             ) as server:
                 self.server = server
                 print(f"Controller {self.mac} listening on port {self.port}")
@@ -83,7 +86,6 @@ class ControllerNode:
             if e.errno == 48:  # Address already in use
                 print(f"Port {self.port} is already in use. Trying to clean up...")
                 await self.cleanup_port()
-                # Try to start again
                 await self.start()
             else:
                 raise e
@@ -110,6 +112,12 @@ class ControllerNode:
     
     async def _handle_connection(self, websocket):
         """Handle websocket connection"""
+        if self.current_connection is not None:
+            print("Already handling a connection, rejecting new connection")
+            await websocket.close(1013)  # Try to close gracefully
+            return
+
+        self.current_connection = websocket
         try:
             async for message in websocket:
                 try:
@@ -130,6 +138,8 @@ class ControllerNode:
             print("Connection closed normally")
         except Exception as e:
             print(f"Connection error: {e}")
+        finally:
+            self.current_connection = None  # Clear the connection reference
     
     async def handle_message(self, message):
         """Handle incoming websocket message"""

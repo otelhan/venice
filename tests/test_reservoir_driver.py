@@ -37,6 +37,9 @@ class ReservoirTester:
         self.movement_buffer = self.generate_movement_data()
         self.input_node.movement_buffer = self.movement_buffer
         
+        print("\nGenerated movement data:")
+        print(self.movement_buffer)
+        
         for controller in controller_names:
             try:
                 if controller not in self.config['controllers']:
@@ -45,6 +48,7 @@ class ReservoirTester:
                     continue
                     
                 print(f"\nSending to {controller}...")
+                print(f"IP: {self.config['controllers'][controller]['ip']}")
                 response = await self.input_node.send_movement_data(controller)
                 
                 if response.get('status') == 'rejected':
@@ -65,14 +69,16 @@ async def main():
     
     # Get controller names from command line
     print("\nAvailable controllers:")
-    for name in tester.config['controllers']:
-        print(f"- {name}")
+    for name, details in tester.config['controllers'].items():
+        print(f"- {name} ({details['description']}) at {details['ip']}")
     
-    print("\nEnter controller names (comma-separated) or 'all':")
+    print("\nEnter controller names (comma-separated), 'output' for output node, or 'all':")
     input_names = input().strip()
     
     if input_names.lower() == 'all':
         controller_names = list(tester.config['controllers'].keys())
+    elif input_names.lower() == 'output':
+        controller_names = ['output']
     else:
         controller_names = [name.strip() for name in input_names.split(',')]
     

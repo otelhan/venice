@@ -7,6 +7,14 @@ controllers:
       enabled: true
       show_camera: true
       show_plots: true
+  output:
+    description: Output Controller
+    ip: 192.168.1.42
+    mac: 2c:cf:67:8b:24:f7
+    display:
+      enabled: false
+      show_camera: false
+      show_plots: false
   res00:
     description: Reservoir Controller 00
     ip: 192.168.1.74
