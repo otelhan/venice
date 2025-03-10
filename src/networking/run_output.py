@@ -186,4 +186,4 @@ async def main():
 if __name__ == "__main__":
     print("\nStarting Output Controller")
     print("-------------------------")
-    asyncio.run(main()) 
+    asyncio.run(main()) # Test comment
