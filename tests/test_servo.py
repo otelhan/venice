@@ -15,25 +15,25 @@ def test_servo_control():
     try:
         # Test sequence
         commands = [
-            # Center servo 1
+            # Test servo 1
             {
                 'type': 'servo',
-                'servo_id': 1,
-                'position': 1500,
-                'time_ms': 1000
+                'servo_id': 1,  # Change this to test different servos (1-8)
+                'position': 1500,  # Center position (500-2500)
+                'time_ms': 1000   # Time to reach position
             },
             # Move to min position
             {
                 'type': 'servo',
                 'servo_id': 1,
-                'position': 500,
+                'position': 500,  # Minimum position
                 'time_ms': 1000
             },
             # Move to max position
             {
                 'type': 'servo',
                 'servo_id': 1,
-                'position': 2500,
+                'position': 2500,  # Maximum position
                 'time_ms': 1000
             }
         ]

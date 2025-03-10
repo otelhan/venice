@@ -4,6 +4,7 @@ import sys
 import os
 import yaml
 import random
+import serial
 
 # Get absolute path to lib directory
 lib_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'lib'))
@@ -32,34 +33,27 @@ SMS_STS_LOCK = 0x37        # Lock register (0x37 = 55 in decimal)
 
 def find_servo_board():
     """Find the Waveshare servo board port"""
+    # List available ports
+    print("\nScanning for servo board...")
+    available_ports = []
+    
     # Try different possible ports
     ports = [
-        # Linux/Raspberry Pi
         '/dev/ttyUSB0',
-        '/dev/ttyUSB1',
+        '/dev/ttyUSB1', 
         '/dev/ttyACM0',
-        '/dev/ttyACM1',
-        
-        # Windows
-        'COM3',
-        'COM4',
-        
-        # Mac ports
-        '/dev/tty.usbserial*',     # Most common for USB-Serial adapters
-        '/dev/tty.SLAB_USBtoUART', # Silicon Labs adapter
-        '/dev/tty.wchusbserial*',  # CH340 adapter
-        '/dev/tty.usbmodem*'       # Native USB
+        '/dev/ttyACM1'
     ]
     
-    # List available ports
-    available_ports = []
-    for pattern in ports:
-        available_ports.extend(glob.glob(pattern))
-    
-    print("\nAvailable ports:")
-    for port in available_ports:
-        print(f"- {port}")
-    
+    for port in ports:
+        try:
+            s = serial.Serial(port, 115200, timeout=1)
+            print(f"Found board on {port}")
+            s.close()
+            available_ports.append(port)
+        except:
+            continue
+
     if not available_ports:
         print("No serial ports found!")
         print("\nTroubleshooting tips:")
@@ -773,6 +767,11 @@ def read_servo_limits(port, servo_id):
             
     finally:
         portHandler.closePort()
+
+def test_servo_limits(servo_id=1):
+    """Test limits and current position of a servo"""
+    # This will read the current position and limits
+    # of the specified servo ID
 
 if __name__ == "__main__":
     test_output_node() 
