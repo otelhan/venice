@@ -20,6 +20,16 @@ class ServoController:
         
     def connect(self) -> bool:
         """Connect to the servo driver board"""
+        # First list all available ports
+        print("\nAvailable Serial Ports:")
+        print("----------------------")
+        for port in serial.tools.list_ports.comports():
+            print(f"Device  : {port.device}")
+            print(f"Name    : {port.name}")
+            print(f"Desc    : {port.description}")
+            print(f"HW ID   : {port.hwid}")
+            print("----------------------")
+        
         try:
             self.serial = serial.Serial(
                 port=self.port,
@@ -31,6 +41,18 @@ class ServoController:
             return True
         except Exception as e:
             print(f"Failed to connect to servo board: {e}")
+            # Try other common ports
+            common_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyACM0', '/dev/ttyACM1']
+            for port in common_ports:
+                if port != self.port:  # Don't try the same port twice
+                    try:
+                        self.serial = serial.Serial(port, self.baud, timeout=1)
+                        self.connected = True
+                        self.port = port  # Update to working port
+                        print(f"Connected to servo board on {port}")
+                        return True
+                    except:
+                        print(f"Could not connect to {port}")
             return False
             
     def disconnect(self):
