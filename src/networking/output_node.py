@@ -1,131 +1,135 @@
 import serial
 import time
 from typing import Dict, List, Optional
+import yaml
+import os
+from pathlib import Path
+
+from lib.STservo_sdk.sts import *
+from lib.STservo_sdk.port_handler import PortHandler
 
 class ServoController:
     """Controls servos via Waveshare Serial Bus Servo Driver Board"""
     
-    def __init__(self, port: str = '/dev/ttyACM0', baud: int = 115200):
-        """Initialize servo controller
-        
-        Args:
-            port: Serial port for the servo driver board
-            baud: Baud rate for serial communication
-        """
+    def __init__(self, port: str = '/dev/ttyACM0', baud: int = 1000000):
+        """Initialize servo controller"""
         self.port = port
         self.baud = baud
-        self.serial = None
         self.connected = False
-        self.servo_positions: Dict[int, int] = {}  # Track servo positions
+        self.serial = None
+        self.port_handler = None
+        self.packet_handler = None
+        
+        # Load config
+        self.project_root = Path(__file__).parent.parent.parent
+        self.config = self.load_config()
+        self.servo_config = self.config['servo_config']
+        self.default_speed = self.servo_config.get('default_speed_ms', 1000)
+        self.default_accel = self.servo_config.get('default_accel', 50)
+        
+    def load_config(self) -> dict:
+        """Load servo configuration"""
+        config_path = os.path.join(self.project_root, 'config', 'controllers.yaml')
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+            
+    def save_position(self, servo_id: int, angle: float):
+        """Save servo position in degrees to config file"""
+        self.config['servo_config']['servos'][str(servo_id)]['last_position_deg'] = angle
+        
+        config_path = os.path.join(self.project_root, 'config', 'controllers.yaml')
+        with open(config_path, 'w') as f:
+            yaml.dump(self.config, f, default_flow_style=False)
+            
+    def degrees_to_units(self, degrees: float) -> int:
+        """Convert degrees to servo units (500-2500)"""
+        # 1500 is center (0 degrees)
+        # Each unit = 0.12 degrees for servo mode
+        units = int(1500 + (degrees * (1000/150)))
+        return max(500, min(2500, units))
+        
+    def units_to_degrees(self, units: int) -> float:
+        """Convert servo units to degrees"""
+        return (units - 1500) * 0.12
         
     def connect(self) -> bool:
-        """Connect to the servo driver board"""
-        # List available ports on Linux
-        print("\nAvailable Serial Ports:")
-        print("----------------------")
+        """Connect to the servo board"""
         try:
-            import glob
-            ports = glob.glob('/dev/tty[A-Za-z]*')
-            for port in ports:
-                print(f"Port: {port}")
-        except Exception as e:
-            print(f"Error listing ports: {e}")
-        print("----------------------")
-        
-        try:
-            self.serial = serial.Serial(
-                port=self.port,
-                baudrate=self.baud,
-                timeout=1
-            )
+            self.port_handler = PortHandler(self.port)
+            self.packet_handler = sts(self.port_handler)
+            
+            if not self.port_handler.openPort():
+                print(f"Failed to open port {self.port}")
+                return False
+                
+            if not self.port_handler.setBaudRate(self.baud):
+                print(f"Failed to set baud rate {self.baud}")
+                return False
+                
             self.connected = True
             print(f"Connected to servo board on {self.port}")
-            
-            # Test the connection
-            test_cmd = "#1P1500T1000\r\n"
-            print(f"Sending test command: {test_cmd.strip()}")
-            bytes_written = self.serial.write(test_cmd.encode())
-            print(f"Wrote {bytes_written} bytes")
-            
-            # Try to read any response
-            time.sleep(0.1)  # Wait for potential response
-            if self.serial.in_waiting:
-                response = self.serial.read(self.serial.in_waiting)
-                print(f"Got response: {response}")
-            
             return True
+            
         except Exception as e:
             print(f"Failed to connect to servo board: {e}")
             return False
             
-    def disconnect(self):
-        """Disconnect from the servo driver board"""
-        if self.serial:
-            self.serial.close()
-            self.connected = False
-            
-    def set_servo_position(self, servo_id: int, position: int, time_ms: int = 1000) -> bool:
-        """Set servo position
-        
-        Args:
-            servo_id: ID of the servo (1-8)
-            position: Position (500-2500)
-            time_ms: Time to reach position in ms
-            
-        Returns:
-            bool: True if successful
-        """
+    def set_servo_position(self, servo_id: int, angle: float, time_ms: Optional[int] = None) -> bool:
+        """Set servo position in degrees"""
         if not self.connected:
-            print("Error: Not connected to servo board")
-            return False
-            
-        if not (1 <= servo_id <= 8):
-            print("Error: Servo ID must be between 1 and 8")
-            return False
-            
-        if not (500 <= position <= 2500):
-            print("Error: Position must be between 500 and 2500")
+            print("Not connected to servo board")
             return False
             
         try:
-            # Format command for Waveshare board
-            # #<servo_id>P<position>T<time>\r\n
-            cmd = f"#{servo_id}P{position}T{time_ms}\r\n"
-            print(f"Sending command: {cmd.strip()}")
-            bytes_written = self.serial.write(cmd.encode())
-            print(f"Wrote {bytes_written} bytes")
+            # Get servo config
+            servo_config = self.servo_config['servos'][str(servo_id)]
             
-            # Try to read any response
-            time.sleep(0.1)  # Wait for potential response
-            if self.serial.in_waiting:
-                response = self.serial.read(self.serial.in_waiting)
-                print(f"Got response: {response}")
+            # Check mode
+            if servo_config['mode'] != 'servo':
+                print(f"Servo {servo_id} is in motor mode!")
+                return False
+                
+            # Validate angle
+            min_angle = servo_config.get('min_angle', -150)
+            max_angle = servo_config.get('max_angle', 150)
+            if not min_angle <= angle <= max_angle:
+                print(f"Angle {angle} out of range ({min_angle} to {max_angle})")
+                return False
+                
+            # Convert to units
+            position = self.degrees_to_units(angle)
+            speed = time_ms if time_ms is not None else self.default_speed
             
-            self.servo_positions[servo_id] = position
-            return True
+            # Send command
+            result, error = self.packet_handler.WritePosEx(servo_id, position, speed, self.default_accel)
+            if result == COMM_SUCCESS:
+                # Read back position
+                time.sleep(0.1)
+                pos, spd, result, error = self.packet_handler.ReadPosSpeed(servo_id)
+                if result == COMM_SUCCESS:
+                    actual_degrees = self.units_to_degrees(pos)
+                    print(f"Servo {servo_id} moved to {actual_degrees:.1f}°")
+                    self.save_position(servo_id, actual_degrees)
+                return True
+            else:
+                print(f"Failed to move servo {servo_id}")
+                return False
+                
         except Exception as e:
             print(f"Error setting servo position: {e}")
             return False
             
-    def get_servo_position(self, servo_id: int) -> Optional[int]:
-        """Get last known position of a servo"""
-        return self.servo_positions.get(servo_id)
-        
-    def center_servo(self, servo_id: int) -> bool:
-        """Center a servo (position 1500)"""
-        return self.set_servo_position(servo_id, 1500)
-        
-    def center_all_servos(self):
-        """Center all servos"""
-        for servo_id in range(1, 9):
-            self.center_servo(servo_id)
-            time.sleep(0.1)  # Small delay between servos
+    def close(self):
+        """Close the connection"""
+        if self.connected:
+            self.port_handler.closePort()
+            self.connected = False
 
 class OutputNode:
     """Node for controlling output devices (servos)"""
     
     def __init__(self):
-        self.servo_controller = ServoController(port='/dev/ttyACM0')  # Explicitly set to ttyACM0
+        self.servo_controller = ServoController()
         
     def start(self):
         """Start the output node"""
@@ -133,15 +137,20 @@ class OutputNode:
         
     def stop(self):
         """Stop the output node"""
-        self.servo_controller.disconnect()
+        self.servo_controller.close()
         
-    def handle_command(self, command):
-        """Handle incoming commands"""
+    def process_command(self, command: Dict) -> Dict:
+        """Process a command dictionary"""
         if command['type'] == 'servo':
+            # Convert position to angle if it's in units
+            position = command['position']
+            if 500 <= position <= 2500:  # If position is in units
+                position = self.servo_controller.units_to_degrees(position)
+                
             success = self.servo_controller.set_servo_position(
                 command['servo_id'],
-                command['position'],
-                command.get('time_ms', 1000)
+                position,
+                command.get('time_ms', None)
             )
             if success:
                 return {"status": "ok", "message": "Position set"}
