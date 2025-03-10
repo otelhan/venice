@@ -40,21 +40,22 @@ class ServoController:
             )
             self.connected = True
             print(f"Connected to servo board on {self.port}")
+            
+            # Test the connection
+            test_cmd = "#1P1500T1000\r\n"
+            print(f"Sending test command: {test_cmd.strip()}")
+            bytes_written = self.serial.write(test_cmd.encode())
+            print(f"Wrote {bytes_written} bytes")
+            
+            # Try to read any response
+            time.sleep(0.1)  # Wait for potential response
+            if self.serial.in_waiting:
+                response = self.serial.read(self.serial.in_waiting)
+                print(f"Got response: {response}")
+            
             return True
         except Exception as e:
             print(f"Failed to connect to servo board: {e}")
-            # Try other common ports
-            common_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyACM0', '/dev/ttyACM1']
-            for port in common_ports:
-                if port != self.port:  # Don't try the same port twice
-                    try:
-                        self.serial = serial.Serial(port, self.baud, timeout=1)
-                        self.connected = True
-                        self.port = port  # Update to working port
-                        print(f"Connected to servo board on {port}")
-                        return True
-                    except:
-                        print(f"Could not connect to {port}")
             return False
             
     def disconnect(self):
@@ -90,7 +91,16 @@ class ServoController:
             # Format command for Waveshare board
             # #<servo_id>P<position>T<time>\r\n
             cmd = f"#{servo_id}P{position}T{time_ms}\r\n"
-            self.serial.write(cmd.encode())
+            print(f"Sending command: {cmd.strip()}")
+            bytes_written = self.serial.write(cmd.encode())
+            print(f"Wrote {bytes_written} bytes")
+            
+            # Try to read any response
+            time.sleep(0.1)  # Wait for potential response
+            if self.serial.in_waiting:
+                response = self.serial.read(self.serial.in_waiting)
+                print(f"Got response: {response}")
+            
             self.servo_positions[servo_id] = position
             return True
         except Exception as e:

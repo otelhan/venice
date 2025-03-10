@@ -7,7 +7,7 @@ def find_servo_port():
     """Find the correct servo port"""
     print("\nScanning for servo board...")
     
-    # Try different possible ports
+    # Try different possible ports and baud rates
     ports = [
         '/dev/ttyACM0',
         '/dev/ttyACM1',
@@ -15,17 +15,20 @@ def find_servo_port():
         '/dev/ttyUSB1'
     ]
     
+    baud_rates = [115200, 9600, 1000000]
+    
     for port in ports:
-        try:
-            s = serial.Serial(port, 115200, timeout=1)
-            print(f"Found potential board on {port}")
-            s.close()
-            return port
-        except:
-            continue
-            
+        for baud in baud_rates:
+            try:
+                s = serial.Serial(port, baud, timeout=1)
+                print(f"Found potential board on {port} at {baud} baud")
+                s.close()
+                return port, baud
+            except:
+                continue
+                
     print("No servo board found!")
-    return None
+    return None, None
 
 def test_servo_interactive():
     """Interactive servo testing"""
@@ -33,14 +36,15 @@ def test_servo_interactive():
     print("-----------------")
     
     # Find the correct port first
-    port = find_servo_port()
+    port, baud = find_servo_port()
     if not port:
         print("Could not find servo board!")
         return
         
-    print(f"Using port: {port}")
+    print(f"Using port: {port} at {baud} baud")
     node = OutputNode()
-    node.servo_controller.port = port  # Set the found port
+    node.servo_controller.port = port
+    node.servo_controller.baud = baud
     
     if not node.start():
         print("Failed to start output node")
