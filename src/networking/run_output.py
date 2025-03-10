@@ -116,38 +116,56 @@ class OutputController:
         print("------------------------")
 
     async def rotate_cubes(self, data):
-        """Rotate the cubes based on the received data"""
-        print(f"Rotating cubes with data: {data}")
+        """Rotate servos based on histogram bin averages"""
+        print(f"\nProcessing {len(data)} values into 5 bins")
         
-        # Convert data to servo positions
-        values = data['values']
-        print(f"Values: {values}")
+        # Create histogram bins for 5 servos
+        bins = np.linspace(20, 127, 6)  # Creates [20, 41.4, 62.8, 84.2, 105.6, 127]
+        bin_indices = np.digitize(data, bins) - 1  # Get bin index for each value
         
-        # Calculate average
-        avg = sum(values) / len(values)
-        print(f"Average: {avg}")
+        print("\nBin ranges:")
+        for i in range(5):
+            print(f"Bin {i+1}: {bins[i]:.1f} to {bins[i+1]:.1f}")
         
-        # Map average to servo position
-        # Example: map 0-100 to 500-2500 microseconds
-        position = avg  # You might want to scale this appropriately
-        
-        # Send command to servo
-        command = {
-            'type': 'servo',
-            'servo_id': 1,  # Using first servo
-            'position': position,  # Now in degrees (-150 to +150)
-            'time_ms': 1000  # Take 1 second to move
-        }
-        
-        print(f"Servo 1 position: {position} μs")
-        
-        # Send command to output node
-        response = self.output_node.process_command(command)  # Changed from handle_command to process_command
-        
-        if response['status'] != 'ok':
-            print(f"Error rotating cubes: {response['message']}")
-            return False
+        print("\nRotating servos based on bin averages:")
+        for bin_num in range(5):
+            # Get values in this bin
+            bin_values = [val for val, idx in zip(data, bin_indices) if idx == bin_num]
+            servo_id = self.servo_mapping[bin_num + 1]
             
+            if bin_values:
+                # Calculate single average for this bin
+                bin_avg = sum(bin_values) / len(bin_values)
+                
+                # Map the average to an angle:
+                # bin_avg of 20 → -150 degrees
+                # bin_avg of 127 → +150 degrees
+                angle = ((bin_avg - 20) / (127 - 20)) * 300 - 150
+                
+                print(f"\nServo {servo_id}:")
+                print(f"  Bin values: {bin_values}")
+                print(f"  Average: {bin_avg:.1f}")
+                print(f"  Target angle: {angle:.1f}°")
+                
+                # Send command to servo
+                command = {
+                    'type': 'servo',
+                    'servo_id': servo_id,
+                    'position': angle,
+                    'time_ms': 1000  # 1 second movement
+                }
+                
+                response = self.output_node.process_command(command)
+                if response['status'] == 'ok':
+                    print(f"  ✓ Moved to {angle:.1f}°")
+                else:
+                    print(f"  ✗ Failed: {response['message']}")
+                
+                await asyncio.sleep(0.1)  # Small delay between servos
+            else:
+                print(f"\nServo {servo_id}:")
+                print("  No values in bin - skipping")
+        
         return True
 
 async def main():
