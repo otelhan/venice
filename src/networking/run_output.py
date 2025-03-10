@@ -4,7 +4,6 @@ import json
 import numpy as np
 from enum import Enum, auto
 from src.networking.output_node import OutputNode
-import argparse
 import yaml
 import os
 
@@ -15,13 +14,11 @@ class OutputState(Enum):
     SHOW_TIME = auto()
 
 class OutputController:
-    def __init__(self, controller_name, port=8765):
-        self.controller_name = controller_name
-        self.port = port
+    def __init__(self):
+        self.port = 8765
         self.current_state = OutputState.IDLE
-        self.output_node = OutputNode()
+        self.output_node = OutputNode()  # Will use /dev/ttyACM0 by default
         self.received_data = None
-        self.config = self._load_config()
         
         # Map each bin to a single servo
         self.servo_mapping = {
@@ -33,17 +30,7 @@ class OutputController:
         }
         
         # Track servo positions
-        self.servo_positions = {1: 1500, 2: 1500, 3: 1500, 4: 1500, 5: 1500}  # Initialize at center
-
-    def _load_config(self):
-        """Load configuration from YAML"""
-        config_path = os.path.join('config', 'controllers.yaml')
-        try:
-            with open(config_path, 'r') as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            print(f"Error loading config: {e}")
-            return None
+        self.servo_positions = {1: 1500, 2: 1500, 3: 1500, 4: 1500, 5: 1500}
 
     async def start(self):
         """Start the output node and websocket server"""
@@ -51,7 +38,7 @@ class OutputController:
             print("Failed to start output node")
             return
 
-        print(f"\nStarting output controller: {self.controller_name}")
+        print(f"\nStarting output controller")
         print(f"Listening on port: {self.port}")
         
         async with websockets.serve(
@@ -180,10 +167,10 @@ class OutputController:
         await self.print_servo_positions()
 
 async def main():
-    controller = OutputController("output")  # Fixed name
+    controller = OutputController()
     await controller.start()
 
 if __name__ == "__main__":
     print("\nStarting Output Controller")
     print("-------------------------")
-    asyncio.run(main()) # Test comment
+    asyncio.run(main())

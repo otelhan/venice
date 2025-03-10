@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 class ServoController:
     """Controls servos via Waveshare Serial Bus Servo Driver Board"""
     
-    def __init__(self, port: str = '/dev/ttyUSB0', baud: int = 115200):
+    def __init__(self, port: str = '/dev/ttyACM0', baud: int = 115200):
         """Initialize servo controller
         
         Args:
@@ -20,15 +20,17 @@ class ServoController:
         
     def connect(self) -> bool:
         """Connect to the servo driver board"""
-        # First list all available ports
+        # List available ports on Linux
         print("\nAvailable Serial Ports:")
         print("----------------------")
-        for port in serial.tools.list_ports.comports():
-            print(f"Device  : {port.device}")
-            print(f"Name    : {port.name}")
-            print(f"Desc    : {port.description}")
-            print(f"HW ID   : {port.hwid}")
-            print("----------------------")
+        try:
+            import glob
+            ports = glob.glob('/dev/tty[A-Za-z]*')
+            for port in ports:
+                print(f"Port: {port}")
+        except Exception as e:
+            print(f"Error listing ports: {e}")
+        print("----------------------")
         
         try:
             self.serial = serial.Serial(
@@ -113,57 +115,26 @@ class OutputNode:
     """Node for controlling output devices (servos)"""
     
     def __init__(self):
-        self.servo_controller = ServoController()
+        self.servo_controller = ServoController(port='/dev/ttyACM0')  # Explicitly set to ttyACM0
         
     def start(self):
         """Start the output node"""
-        if not self.servo_controller.connect():
-            return False
-            
-        print("Output node started")
-        return True
+        return self.servo_controller.connect()
         
     def stop(self):
         """Stop the output node"""
         self.servo_controller.disconnect()
-        print("Output node stopped")
         
-    def handle_command(self, command: Dict) -> Dict:
-        """Handle incoming commands
-        
-        Expected command format:
-        {
-            'type': 'servo',
-            'servo_id': 1-8,
-            'position': 500-2500,
-            'time_ms': 1000  # optional
-        }
-        """
-        response = {
-            'status': 'error',
-            'message': ''
-        }
-        
-        try:
-            if command['type'] == 'servo':
-                success = self.servo_controller.set_servo_position(
-                    command['servo_id'],
-                    command['position'],
-                    command.get('time_ms', 1000)
-                )
-                
-                if success:
-                    response['status'] = 'ok'
-                    response['message'] = f"Servo {command['servo_id']} set to {command['position']}"
-                else:
-                    response['message'] = 'Failed to set servo position'
-                    
+    def handle_command(self, command):
+        """Handle incoming commands"""
+        if command['type'] == 'servo':
+            success = self.servo_controller.set_servo_position(
+                command['servo_id'],
+                command['position'],
+                command.get('time_ms', 1000)
+            )
+            if success:
+                return {"status": "ok", "message": "Position set"}
             else:
-                response['message'] = f"Unknown command type: {command['type']}"
-                
-        except KeyError as e:
-            response['message'] = f"Missing required field: {e}"
-        except Exception as e:
-            response['message'] = f"Error: {e}"
-            
-        return response # Test comment
+                return {"status": "error", "message": "Failed to set position"}
+        return {"status": "error", "message": "Unknown command type"}
