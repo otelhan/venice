@@ -116,55 +116,39 @@ class OutputController:
         print("------------------------")
 
     async def rotate_cubes(self, data):
-        """Rotate servos based on histogram bin averages"""
-        print("\nCalculating servo positions...")
+        """Rotate the cubes based on the received data"""
+        print(f"Rotating cubes with data: {data}")
         
-        # Create histogram bins
-        bins = np.linspace(20, 127, 6)  # 5 bins between 20 and 127
-        bin_indices = np.digitize(data, bins) - 1  # Get bin index for each value
+        # Convert data to servo positions
+        values = data['values']
+        print(f"Values: {values}")
         
-        # Print initial positions
-        await self.print_servo_positions()
+        # Calculate average
+        avg = sum(values) / len(values)
+        print(f"Average: {avg}")
         
-        print("\nRotating servos based on bin averages:")
-        for bin_num in range(5):
-            # Get values in this bin
-            bin_values = [val for val, idx in zip(data, bin_indices) if idx == bin_num]
+        # Map average to servo position
+        # Example: map 0-100 to 500-2500 microseconds
+        position = avg  # You might want to scale this appropriately
+        
+        # Send command to servo
+        command = {
+            'type': 'servo',
+            'servo_id': 1,  # Using first servo
+            'position': position,  # Now in degrees (-150 to +150)
+            'time_ms': 1000  # Take 1 second to move
+        }
+        
+        print(f"Servo 1 position: {position} μs")
+        
+        # Send command to output node
+        response = self.output_node.process_command(command)  # Changed from handle_command to process_command
+        
+        if response['status'] != 'ok':
+            print(f"Error rotating cubes: {response['message']}")
+            return False
             
-            if bin_values:  # If bin has values
-                # Calculate average of values in bin
-                bin_avg = np.mean(bin_values)
-                
-                # Scale average from (20-127) to servo range (500-2500)
-                position = int(((bin_avg - 20) / (127 - 20)) * (2500 - 500) + 500)
-                
-                # Get corresponding servo ID
-                servo_id = self.servo_mapping[bin_num + 1]
-                
-                # Update stored position
-                self.servo_positions[servo_id] = position
-                
-                print(f"\nBin {bin_num + 1}:")
-                print(f"  Values: {bin_values}")
-                print(f"  Average: {bin_avg:.1f}")
-                print(f"  Servo {servo_id} position: {position} μs")
-                
-                # Send command to servo
-                command = {
-                    'type': 'servo',
-                    'servo_id': servo_id,
-                    'position': position,
-                    'time_ms': 1000
-                }
-                response = self.output_node.handle_command(command)
-                print(f"  Response: {response}")
-                await asyncio.sleep(0.1)  # Small delay between commands
-            else:
-                print(f"\nBin {bin_num + 1}: No values")
-        
-        # Print final positions
-        print("\nFinal Positions:")
-        await self.print_servo_positions()
+        return True
 
 async def main():
     controller = OutputController()
