@@ -63,7 +63,7 @@ class VideoProcessorSimulator:
             # Create overlay for grid lines
             grid_overlay = grid_frame.copy()
             for i in range(rows + 1):
-                y = i * cell_size
+                y = i * cell_sizea
                 cv2.line(grid_overlay, (0, y), (width, y), (200, 200, 200), 1)
             for j in range(cols + 1):
                 x = j * cell_size
