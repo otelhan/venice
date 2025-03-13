@@ -17,8 +17,10 @@ class OutputController:
     def __init__(self):
         self.port = 8765
         self.current_state = OutputState.IDLE
-        self.output_node = OutputNode()  # Will use /dev/ttyACM0 by default
+        self.output_node = OutputNode()
         self.received_data = None
+        self.clock_direction = 1  # 1 for increasing angle, -1 for decreasing
+        self.clock_current_angle = 0
         
         # Map each bin to a single servo
         self.servo_mapping = {
@@ -103,7 +105,11 @@ class OutputController:
             if self.received_data:
                 await self.rotate_cubes(self.received_data)
                 self.received_data = None
-                await self.transition_to(OutputState.IDLE)
+                await self.transition_to(OutputState.SHOW_TIME)
+                
+        elif self.current_state == OutputState.SHOW_TIME:
+            await self.move_clock()
+            await self.transition_to(OutputState.IDLE)
 
     async def print_servo_positions(self):
         """Print current position of all servos"""
@@ -120,52 +126,64 @@ class OutputController:
         print(f"\nProcessing {len(data)} values into 5 bins")
         
         # Create histogram bins for 5 servos
-        bins = np.linspace(20, 127, 6)  # Creates [20, 41.4, 62.8, 84.2, 105.6, 127]
-        bin_indices = np.digitize(data, bins) - 1  # Get bin index for each value
+        bins = np.linspace(20, 127, 6)
+        bin_indices = np.digitize(data, bins) - 1
         
-        print("\nBin ranges:")
-        for i in range(5):
-            print(f"Bin {i+1}: {bins[i]:.1f} to {bins[i+1]:.1f}")
-        
-        print("\nRotating servos based on bin averages:")
+        # Move all cube servos
         for bin_num in range(5):
-            # Get values in this bin
             bin_values = [val for val, idx in zip(data, bin_indices) if idx == bin_num]
             servo_id = self.servo_mapping[bin_num + 1]
             
             if bin_values:
-                # Calculate single average for this bin
                 bin_avg = sum(bin_values) / len(bin_values)
-                
-                # Map the average to an angle:
-                # bin_avg of 20 → -150 degrees
-                # bin_avg of 127 → +150 degrees
                 angle = ((bin_avg - 20) / (127 - 20)) * 300 - 150
                 
-                print(f"\nServo {servo_id}:")
-                print(f"  Bin values: {bin_values}")
-                print(f"  Average: {bin_avg:.1f}")
-                print(f"  Target angle: {angle:.1f}°")
-                
-                # Send command to servo
                 command = {
                     'type': 'servo',
+                    'controller': 'main',
                     'servo_id': servo_id,
                     'position': angle,
-                    'time_ms': 1000  # 1 second movement
+                    'time_ms': 1000
                 }
                 
                 response = self.output_node.process_command(command)
                 if response['status'] == 'ok':
-                    print(f"  ✓ Moved to {angle:.1f}°")
+                    print(f"Servo {servo_id} moved to {angle:.1f}°")
                 else:
-                    print(f"  ✗ Failed: {response['message']}")
-                
-                await asyncio.sleep(0.1)  # Small delay between servos
-            else:
-                print(f"\nServo {servo_id}:")
-                print("  No values in bin - skipping")
+                    print(f"Failed to move servo {servo_id}")
+                await asyncio.sleep(0.1)
         
+        return True
+
+    async def move_clock(self):
+        """Move the clock servo in its sequence"""
+        print("\nMoving clock servo...")
+        
+        # Update clock angle
+        self.clock_current_angle += 60 * self.clock_direction
+        
+        # Check bounds and reverse direction if needed
+        if abs(self.clock_current_angle) >= 150:
+            self.clock_direction *= -1  # Reverse direction
+            self.clock_current_angle = 150 if self.clock_current_angle > 0 else -150
+        
+        # Send command to clock servo
+        clock_command = {
+            'type': 'servo',
+            'controller': 'secondary',
+            'servo_id': 1,
+            'position': self.clock_current_angle,
+            'time_ms': 1000
+        }
+        
+        response = self.output_node.process_command(clock_command)
+        if response['status'] == 'ok':
+            print(f"Clock servo moved to {self.clock_current_angle:.1f}°")
+        else:
+            print("Failed to move clock servo")
+        
+        # Wait for movement to complete
+        await asyncio.sleep(1.1)  # Slightly longer than movement time
         return True
 
 async def main():

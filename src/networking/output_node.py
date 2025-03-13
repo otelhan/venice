@@ -129,31 +129,35 @@ class OutputNode:
     """Node for controlling output devices (servos)"""
     
     def __init__(self):
-        self.servo_controller = ServoController()
+        self.controllers = {}
+        self.config = self.load_config()
         
+        # Initialize main controller
+        main_config = self.config['servo_config']['controllers']['main']
+        self.controllers['main'] = ServoController(main_config['port'], main_config['baud'])
+        
+        # Initialize secondary controller
+        secondary_config = self.config['servo_config']['controllers']['secondary']
+        self.controllers['secondary'] = ServoController(secondary_config['port'], secondary_config['baud'])
+        
+    def load_config(self) -> dict:
+        """Load servo configuration"""
+        config_path = os.path.join(Path(__file__).parent.parent.parent, 'config', 'controllers.yaml')
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+            
     def start(self):
-        """Start the output node"""
-        return self.servo_controller.connect()
+        """Start all controllers"""
+        success = True
+        for name, controller in self.controllers.items():
+            if not controller.connect():
+                print(f"Failed to connect to {name} controller")
+                success = False
+        return success
         
-    def stop(self):
-        """Stop the output node"""
-        self.servo_controller.close()
-        
-    def process_command(self, command: Dict) -> Dict:
+    def process_command(self, command):
         """Process a command dictionary"""
         if command['type'] == 'servo':
-            # Convert position to angle if it's in units
-            position = command['position']
-            if 500 <= position <= 2500:  # If position is in units
-                position = self.servo_controller.units_to_degrees(position)
-                
-            success = self.servo_controller.set_servo_position(
-                command['servo_id'],
-                position,
-                command.get('time_ms', None)
-            )
-            if success:
-                return {"status": "ok", "message": "Position set"}
-            else:
-                return {"status": "error", "message": "Failed to set position"}
+            controller = self.controllers[command['controller']]
+            return self.move_servo(controller, command)
         return {"status": "error", "message": "Unknown command type"}
