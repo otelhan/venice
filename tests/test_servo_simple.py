@@ -183,7 +183,11 @@ def test_servos():
                 
                 result, error = controller.packet_handler.WritePosEx(servo_id, position, speed, accel)
                 if result == COMM_SUCCESS:
-                    print("Command sent successfully")
+                    print(f"Command sent successfully to {controller.port}")
+                    print(f"  Servo ID: {servo_id}")
+                    print(f"  Position: {position}")
+                    print(f"  Speed: {speed}")
+                    print(f"  Accel: {accel}")
                     time.sleep(0.1)
                     pos, spd, result, error = controller.packet_handler.ReadPosSpeed(servo_id)
                     if result == COMM_SUCCESS:
@@ -193,6 +197,7 @@ def test_servos():
                             save_position(config, config_key, servo_id, actual_degrees)
                 else:
                     print(f"Failed to move servo: {controller.packet_handler.getTxRxResult(result)}")
+                    print(f"Error: {error}")
                     
             except (ValueError, KeyError):
                 print("Invalid input")
