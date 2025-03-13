@@ -220,15 +220,18 @@ def test_servos():
             
             # Center secondary controller servo if connected
             if 'secondary' in controllers:
-                print("\nCentering secondary controller servo...")
-                result, error = controllers['secondary'].packet_handler.WritePosEx(1, 1500, default_speed, default_accel)
-                if result == COMM_SUCCESS:
-                    print("Centered clock servo")
-                    if servo_config.get('save_positions', True):
-                        save_position(config, 'secondary', 1, 0.0)
-                else:
-                    print("Failed to center clock servo")
-                time.sleep(0.1)
+                try:
+                    print("\nCentering secondary controller servo...")
+                    result, error = controllers['secondary'].packet_handler.WritePosEx(1, 1500, default_speed, default_accel)
+                    if result == COMM_SUCCESS:
+                        print("Centered clock servo")
+                        if servo_config.get('save_positions', True):
+                            save_position(config, 'secondary', 1, 0.0)
+                    else:
+                        print("Failed to center clock servo")
+                    time.sleep(0.2)  # Slightly longer delay for secondary controller
+                except Exception as e:
+                    print(f"Error with secondary controller: {e}")
                 
         elif choice == '3':
             print("\nReading positions:")
