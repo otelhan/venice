@@ -27,6 +27,8 @@ class ServoController:
         self.servo_config = self.config['servo_config']
         self.default_speed = self.servo_config.get('default_speed_ms', 1000)
         self.default_accel = self.servo_config.get('default_accel', 50)
+        self.debug = self.servo_config.get('debug', False) or \
+                    self.servo_config['controllers'][controller_name].get('debug', False)
         
     def load_config(self) -> dict:
         """Load servo configuration"""
@@ -76,92 +78,52 @@ class ServoController:
             print(f"Failed to connect to servo board: {e}")
             return False
             
+    def debug_print(self, message: str):
+        """Print debug messages if debug is enabled"""
+        if self.debug:
+            print(f"DEBUG [{self.controller_name}]: {message}")
+
     def set_servo_position(self, servo_id: int, angle: float, time_ms: Optional[int] = None) -> bool:
         """Set servo position in degrees"""
-        print(f"\nDEBUG: Setting servo {servo_id} to {angle}° on {self.port}")
+        self.debug_print(f"Setting servo {servo_id} to {angle}° on {self.port}")
         
         if not self.connected:
-            print("DEBUG: Not connected to servo board")
+            print("Not connected to servo board")
             return False
             
         try:
-            print(f"DEBUG: Getting config for {self.controller_name} servo {servo_id}")
             servo_config = self.servo_config['controllers'][self.controller_name]['servos'][str(servo_id)]
-            print(f"DEBUG: Got servo config: {servo_config}")
+            self.debug_print(f"Got servo config: {servo_config}")
             
             # Check mode
             if servo_config['mode'] != 'servo':
-                print(f"DEBUG: Servo {servo_id} is in motor mode!")
+                print(f"Servo {servo_id} is in motor mode!")
                 return False
                 
             # Convert to units
             position = self.degrees_to_units(angle)
             speed = time_ms if time_ms is not None else self.default_speed
-            print(f"DEBUG: Converted {angle}° to {position} units")
-            print(f"DEBUG: Using speed {speed}ms")
+            self.debug_print(f"Converted {angle}° to {position} units, speed: {speed}ms")
             
-            # Send command with timeout
-            print(f"DEBUG: About to send WritePosEx command...")
-            try:
-                import signal
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("Command timed out")
-                
-                # Set 5 second timeout
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(5)
-                
-                try:
-                    print(f"DEBUG: WritePosEx params - ID: {servo_id}, Pos: {position}, Speed: {speed}, Accel: {self.default_accel}")
-                    result, error = self.packet_handler.WritePosEx(servo_id, position, speed, self.default_accel)
-                    print(f"DEBUG: After WritePosEx - Result: {result}, Error: {error}")
-                finally:
-                    signal.alarm(0)  # Disable the alarm
-                    
-            except TimeoutError:
-                print(f"DEBUG: WritePosEx command timed out")
-                # Try to recover by closing and reopening the port
-                self.port_handler.closePort()
-                time.sleep(0.5)
-                if not self.port_handler.openPort():
-                    print("DEBUG: Failed to reopen port")
-                    return False
-                return False
-                
-            except Exception as e:
-                print(f"DEBUG: Exception during WritePosEx: {e}")
-                return False
+            # Send command
+            result, error = self.packet_handler.WritePosEx(servo_id, position, speed, self.default_accel)
+            self.debug_print(f"WritePosEx result: {result}, error: {error}")
             
             if result == COMM_SUCCESS:
-                print(f"DEBUG: Command successful, waiting before reading...")
-                time.sleep(0.2)
-                try:
-                    print(f"DEBUG: About to read position...")
-                    pos, spd, result, error = self.packet_handler.ReadPosSpeed(servo_id)
-                    print(f"DEBUG: After ReadPosSpeed - Result: {result}, Error: {error}, Pos: {pos}, Speed: {spd}")
-                except Exception as e:
-                    print(f"DEBUG: Exception during ReadPosSpeed: {e}")
-                    return False
-                
+                time.sleep(0.1)
+                pos, spd, result, error = self.packet_handler.ReadPosSpeed(servo_id)
                 if result == COMM_SUCCESS:
                     actual_degrees = self.units_to_degrees(pos)
-                    print(f"DEBUG: Read position: {pos} units ({actual_degrees:.1f}°)")
-                    try:
-                        print(f"DEBUG: About to save position...")
-                        self.save_position(servo_id, actual_degrees)
-                        print(f"DEBUG: Position saved successfully")
-                    except Exception as e:
-                        print(f"DEBUG: Exception during save_position: {e}")
-                        return False
-                    return True
-            
-            print(f"DEBUG: Command failed with result {result}")
-            return False
+                    self.debug_print(f"Read position: {pos} units ({actual_degrees:.1f}°)")
+                    self.save_position(servo_id, actual_degrees)
+                    self.debug_print("Position saved")
+                return True
+            else:
+                print(f"Command failed: {result}")
+                return False
                 
         except Exception as e:
-            print(f"DEBUG: Exception in set_servo_position: {e}")
-            import traceback
-            print(traceback.format_exc())
+            print(f"Error: {e}")
             return False
             
     def close(self):
@@ -176,14 +138,23 @@ class OutputNode:
     def __init__(self):
         self.controllers = {}
         self.config = self.load_config()
+        self.debug = self.config['servo_config'].get('debug', False)
         
         # Initialize main controller
         main_config = self.config['servo_config']['controllers']['main']
-        self.controllers['main'] = ServoController(main_config['port'], main_config['baud'])
+        self.controllers['main'] = ServoController(
+            main_config['port'], 
+            main_config['baud'],
+            'main'  # Pass controller name
+        )
         
         # Initialize secondary controller
         secondary_config = self.config['servo_config']['controllers']['secondary']
-        self.controllers['secondary'] = ServoController(secondary_config['port'], secondary_config['baud'])
+        self.controllers['secondary'] = ServoController(
+            secondary_config['port'], 
+            secondary_config['baud'],
+            'secondary'  # Pass controller name
+        )
         
     def load_config(self) -> dict:
         """Load servo configuration"""
@@ -200,11 +171,19 @@ class OutputNode:
                 success = False
         return success
         
+    def debug_print(self, message: str):
+        """Print debug messages if debug is enabled"""
+        if self.debug:
+            print(f"DEBUG [OutputNode]: {message}")
+            
     def process_command(self, command):
         """Process a command dictionary"""
         if command['type'] == 'servo':
+            self.debug_print(f"Processing servo command: {command}")
             controller = self.controllers[command['controller']]
-            return self.move_servo(controller, command)
+            result = self.move_servo(controller, command)
+            self.debug_print(f"Command result: {result}")
+            return result
         return {"status": "error", "message": "Unknown command type"}
 
     def move_servo(self, controller, command):

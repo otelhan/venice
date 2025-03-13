@@ -82,11 +82,13 @@ streams:
       updates_performed: 7
     url: https://www.youtube.com/live/HpZAez2oYsA?si=S5_605kITNMOowOG
 servo_config:
-  default_speed_ms: 100
+  debug: false  # Global debug flag
+  default_speed_ms: 1000
   default_accel: 50
   save_positions: true
   controllers:
     main:
+      debug: false  # Controller-specific debug flag
       port: "/dev/ttyACM0"
       baud: 1000000
       servos:
@@ -126,6 +128,7 @@ servo_config:
           min_angle: -150.0
           max_angle: 150.0
     secondary:
+      debug: false
       port: "/dev/ttyACM1"  # Will be selected from available ports
       baud: 1000000
       servos:
