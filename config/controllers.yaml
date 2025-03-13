@@ -85,39 +85,54 @@ servo_config:
   default_speed_ms: 100
   default_accel: 50
   save_positions: true
-  servos:
-    "1":
-      id: 1
-      name: "servo_1"
-      mode: "servo"
-      last_position_deg: 0.0
-      min_angle: -150.0
-      max_angle: 150.0
-    "2":
-      id: 2
-      name: "servo_2"
-      mode: "servo"
-      last_position_deg: 0.0
-      min_angle: -150.0
-      max_angle: 150.0
-    "3":
-      id: 3
-      name: "servo_3"
-      mode: "servo"
-      last_position_deg: 0.0
-      min_angle: -150.0
-      max_angle: 150.0
-    "4":
-      id: 4
-      name: "servo_4"
-      mode: "servo"
-      last_position_deg: 0.0
-      min_angle: -150.0
-      max_angle: 150.0
-    "5":
-      id: 5
-      name: "servo_5"
-      mode: "servo"
-      last_position_deg: 0.0
-      min_angle: -150.0
-      max_angle: 150.0
+  controllers:
+    main:
+      port: "/dev/ttyACM0"
+      baud: 9600
+      servos:
+        "1":
+          id: 1
+          name: "servo_1"
+          mode: "servo"
+          last_position_deg: 0.0
+          min_angle: -150.0
+          max_angle: 150.0
+        "2":
+          id: 2
+          name: "servo_2"
+          mode: "servo"
+          last_position_deg: 0.0
+          min_angle: -150.0
+          max_angle: 150.0
+        "3":
+          id: 3
+          name: "servo_3"
+          mode: "servo"
+          last_position_deg: 0.0
+          min_angle: -150.0
+          max_angle: 150.0
+        "4":
+          id: 4
+          name: "servo_4"
+          mode: "servo"
+          last_position_deg: 0.0
+          min_angle: -150.0
+          max_angle: 150.0
+        "5":
+          id: 5
+          name: "servo_5"
+          mode: "servo"
+          last_position_deg: 0.0
+          min_angle: -150.0
+          max_angle: 150.0
+    secondary:
+      port: "/dev/ttyACM1"  # Will be selected from available ports
+      baud: 9600
+      servos:
+        "1":
+          id: 1
+          name: "clock_servo"
+          mode: "servo"
+          last_position_deg: 0.0
+          min_angle: -150.0
+          max_angle: 150.0

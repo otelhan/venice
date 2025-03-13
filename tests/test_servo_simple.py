@@ -16,31 +16,61 @@ sys.path.append(str(project_root))
 from lib.STservo_sdk.sts import *
 from lib.STservo_sdk.port_handler import PortHandler
 
-def find_port():
-    """Find the correct serial port"""
+class ServoController:
+    def __init__(self, port, baud=1000000):
+        self.port = port
+        self.baud = baud
+        self.port_handler = PortHandler(port)
+        self.packet_handler = sts(self.port_handler)
+        
+    def connect(self):
+        if self.port_handler.openPort():
+            print(f"Opened port {self.port}")
+            if self.port_handler.setBaudRate(self.baud):
+                print("Set baud rate successfully")
+                return True
+        return False
+        
+    def close(self):
+        self.port_handler.closePort()
+
+def find_controllers():
+    """Find and setup multiple controllers"""
     print("\nScanning for available ports...")
     
-    # List all ports
     ports = serial.tools.list_ports.comports()
     if not ports:
         print("No ports found!")
-        return None
+        return {}
         
     print("\nAvailable ports:")
     for i, port in enumerate(ports):
         print(f"{i+1}: {port.device} - {port.description}")
         
-    # Let user choose
+    controllers = {}
+    
+    # Select main controller
+    print("\nSelect MAIN controller (5 servos):")
+    main_port = select_port(ports)
+    if main_port:
+        controllers['main'] = ServoController(main_port)
+        
+    # Select secondary controller
+    print("\nSelect SECONDARY controller (mirror servo):")
+    secondary_port = select_port(ports)
+    if secondary_port:
+        controllers['secondary'] = ServoController(secondary_port)
+        
+    return controllers
+
+def select_port(ports):
+    """Helper to select a port from list"""
     try:
-        choice = int(input("\nSelect port number: ").strip())
+        choice = int(input("Select port number (or 0 to skip): ").strip())
         if 1 <= choice <= len(ports):
-            selected_port = ports[choice-1].device
-            print(f"Selected: {selected_port}")
-            return selected_port
+            return ports[choice-1].device
     except ValueError:
         pass
-        
-    print("Invalid selection")
     return None
 
 def degrees_to_units(degrees):
@@ -80,37 +110,23 @@ def test_servos():
     # Load config
     config = load_config()
     servo_config = config['servo_config']
-    default_speed = servo_config.get('default_speed_ms', 1000)
-    default_accel = servo_config.get('default_accel', 50)
     
-    # Find and open port
-    port = find_port()
-    if not port:
-        print("No port selected")
+    # Find and connect to controllers
+    controllers = find_controllers()
+    if not controllers:
+        print("No controllers connected")
         return
         
-    # Initialize handlers with selected port
-    portHandler = PortHandler(port)
-    packetHandler = sts(portHandler)
-    
-    # Open port
-    if portHandler.openPort():
-        print("Succeeded to open the port")
-    else:
-        print("Failed to open the port")
-        return
-
-    # Set port baudrate
-    if portHandler.setBaudRate(1000000):
-        print("Succeeded to change the baudrate")
-    else:
-        print("Failed to change the baudrate")
-        return
-
+    # Connect all controllers
+    for name, controller in controllers.items():
+        if not controller.connect():
+            print(f"Failed to connect to {name} controller")
+            return
+            
     while True:
-        print("\nServo Test Menu, thanks:")
+        print("\nServo Test Menu:")
         print("1. Move servo to angle")
-        print("2. Center all servos (0°)")
+        print("2. Center all servos")
         print("3. Read positions")
         print("4. Scan for connected servos")
         print("5. Set motor speed")
@@ -123,13 +139,24 @@ def test_servos():
             break
             
         elif choice == '1':
+            # Select controller
+            print("\nSelect controller:")
+            print("1. Main (5 servos)")
+            print("2. Secondary (mirror servo)")
+            
             try:
-                servo_id = int(input("Enter servo ID (1-5): "))
-                if not 1 <= servo_id <= 5:
+                ctrl_choice = input("Controller (1-2): ").strip()
+                controller = controllers['main'] if ctrl_choice == '1' else controllers['secondary']
+                config_key = 'main' if ctrl_choice == '1' else 'secondary'
+                
+                # Get servo ID (1-5 for main, only 1 for secondary)
+                max_id = 5 if ctrl_choice == '1' else 1
+                servo_id = int(input(f"Enter servo ID (1-{max_id}): "))
+                if not 1 <= servo_id <= max_id:
                     print("Invalid servo ID")
                     continue
                 
-                servo_config = config['servo_config']['servos'][str(servo_id)]
+                servo_config = config['servo_config']['controllers'][config_key]['servos'][str(servo_id)]
                 if servo_config['mode'] != 'servo':
                     print(f"Servo {servo_id} is in motor mode! Use option 5 to control speed.")
                     continue
@@ -149,29 +176,29 @@ def test_servos():
                 position = degrees_to_units(degrees)
                 print(f"Moving to {degrees}° (units: {position})")
                 
-                speed = int(input(f"Enter time in ms (20-10000, default {default_speed}): ") or str(default_speed))
-                accel = int(input(f"Enter acceleration (0-255, default {default_accel}): ") or str(default_accel))
+                speed = int(input(f"Enter time in ms (20-10000, default {servo_config.get('default_speed_ms', 1000)}): ") or str(servo_config.get('default_speed_ms', 1000)))
+                accel = int(input(f"Enter acceleration (0-255, default {servo_config.get('default_accel', 50)}): ") or str(servo_config.get('default_accel', 50)))
                 
-                result, error = packetHandler.WritePosEx(servo_id, position, speed, accel)
+                result, error = controller.packet_handler.WritePosEx(servo_id, position, speed, accel)
                 if result == COMM_SUCCESS:
                     print("Command sent successfully")
                     time.sleep(0.1)
-                    pos, spd, result, error = packetHandler.ReadPosSpeed(servo_id)
+                    pos, spd, result, error = controller.packet_handler.ReadPosSpeed(servo_id)
                     if result == COMM_SUCCESS:
                         actual_degrees = units_to_degrees(pos)
                         print(f"Current position: {actual_degrees:.1f}°")
                         if servo_config.get('save_positions', True):
                             save_position(config, servo_id, actual_degrees)
                 else:
-                    print(f"Failed to move servo: {packetHandler.getTxRxResult(result)}")
+                    print(f"Failed to move servo: {controller.packet_handler.getTxRxResult(result)}")
                     
-            except ValueError:
+            except (ValueError, KeyError):
                 print("Invalid input")
                 
         elif choice == '2':
             print("Centering all servos (0°)...")
             for id in range(1, 6):
-                result, error = packetHandler.WritePosEx(id, 1500, default_speed, default_accel)
+                result, error = controllers['main'].packet_handler.WritePosEx(id, 1500, servo_config['default_speed_ms'], servo_config['default_accel'])
                 if result == COMM_SUCCESS:
                     print(f"Centered servo {id}")
                     if servo_config.get('save_positions', True):
@@ -183,7 +210,7 @@ def test_servos():
         elif choice == '3':
             print("\nReading positions:")
             for id in range(1, 6):
-                pos, spd, result, error = packetHandler.ReadPosSpeed(id)
+                pos, spd, result, error = controllers['main'].packet_handler.ReadPosSpeed(id)
                 if result == COMM_SUCCESS:
                     degrees = units_to_degrees(pos)
                     print(f"Servo {id}: {degrees:.1f}° (units: {pos})")
@@ -195,10 +222,10 @@ def test_servos():
         elif choice == '4':
             print("\nScanning for connected servos...")
             for id in range(1, 6):
-                model_number, result, error = packetHandler.ping(id)
+                model_number, result, error = controllers['main'].packet_handler.ping(id)
                 if result == COMM_SUCCESS:
                     print(f"Found servo {id}")
-                    pos, spd, result, error = packetHandler.ReadPosSpeed(id)
+                    pos, spd, result, error = controllers['main'].packet_handler.ReadPosSpeed(id)
                     if result == COMM_SUCCESS:
                         degrees = units_to_degrees(pos)
                         print(f"  Position: {degrees:.1f}°")
@@ -210,12 +237,23 @@ def test_servos():
                 
         elif choice == '5':  # Motor Speed Control
             try:
-                servo_id = int(input("Enter servo ID (1-5): "))
-                if not 1 <= servo_id <= 5:
+                # Select controller
+                print("\nSelect controller:")
+                print("1. Main (5 servos)")
+                print("2. Secondary (mirror servo)")
+                
+                ctrl_choice = input("Controller (1-2): ").strip()
+                controller = controllers['main'] if ctrl_choice == '1' else controllers['secondary']
+                config_key = 'main' if ctrl_choice == '1' else 'secondary'
+                
+                # Get servo ID (1-5 for main, only 1 for secondary)
+                max_id = 5 if ctrl_choice == '1' else 1
+                servo_id = int(input(f"Enter servo ID (1-{max_id}): "))
+                if not 1 <= servo_id <= max_id:
                     print("Invalid servo ID")
                     continue
                     
-                servo_config = config['servo_config']['servos'][str(servo_id)]
+                servo_config = config['servo_config']['controllers'][config_key]['servos'][str(servo_id)]
                 if servo_config['mode'] != 'motor':
                     print(f"Servo {servo_id} is in servo mode! Use option 1 to control position.")
                     continue
@@ -229,29 +267,30 @@ def test_servos():
                 position = speed_to_units(speed_percent)
                 print(f"Setting speed to {speed_percent}% (units: {position})")
                 
-                result, error = packetHandler.WritePosEx(servo_id, position, default_speed, default_accel)
+                result, error = controller.packet_handler.WritePosEx(servo_id, position, servo_config['default_speed_ms'], servo_config['default_accel'])
                 if result == COMM_SUCCESS:
                     print("Command sent successfully")
                 else:
-                    print(f"Failed to set speed: {packetHandler.getTxRxResult(result)}")
+                    print(f"Failed to set speed: {controller.packet_handler.getTxRxResult(result)}")
                     
-            except ValueError:
+            except (ValueError, KeyError):
                 print("Invalid input")
                 
         elif choice == '6':  # Stop All Motors
             print("Stopping all motors...")
             for id in range(1, 6):
-                servo_config = config['servo_config']['servos'][str(id)]
+                servo_config = config['servo_config']['controllers']['main']['servos'][str(id)]
                 if servo_config['mode'] == 'motor':
-                    result, error = packetHandler.WritePosEx(id, 1500, default_speed, default_accel)
+                    result, error = controllers['main'].packet_handler.WritePosEx(id, 1500, servo_config['default_speed_ms'], servo_config['default_accel'])
                     if result == COMM_SUCCESS:
                         print(f"Stopped motor {id}")
                     else:
                         print(f"Failed to stop motor {id}")
                 time.sleep(0.1)
 
-    # Close port
-    portHandler.closePort()
+    # Close all controllers
+    for controller in controllers.values():
+        controller.close()
 
 if __name__ == "__main__":
     test_servos() 
