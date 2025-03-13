@@ -85,10 +85,12 @@ class ServoController:
         self.port = port
         self.port_handler = PortHandler(port)
         self.packet_handler = sts(self.port_handler)
+        # Set servo count based on port
+        self.servo_count = 5 if 'ACM0' in port else 1
         
     def connect(self):
         if self.port_handler.openPort():
-            print(f"Succeeded to open {self.port}")
+            print(f"Succeeded to open {self.port} (Servos: {self.servo_count})")
             if self.port_handler.setBaudRate(1000000):
                 print("Succeeded to change baudrate")
                 return True
@@ -122,13 +124,17 @@ def test_servos():
         print("No controllers connected")
         return
 
+    # Set initial active controller
+    active_controller = controllers[0]
+    print(f"Active controller: {active_controller.port} ({active_controller.servo_count} servos)")
+
     while True:
         print("\nServo Test Menu:")
         print("1. Move servo to angle")
         print("2. Center all servos")
         print("3. Read positions")
         print("4. Scan for connected servos")
-        print("c. Select controller")
+        print(f"c. Select controller (current: {active_controller.port})")
         print("q. Quit")
         
         choice = input("Select option: ").strip().lower()
@@ -139,12 +145,12 @@ def test_servos():
         elif choice == 'c':
             print("\nAvailable controllers:")
             for i, ctrl in enumerate(controllers):
-                print(f"{i+1}: {ctrl.port}")
+                print(f"{i+1}: {ctrl.port} ({ctrl.servo_count} servos)")
             try:
                 idx = int(input("Select controller: ")) - 1
                 if 0 <= idx < len(controllers):
                     active_controller = controllers[idx]
-                    print(f"Selected: {active_controller.port}")
+                    print(f"Selected: {active_controller.port} ({active_controller.servo_count} servos)")
                 else:
                     print("Invalid selection")
             except ValueError:
@@ -152,9 +158,10 @@ def test_servos():
                 
         elif choice == '1':
             try:
-                servo_id = int(input("Enter servo ID (1-5): "))
-                if not 1 <= servo_id <= 5:
-                    print("Invalid servo ID")
+                max_servo = active_controller.servo_count
+                servo_id = int(input(f"Enter servo ID (1-{max_servo}): "))
+                if not 1 <= servo_id <= max_servo:
+                    print(f"Invalid servo ID. This controller has {max_servo} servo(s)")
                     continue
                 
                 servo_config = config['servo_config']['servos'][str(servo_id)]
