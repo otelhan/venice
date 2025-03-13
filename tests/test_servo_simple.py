@@ -85,16 +85,66 @@ class ServoController:
         self.port = port
         self.port_handler = PortHandler(port)
         self.packet_handler = sts(self.port_handler)
-        # Set servo count based on port
-        self.servo_count = 5 if 'ACM0' in port else 1
         
+        # Set configuration based on model
+        if 'ACM0' in port:
+            self.servo_count = 5
+            self.model = "ST3020"
+            self.default_speed = 100  # Default for ST3020
+            self.default_accel = 50
+        else:
+            self.servo_count = 1
+            self.model = "ST3215"
+            self.default_speed = 500  # Slower default for ST3215 (more precise)
+            self.default_accel = 30   # Lower acceleration for smoother movement
+            
     def connect(self):
         if self.port_handler.openPort():
-            print(f"Succeeded to open {self.port} (Servos: {self.servo_count})")
+            print(f"Succeeded to open {self.port} ({self.servo_count} servos, {self.model})")
             if self.port_handler.setBaudRate(1000000):
                 print("Succeeded to change baudrate")
                 return True
         return False
+        
+    def write_position(self, servo_id, position, speed, accel):
+        """Write position with timeout"""
+        try:
+            # Add delay for ST3215 to ensure command is processed
+            if self.model == "ST3215":
+                time.sleep(0.02)  # 20ms delay
+                
+            result, error = self.packet_handler.WritePosEx(servo_id, position, speed, accel)
+            
+            # Additional delay after write for ST3215
+            if self.model == "ST3215":
+                time.sleep(0.02)  # 20ms delay
+                
+            return result, error
+        except Exception as e:
+            print(f"Write error: {e}")
+            return COMM_FAIL, 0
+            
+    def read_position(self, servo_id):
+        """Read position with timeout"""
+        try:
+            # Add delay for ST3215 before reading
+            if self.model == "ST3215":
+                time.sleep(0.02)  # 20ms delay
+                
+            pos, spd, result, error = self.packet_handler.ReadPosSpeed(servo_id)
+            return pos, spd, result, error
+        except Exception as e:
+            print(f"Read error: {e}")
+            return 0, 0, COMM_FAIL, 0
+            
+    def ping_servo(self, servo_id):
+        """Ping servo with timeout"""
+        try:
+            model, result, error = self.packet_handler.ping(servo_id)
+            return model, result, error
+        except Exception as e:
+            print(f"Ping error: {e}")
+            return 0, COMM_FAIL, 0
         
     def close(self):
         self.port_handler.closePort()
@@ -126,15 +176,15 @@ def test_servos():
 
     # Set initial active controller
     active_controller = controllers[0]
-    print(f"Active controller: {active_controller.port} ({active_controller.servo_count} servos)")
+    print(f"Active controller: {active_controller.port} ({active_controller.servo_count} servos, {active_controller.model})")
 
     while True:
         print("\nServo Test Menu:")
         print("1. Move servo to angle")
-        print("2. Center all servos")
+        print("2. Center servos")
         print("3. Read positions")
         print("4. Scan for connected servos")
-        print(f"c. Select controller (current: {active_controller.port})")
+        print(f"c. Select controller (current: {active_controller.port}, {active_controller.model})")
         print("q. Quit")
         
         choice = input("Select option: ").strip().lower()
@@ -145,12 +195,12 @@ def test_servos():
         elif choice == 'c':
             print("\nAvailable controllers:")
             for i, ctrl in enumerate(controllers):
-                print(f"{i+1}: {ctrl.port} ({ctrl.servo_count} servos)")
+                print(f"{i+1}: {ctrl.port} ({ctrl.servo_count} servos, {ctrl.model})")
             try:
                 idx = int(input("Select controller: ")) - 1
                 if 0 <= idx < len(controllers):
                     active_controller = controllers[idx]
-                    print(f"Selected: {active_controller.port} ({active_controller.servo_count} servos)")
+                    print(f"Selected: {active_controller.port} ({active_controller.servo_count} servos, {active_controller.model})")
                 else:
                     print("Invalid selection")
             except ValueError:
@@ -179,9 +229,15 @@ def test_servos():
                 speed = int(input(f"Enter time in ms (20-10000, default {default_speed}): ") or str(default_speed))
                 accel = int(input(f"Enter acceleration (0-255, default {default_accel}): ") or str(default_accel))
                 
-                result, error = active_controller.packet_handler.WritePosEx(servo_id, position, speed, accel)
+                result, error = active_controller.write_position(servo_id, position, speed, accel)
                 if result == COMM_SUCCESS:
                     print("Command sent successfully")
+                    time.sleep(0.1)  # Short delay
+                    # Try to read back position
+                    pos, spd, result, error = active_controller.read_position(servo_id)
+                    if result == COMM_SUCCESS:
+                        actual_degrees = units_to_degrees(pos)
+                        print(f"Current position: {actual_degrees:.1f}°")
                 else:
                     print(f"Failed to move servo: {active_controller.packet_handler.getTxRxResult(result)}")
                     
@@ -189,9 +245,10 @@ def test_servos():
                 print("Invalid input")
                 
         elif choice == '2':
-            print("Centering all servos (0°)...")
-            for id in range(1, 6):
-                result, error = active_controller.packet_handler.WritePosEx(id, 1500, default_speed, default_accel)
+            print(f"Centering servos on {active_controller.port}...")
+            max_servo = active_controller.servo_count
+            for id in range(1, max_servo + 1):
+                result, error = active_controller.write_position(id, 1500, default_speed, default_accel)
                 if result == COMM_SUCCESS:
                     print(f"Centered servo {id}")
                     if servo_config.get('save_positions', True):
@@ -201,9 +258,10 @@ def test_servos():
                 time.sleep(0.1)
                 
         elif choice == '3':
-            print("\nReading positions:")
-            for id in range(1, 6):
-                pos, spd, result, error = active_controller.packet_handler.ReadPosSpeed(id)
+            print(f"\nReading positions on {active_controller.port}:")
+            max_servo = active_controller.servo_count
+            for id in range(1, max_servo + 1):
+                pos, spd, result, error = active_controller.read_position(id)
                 if result == COMM_SUCCESS:
                     degrees = units_to_degrees(pos)
                     print(f"Servo {id}: {degrees:.1f}° (units: {pos})")
@@ -213,18 +271,19 @@ def test_servos():
                     print(f"Failed to read servo {id}")
                     
         elif choice == '4':
-            print("\nScanning for connected servos...")
-            for id in range(1, 6):
-                model_number, result, error = active_controller.packet_handler.ping(id)
+            print(f"\nScanning for servos on {active_controller.port}...")
+            max_servo = active_controller.servo_count
+            for id in range(1, max_servo + 1):
+                model, result, error = active_controller.ping_servo(id)
                 if result == COMM_SUCCESS:
                     print(f"Found servo {id}")
-                    pos, spd, result, error = active_controller.packet_handler.ReadPosSpeed(id)
+                    pos, spd, result, error = active_controller.read_position(id)
                     if result == COMM_SUCCESS:
                         degrees = units_to_degrees(pos)
                         print(f"  Position: {degrees:.1f}°")
                         print(f"  Speed: {spd}")
-                        if servo_config.get('save_positions', True):
-                            save_position(config, id, degrees)
+                    else:
+                        print("  Could not read position")
                 else:
                     print(f"No response from servo {id}")
 
