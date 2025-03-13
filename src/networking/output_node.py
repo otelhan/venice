@@ -11,10 +11,11 @@ from lib.STservo_sdk.port_handler import PortHandler
 class ServoController:
     """Controls servos via Waveshare Serial Bus Servo Driver Board"""
     
-    def __init__(self, port: str = '/dev/ttyACM0', baud: int = 1000000):
+    def __init__(self, port: str = '/dev/ttyACM0', baud: int = 1000000, controller_name: str = 'main'):
         """Initialize servo controller"""
         self.port = port
         self.baud = baud
+        self.controller_name = controller_name  # Add this to know which controller we are
         self.connected = False
         self.serial = None
         self.port_handler = None
@@ -81,8 +82,8 @@ class ServoController:
             return False
             
         try:
-            # Get servo config
-            servo_config = self.servo_config['servos'][str(servo_id)]
+            # Get servo config using new structure
+            servo_config = self.servo_config['controllers'][self.controller_name]['servos'][str(servo_id)]
             
             # Check mode
             if servo_config['mode'] != 'servo':
@@ -161,3 +162,25 @@ class OutputNode:
             controller = self.controllers[command['controller']]
             return self.move_servo(controller, command)
         return {"status": "error", "message": "Unknown command type"}
+
+    def move_servo(self, controller, command):
+        """Move a servo to the specified position"""
+        try:
+            # Convert position to angle if it's in units
+            position = command['position']
+            if 500 <= position <= 2500:  # If position is in units
+                position = controller.units_to_degrees(position)
+                
+            success = controller.set_servo_position(
+                command['servo_id'],
+                position,
+                command.get('time_ms', None)
+            )
+            
+            if success:
+                return {"status": "ok", "message": "Position set"}
+            else:
+                return {"status": "error", "message": "Failed to set position"}
+                
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
