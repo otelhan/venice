@@ -204,14 +204,30 @@ def test_servos():
                 
         elif choice == '2':
             print("Centering all servos (0°)...")
-            for id in range(1, 6):
-                result, error = controllers['main'].packet_handler.WritePosEx(id, 1500, default_speed, default_accel)
+            
+            # Center main controller servos if connected
+            if 'main' in controllers:
+                print("\nCentering main controller servos...")
+                for id in range(1, 6):
+                    result, error = controllers['main'].packet_handler.WritePosEx(id, 1500, default_speed, default_accel)
+                    if result == COMM_SUCCESS:
+                        print(f"Centered servo {id}")
+                        if servo_config.get('save_positions', True):
+                            save_position(config, 'main', id, 0.0)
+                    else:
+                        print(f"Failed to center servo {id}")
+                    time.sleep(0.1)
+            
+            # Center secondary controller servo if connected
+            if 'secondary' in controllers:
+                print("\nCentering secondary controller servo...")
+                result, error = controllers['secondary'].packet_handler.WritePosEx(1, 1500, default_speed, default_accel)
                 if result == COMM_SUCCESS:
-                    print(f"Centered servo {id}")
+                    print("Centered clock servo")
                     if servo_config.get('save_positions', True):
-                        save_position(config, 'main', id, 0.0)
+                        save_position(config, 'secondary', 1, 0.0)
                 else:
-                    print(f"Failed to center servo {id}")
+                    print("Failed to center clock servo")
                 time.sleep(0.1)
                 
         elif choice == '3':
