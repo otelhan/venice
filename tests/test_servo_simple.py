@@ -108,7 +108,7 @@ def test_servos():
         return
 
     while True:
-        print("\nServo Test Menu:")
+        print("\nServo Test Menu, thanks:")
         print("1. Move servo to angle")
         print("2. Center all servos (0°)")
         print("3. Read positions")
