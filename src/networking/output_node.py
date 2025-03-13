@@ -94,36 +94,46 @@ class ServoController:
                 print(f"DEBUG: Servo {servo_id} is in motor mode!")
                 return False
                 
-            # Validate angle
-            min_angle = servo_config.get('min_angle', -150)
-            max_angle = servo_config.get('max_angle', 150)
-            if not min_angle <= angle <= max_angle:
-                print(f"Angle {angle} out of range ({min_angle} to {max_angle})")
-                return False
-                
             # Convert to units
             position = self.degrees_to_units(angle)
             speed = time_ms if time_ms is not None else self.default_speed
             print(f"DEBUG: Converted {angle}° to {position} units")
             print(f"DEBUG: Using speed {speed}ms")
             
-            # Send command
-            print(f"DEBUG: Sending WritePosEx command...")
-            result, error = self.packet_handler.WritePosEx(servo_id, position, speed, self.default_accel)
-            print(f"DEBUG: WritePosEx result: {result}, error: {error}")
+            # Send command with more detailed error checking
+            print(f"DEBUG: About to send WritePosEx command...")
+            try:
+                print(f"DEBUG: WritePosEx params - ID: {servo_id}, Pos: {position}, Speed: {speed}, Accel: {self.default_accel}")
+                result, error = self.packet_handler.WritePosEx(servo_id, position, speed, self.default_accel)
+                print(f"DEBUG: After WritePosEx - Result: {result}, Error: {error}")
+            except Exception as e:
+                print(f"DEBUG: Exception during WritePosEx: {e}")
+                raise
             
             if result == COMM_SUCCESS:
-                print(f"DEBUG: Command successful, reading position...")
-                time.sleep(0.1)
-                pos, spd, result, error = self.packet_handler.ReadPosSpeed(servo_id)
-                print(f"DEBUG: ReadPosSpeed result: {result}, error: {error}")
+                print(f"DEBUG: Command successful, waiting before reading...")
+                time.sleep(0.2)  # Increased delay
+                try:
+                    print(f"DEBUG: About to read position...")
+                    pos, spd, result, error = self.packet_handler.ReadPosSpeed(servo_id)
+                    print(f"DEBUG: After ReadPosSpeed - Result: {result}, Error: {error}, Pos: {pos}, Speed: {spd}")
+                except Exception as e:
+                    print(f"DEBUG: Exception during ReadPosSpeed: {e}")
+                    raise
+                
                 if result == COMM_SUCCESS:
                     actual_degrees = self.units_to_degrees(pos)
                     print(f"DEBUG: Read position: {pos} units ({actual_degrees:.1f}°)")
-                    self.save_position(servo_id, actual_degrees)
+                    try:
+                        print(f"DEBUG: About to save position...")
+                        self.save_position(servo_id, actual_degrees)
+                        print(f"DEBUG: Position saved successfully")
+                    except Exception as e:
+                        print(f"DEBUG: Exception during save_position: {e}")
+                        raise
                 return True
             else:
-                print(f"DEBUG: Command failed")
+                print(f"DEBUG: Command failed with result {result}")
                 return False
                 
         except Exception as e:
