@@ -78,17 +78,20 @@ class ServoController:
             
     def set_servo_position(self, servo_id: int, angle: float, time_ms: Optional[int] = None) -> bool:
         """Set servo position in degrees"""
+        print(f"\nDEBUG: Setting servo {servo_id} to {angle}° on {self.port}")
+        
         if not self.connected:
-            print("Not connected to servo board")
+            print("DEBUG: Not connected to servo board")
             return False
             
         try:
-            # Get servo config using new structure
+            print(f"DEBUG: Getting config for {self.controller_name} servo {servo_id}")
             servo_config = self.servo_config['controllers'][self.controller_name]['servos'][str(servo_id)]
+            print(f"DEBUG: Got servo config: {servo_config}")
             
             # Check mode
             if servo_config['mode'] != 'servo':
-                print(f"Servo {servo_id} is in motor mode!")
+                print(f"DEBUG: Servo {servo_id} is in motor mode!")
                 return False
                 
             # Validate angle
@@ -101,24 +104,32 @@ class ServoController:
             # Convert to units
             position = self.degrees_to_units(angle)
             speed = time_ms if time_ms is not None else self.default_speed
+            print(f"DEBUG: Converted {angle}° to {position} units")
+            print(f"DEBUG: Using speed {speed}ms")
             
             # Send command
+            print(f"DEBUG: Sending WritePosEx command...")
             result, error = self.packet_handler.WritePosEx(servo_id, position, speed, self.default_accel)
+            print(f"DEBUG: WritePosEx result: {result}, error: {error}")
+            
             if result == COMM_SUCCESS:
-                # Read back position
+                print(f"DEBUG: Command successful, reading position...")
                 time.sleep(0.1)
                 pos, spd, result, error = self.packet_handler.ReadPosSpeed(servo_id)
+                print(f"DEBUG: ReadPosSpeed result: {result}, error: {error}")
                 if result == COMM_SUCCESS:
                     actual_degrees = self.units_to_degrees(pos)
-                    print(f"Servo {servo_id} moved to {actual_degrees:.1f}°")
+                    print(f"DEBUG: Read position: {pos} units ({actual_degrees:.1f}°)")
                     self.save_position(servo_id, actual_degrees)
                 return True
             else:
-                print(f"Failed to move servo {servo_id}")
+                print(f"DEBUG: Command failed")
                 return False
                 
         except Exception as e:
-            print(f"Error setting servo position: {e}")
+            print(f"DEBUG: Exception in set_servo_position: {e}")
+            import traceback
+            print(traceback.format_exc())
             return False
             
     def close(self):
