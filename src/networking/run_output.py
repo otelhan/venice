@@ -131,12 +131,16 @@ class OutputController:
         
         # Move all cube servos
         for bin_num in range(5):
+            print(f"\nProcessing bin {bin_num + 1}...")
             bin_values = [val for val, idx in zip(data, bin_indices) if idx == bin_num]
             servo_id = self.servo_mapping[bin_num + 1]
             
             if bin_values:
                 bin_avg = sum(bin_values) / len(bin_values)
                 angle = ((bin_avg - 20) / (127 - 20)) * 300 - 150
+                print(f"  Bin values: {bin_values}")
+                print(f"  Average: {bin_avg:.1f}")
+                print(f"  Target angle: {angle:.1f}°")
                 
                 command = {
                     'type': 'servo',
@@ -146,26 +150,35 @@ class OutputController:
                     'time_ms': 1000
                 }
                 
+                print(f"  Sending command: {command}")
                 response = self.output_node.process_command(command)
+                print(f"  Response: {response}")
                 if response['status'] == 'ok':
-                    print(f"Servo {servo_id} moved to {angle:.1f}°")
+                    print(f"  ✓ Servo {servo_id} command successful")
                 else:
-                    print(f"Failed to move servo {servo_id}")
+                    print(f"  ✗ Failed: {response['message']}")
                 await asyncio.sleep(0.1)
+            else:
+                print(f"  No values in bin {bin_num + 1}")
         
+        print("\nAll cube servos processed")
         return True
 
     async def move_clock(self):
         """Move the clock servo in its sequence"""
-        print("\nMoving clock servo...")
+        print("\n=== Moving Clock Servo ===")
         
         # Update clock angle
+        old_angle = self.clock_current_angle
         self.clock_current_angle += 60 * self.clock_direction
         
         # Check bounds and reverse direction if needed
         if abs(self.clock_current_angle) >= 150:
             self.clock_direction *= -1  # Reverse direction
             self.clock_current_angle = 150 if self.clock_current_angle > 0 else -150
+            print(f"Hit limit, reversing direction. New direction: {self.clock_direction}")
+        
+        print(f"Moving from {old_angle:.1f}° to {self.clock_current_angle:.1f}°")
         
         # Send command to clock servo
         clock_command = {
@@ -176,14 +189,19 @@ class OutputController:
             'time_ms': 1000
         }
         
+        print(f"Sending command: {clock_command}")
         response = self.output_node.process_command(clock_command)
+        print(f"Response: {response}")
+        
         if response['status'] == 'ok':
-            print(f"Clock servo moved to {self.clock_current_angle:.1f}°")
+            print(f"✓ Clock servo moved to {self.clock_current_angle:.1f}°")
         else:
-            print("Failed to move clock servo")
+            print(f"✗ Failed: {response['message']}")
         
         # Wait for movement to complete
-        await asyncio.sleep(1.1)  # Slightly longer than movement time
+        print("Waiting for movement to complete...")
+        await asyncio.sleep(1.1)
+        print("=== Clock Move Complete ===")
         return True
 
 async def main():
