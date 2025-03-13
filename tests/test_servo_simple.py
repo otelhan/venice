@@ -98,9 +98,9 @@ def load_config():
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-def save_position(config, servo_id, angle):
+def save_position(config, controller_key, servo_id, angle):
     """Save servo position in degrees to config file"""
-    config['servo_config']['servos'][str(servo_id)]['last_position_deg'] = angle
+    config['servo_config']['controllers'][controller_key]['servos'][str(servo_id)]['last_position_deg'] = angle
     
     config_path = os.path.join(project_root, 'config', 'controllers.yaml')
     with open(config_path, 'w') as f:
@@ -110,6 +110,8 @@ def test_servos():
     # Load config
     config = load_config()
     servo_config = config['servo_config']
+    default_speed = servo_config.get('default_speed_ms', 1000)  # Get from top level
+    default_accel = servo_config.get('default_accel', 50)      # Get from top level
     
     # Find and connect to controllers
     controllers = find_controllers()
@@ -176,8 +178,8 @@ def test_servos():
                 position = degrees_to_units(degrees)
                 print(f"Moving to {degrees}° (units: {position})")
                 
-                speed = int(input(f"Enter time in ms (20-10000, default {servo_config.get('default_speed_ms', 1000)}): ") or str(servo_config.get('default_speed_ms', 1000)))
-                accel = int(input(f"Enter acceleration (0-255, default {servo_config.get('default_accel', 50)}): ") or str(servo_config.get('default_accel', 50)))
+                speed = int(input(f"Enter time in ms (20-10000, default {default_speed}): ") or str(default_speed))
+                accel = int(input(f"Enter acceleration (0-255, default {default_accel}): ") or str(default_accel))
                 
                 result, error = controller.packet_handler.WritePosEx(servo_id, position, speed, accel)
                 if result == COMM_SUCCESS:
@@ -188,7 +190,7 @@ def test_servos():
                         actual_degrees = units_to_degrees(pos)
                         print(f"Current position: {actual_degrees:.1f}°")
                         if servo_config.get('save_positions', True):
-                            save_position(config, servo_id, actual_degrees)
+                            save_position(config, config_key, servo_id, actual_degrees)
                 else:
                     print(f"Failed to move servo: {controller.packet_handler.getTxRxResult(result)}")
                     
@@ -198,11 +200,11 @@ def test_servos():
         elif choice == '2':
             print("Centering all servos (0°)...")
             for id in range(1, 6):
-                result, error = controllers['main'].packet_handler.WritePosEx(id, 1500, servo_config['default_speed_ms'], servo_config['default_accel'])
+                result, error = controllers['main'].packet_handler.WritePosEx(id, 1500, default_speed, default_accel)
                 if result == COMM_SUCCESS:
                     print(f"Centered servo {id}")
                     if servo_config.get('save_positions', True):
-                        save_position(config, id, 0.0)
+                        save_position(config, 'main', id, 0.0)
                 else:
                     print(f"Failed to center servo {id}")
                 time.sleep(0.1)
@@ -215,7 +217,7 @@ def test_servos():
                     degrees = units_to_degrees(pos)
                     print(f"Servo {id}: {degrees:.1f}° (units: {pos})")
                     if servo_config.get('save_positions', True):
-                        save_position(config, id, degrees)
+                        save_position(config, 'main', id, degrees)
                 else:
                     print(f"Failed to read servo {id}")
                     
@@ -231,7 +233,7 @@ def test_servos():
                         print(f"  Position: {degrees:.1f}°")
                         print(f"  Speed: {spd}")
                         if servo_config.get('save_positions', True):
-                            save_position(config, id, degrees)
+                            save_position(config, 'main', id, degrees)
                 else:
                     print(f"No response from servo {id}")
                 
@@ -267,7 +269,7 @@ def test_servos():
                 position = speed_to_units(speed_percent)
                 print(f"Setting speed to {speed_percent}% (units: {position})")
                 
-                result, error = controller.packet_handler.WritePosEx(servo_id, position, servo_config['default_speed_ms'], servo_config['default_accel'])
+                result, error = controller.packet_handler.WritePosEx(servo_id, position, default_speed, default_accel)
                 if result == COMM_SUCCESS:
                     print("Command sent successfully")
                 else:
@@ -281,7 +283,7 @@ def test_servos():
             for id in range(1, 6):
                 servo_config = config['servo_config']['controllers']['main']['servos'][str(id)]
                 if servo_config['mode'] == 'motor':
-                    result, error = controllers['main'].packet_handler.WritePosEx(id, 1500, servo_config['default_speed_ms'], servo_config['default_accel'])
+                    result, error = controllers['main'].packet_handler.WritePosEx(id, 1500, default_speed, default_accel)
                     if result == COMM_SUCCESS:
                         print(f"Stopped motor {id}")
                     else:
