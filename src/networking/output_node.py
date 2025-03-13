@@ -100,26 +100,48 @@ class ServoController:
             print(f"DEBUG: Converted {angle}° to {position} units")
             print(f"DEBUG: Using speed {speed}ms")
             
-            # Send command with more detailed error checking
+            # Send command with timeout
             print(f"DEBUG: About to send WritePosEx command...")
             try:
-                print(f"DEBUG: WritePosEx params - ID: {servo_id}, Pos: {position}, Speed: {speed}, Accel: {self.default_accel}")
-                result, error = self.packet_handler.WritePosEx(servo_id, position, speed, self.default_accel)
-                print(f"DEBUG: After WritePosEx - Result: {result}, Error: {error}")
+                import signal
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Command timed out")
+                
+                # Set 5 second timeout
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(5)
+                
+                try:
+                    print(f"DEBUG: WritePosEx params - ID: {servo_id}, Pos: {position}, Speed: {speed}, Accel: {self.default_accel}")
+                    result, error = self.packet_handler.WritePosEx(servo_id, position, speed, self.default_accel)
+                    print(f"DEBUG: After WritePosEx - Result: {result}, Error: {error}")
+                finally:
+                    signal.alarm(0)  # Disable the alarm
+                    
+            except TimeoutError:
+                print(f"DEBUG: WritePosEx command timed out")
+                # Try to recover by closing and reopening the port
+                self.port_handler.closePort()
+                time.sleep(0.5)
+                if not self.port_handler.openPort():
+                    print("DEBUG: Failed to reopen port")
+                    return False
+                return False
+                
             except Exception as e:
                 print(f"DEBUG: Exception during WritePosEx: {e}")
-                raise
+                return False
             
             if result == COMM_SUCCESS:
                 print(f"DEBUG: Command successful, waiting before reading...")
-                time.sleep(0.2)  # Increased delay
+                time.sleep(0.2)
                 try:
                     print(f"DEBUG: About to read position...")
                     pos, spd, result, error = self.packet_handler.ReadPosSpeed(servo_id)
                     print(f"DEBUG: After ReadPosSpeed - Result: {result}, Error: {error}, Pos: {pos}, Speed: {spd}")
                 except Exception as e:
                     print(f"DEBUG: Exception during ReadPosSpeed: {e}")
-                    raise
+                    return False
                 
                 if result == COMM_SUCCESS:
                     actual_degrees = self.units_to_degrees(pos)
@@ -130,11 +152,11 @@ class ServoController:
                         print(f"DEBUG: Position saved successfully")
                     except Exception as e:
                         print(f"DEBUG: Exception during save_position: {e}")
-                        raise
-                return True
-            else:
-                print(f"DEBUG: Command failed with result {result}")
-                return False
+                        return False
+                    return True
+            
+            print(f"DEBUG: Command failed with result {result}")
+            return False
                 
         except Exception as e:
             print(f"DEBUG: Exception in set_servo_position: {e}")
