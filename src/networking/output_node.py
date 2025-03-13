@@ -36,7 +36,8 @@ class ServoController:
             
     def save_position(self, servo_id: int, angle: float):
         """Save servo position in degrees to config file"""
-        self.config['servo_config']['servos'][str(servo_id)]['last_position_deg'] = angle
+        # Update to use new config structure with controllers
+        self.config['servo_config']['controllers'][self.controller_name]['servos'][str(servo_id)]['last_position_deg'] = angle
         
         config_path = os.path.join(self.project_root, 'config', 'controllers.yaml')
         with open(config_path, 'w') as f:
