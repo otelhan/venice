@@ -1,57 +1,115 @@
 controllers:
-  tester:
-    description: Test Controller
-    ip: 192.168.1.106
-    mac: a4:cf:99:57:e6:d2
-    display:
-      enabled: true
-      show_camera: true
-      show_plots: true
   output:
     description: Output Controller
-    ip: 192.168.1.42
-    mac: 2c:cf:67:8b:24:f7
     display:
       enabled: false
       show_camera: false
       show_plots: false
+    ip: 192.168.1.42
+    mac: 2c:cf:67:8b:24:f7
   res00:
     description: Reservoir Controller 00
-    ip: 192.168.1.74
-    last_seen: 1738471877.2202702
-    mac: 2c:cf:67:8b:24:f6
     destination: res01
     display:
       enabled: true
       show_camera: true
       show_plots: true
+    ip: 192.168.1.74
+    last_seen: 1738471877.2202702
+    mac: 2c:cf:67:8b:24:f6
   res01:
     description: Reservoir Controller 01
+    destination: res03
+    display:
+      enabled: true
+      show_camera: true
+      show_plots: true
     ip: 192.168.1.178
     mac: 2c:cf:67:8c:50:b7
-    destination: res03
-    display:
-      enabled: true
-      show_camera: true
-      show_plots: true
   res02:
     description: Reservoir Controller 02
-    ip: 192.168.1.30
-    mac: 2c:cf:67:8b:2b:d4
     destination: res03
     display:
       enabled: true
       show_camera: true
       show_plots: true
+    ip: 192.168.1.30
+    mac: 2c:cf:67:8b:2b:d4
   res03:
     description: Reservoir Controller 03
-    ip: 192.168.1.254
-    mac: 2c:cf:67:8b:fe:ab
     destination: res00
     display:
       enabled: true
       show_camera: true
       show_plots: true
+    ip: 192.168.1.254
+    mac: 2c:cf:67:8b:fe:ab
+  tester:
+    description: Test Controller
+    display:
+      enabled: true
+      show_camera: true
+      show_plots: true
+    ip: 192.168.1.106
+    mac: a4:cf:99:57:e6:d2
+servo_config:
+  controllers:
+    main:
+      baud: 1000000
+      debug: false
+      port: /dev/ttyACM0
+      servos:
+        '1':
+          id: 1
+          last_position_deg: 0.0
+          max_angle: 150.0
+          min_angle: -150.0
+          mode: servo
+          name: servo_1
+        '2':
+          id: 2
+          last_position_deg: 0.0
+          max_angle: 150.0
+          min_angle: -150.0
+          mode: servo
+          name: servo_2
+        '3':
+          id: 3
+          last_position_deg: 0.0
+          max_angle: 150.0
+          min_angle: -150.0
+          mode: servo
+          name: servo_3
+        '4':
+          id: 4
+          last_position_deg: 0.0
+          max_angle: 150.0
+          min_angle: -150.0
+          mode: servo
+          name: servo_4
+        '5':
+          id: 5
+          last_position_deg: 0.0
+          max_angle: 150.0
+          min_angle: -150.0
+          mode: servo
+          name: servo_5
+    secondary:
+      baud: 1000000
+      debug: false
+      port: /dev/ttyACM1
+      servos:
+        '1':
+          id: 1
+          last_position_deg: 0.0
+          max_angle: 150.0
+          min_angle: -150.0
+          mode: servo
+          name: clock_servo
+  debug: false
+  default_accel: 50
+  default_speed_ms: 1000
+  save_positions: true
 streams:
   venice_live:
     description: Venice Live Stream
@@ -63,10 +121,14 @@ streams:
         x: 160
         y: 560
       selected_cells:
-      - [5, 14]
-      - [5, 15]
-      - [4, 16]
-      - [4, 15]
+      - - 5
+        - 14
+      - - 5
+        - 15
+      - - 4
+        - 16
+      - - 4
+        - 15
     training:
       end_time: '2025-02-09 21:08:07'
       last_update: '2025-02-09 21:08:07'
@@ -81,61 +143,98 @@ streams:
       total_frames: 2100
       updates_performed: 7
     url: https://www.youtube.com/live/HpZAez2oYsA?si=S5_605kITNMOowOG
-servo_config:
-  debug: false  # Global debug flag
-  default_speed_ms: 1000
-  default_accel: 50
-  save_positions: true
-  controllers:
-    main:
-      debug: false  # Controller-specific debug flag
-      port: "/dev/ttyACM0"
-      baud: 1000000
-      servos:
-        "1":
-          id: 1
-          name: "servo_1"
-          mode: "servo"
-          last_position_deg: 0.0
-          min_angle: -150.0
-          max_angle: 150.0
-        "2":
-          id: 2
-          name: "servo_2"
-          mode: "servo"
-          last_position_deg: 0.0
-          min_angle: -150.0
-          max_angle: 150.0
-        "3":
-          id: 3
-          name: "servo_3"
-          mode: "servo"
-          last_position_deg: 0.0
-          min_angle: -150.0
-          max_angle: 150.0
-        "4":
-          id: 4
-          name: "servo_4"
-          mode: "servo"
-          last_position_deg: 0.0
-          min_angle: -150.0
-          max_angle: 150.0
-        "5":
-          id: 5
-          name: "servo_5"
-          mode: "servo"
-          last_position_deg: 0.0
-          min_angle: -150.0
-          max_angle: 150.0
-    secondary:
-      debug: false
-      port: "/dev/ttyACM1"  # Will be selected from available ports
-      baud: 1000000
-      servos:
-        "1":
-          id: 1
-          name: "clock_servo"
-          mode: "servo"
-          last_position_deg: 0.0
-          min_angle: -150.0
-          max_angle: 150.0
+video_input:
+  display:
+    show_plots: true
+  output:
+    csv_path: data/movement_vectors.csv
+    plot_path: data/plots
+  roi_configs:
+    roi_1:
+      description: ROI 1
+      height: 120
+      selected_cells:
+      - - 3
+        - 18
+      - - 4
+        - 18
+      - - 4
+        - 16
+      - - 3
+        - 16
+      - - 3
+        - 17
+      - - 4
+        - 17
+      width: 80
+      x: 120
+      y: 640
+    roi_2:
+      description: ROI 2
+      height: 120
+      selected_cells:
+      - - 25
+        - 16
+      - - 26
+        - 16
+      - - 27
+        - 16
+      - - 27
+        - 17
+      - - 26
+        - 17
+      - - 25
+        - 17
+      - - 25
+        - 18
+      - - 26
+        - 18
+      - - 27
+        - 18
+      width: 120
+      x: 1000
+      y: 640
+    roi_3:
+      description: ROI 3
+      height: 120
+      selected_cells:
+      - - 22
+        - 22
+      - - 23
+        - 22
+      - - 24
+        - 22
+      - - 24
+        - 23
+      - - 22
+        - 23
+      - - 23
+        - 23
+      - - 23
+        - 24
+      - - 24
+        - 24
+      - - 22
+        - 24
+      width: 120
+      x: 880
+      y: 880
+    roi_4:
+      description: ROI 4
+      height: 80
+      selected_cells:
+      - - 16
+        - 13
+      - - 17
+        - 13
+      - - 17
+        - 12
+      - - 16
+        - 12
+      width: 80
+      x: 640
+      y: 480
+  sampling:
+    frame_interval: 1
+    vector_interval: 30
+    vector_size: 30
