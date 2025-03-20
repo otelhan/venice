@@ -60,6 +60,12 @@ class VideoInput:
         # Add Venice timezone
         self.venice_tz = pytz.timezone('Europe/Rome')  # Venice uses same timezone as Rome
 
+        # Add reconnection settings
+        self.max_retries = 3
+        self.retry_delay = 5  # seconds
+        self.stream_timeout = 30  # seconds
+        self.last_frame_success = time.time()
+
     def load_config(self):
         """Load and initialize config with default ROI settings if needed"""
         config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
@@ -100,50 +106,70 @@ class VideoInput:
         return self.config['streams'].get(stream_name, {}).get('url')
         
     def connect_to_stream(self, url: str) -> bool:
-        """Connect to YouTube stream"""
-        try:
-            print(f"Connecting to: {url}")
-            
-            # Configure yt-dlp
-            ydl_opts = {
-                'format': 'best',  # Get best quality
-                'quiet': True,     # Reduce output
-            }
-            
-            # Get stream URL using yt-dlp
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                stream_url = info['url']
+        """Connect to YouTube stream with retry logic"""
+        for attempt in range(self.max_retries):
+            try:
+                print(f"Connection attempt {attempt + 1}/{self.max_retries}")
                 
-            # Open video stream
-            self.cap = cv2.VideoCapture(stream_url)
-            if not self.cap.isOpened():
-                print("ERROR: Could not open stream")
-                return False
+                # Configure yt-dlp
+                ydl_opts = {
+                    'format': 'best',
+                    'quiet': True,
+                }
                 
-            self.is_running = True
-            print(f"Connected to stream: {info.get('title', 'Unknown')}")
-            return True
-            
-        except Exception as e:
-            print(f"Error connecting to stream: {e}")
-            return False
+                # Get stream URL using yt-dlp
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    stream_url = info['url']
+                
+                # Open video stream with timeout property
+                self.cap = cv2.VideoCapture(stream_url)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # Reduce buffer size
+                if not self.cap.isOpened():
+                    raise Exception("Could not open stream")
+                
+                self.is_running = True
+                self.last_frame_success = time.time()
+                print(f"Connected to stream: {info.get('title', 'Unknown')}")
+                return True
+                
+            except Exception as e:
+                print(f"Connection attempt {attempt + 1} failed: {e}")
+                if self.cap:
+                    self.cap.release()
+                if attempt < self.max_retries - 1:
+                    print(f"Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                
+        print("All connection attempts failed")
+        return False
             
     def get_frame(self) -> Optional[np.ndarray]:
-        """Get current frame from stream"""
+        """Get current frame from stream with timeout check"""
         if not self.is_running:
             return None
             
         try:
+            # Check for stream timeout
+            if time.time() - self.last_frame_success > self.stream_timeout:
+                print("\nStream timeout detected, attempting to reconnect...")
+                self.reconnect()
+                return None
+                
             ret, frame = self.cap.read()
             if ret:
+                self.last_frame_success = time.time()
                 self.last_frame = frame
                 self.frame_count += 1
                 return frame
-            return None
-            
+            else:
+                print("\nFailed to read frame, attempting to reconnect...")
+                self.reconnect()
+                return None
+                
         except Exception as e:
-            print(f"Error reading frame: {e}")
+            print(f"\nError reading frame: {e}")
+            self.reconnect()
             return None
             
     def get_venice_time(self):
@@ -294,50 +320,58 @@ class VideoInput:
         self.fig.canvas.flush_events()
 
     def process_frame(self, return_movements=False):
-        """Process a single frame from the stream"""
-        current_time = time.time()
-        movements = {}
-        
-        # Check if it's time for a new frame
-        if current_time - self.last_frame_time < self.frame_interval:
+        """Process a single frame with error handling"""
+        try:
+            current_time = time.time()
+            movements = {}
+            
+            # Check if it's time for a new frame
+            if current_time - self.last_frame_time < self.frame_interval:
+                return movements if return_movements else None
+            
+            ret, frame = self.cap.read()
+            if not ret:
+                raise ValueError("Failed to read frame")
+            
+            # Update frame buffer
+            self.frame_buffer.append(frame.copy())
+            if len(self.frame_buffer) > self.buffer_size:
+                self.frame_buffer.pop(0)
+            
+            # Only calculate and save if we're in calculation mode
+            if self.calculating:
+                # Calculate movement for each ROI if we have enough frames
+                if len(self.frame_buffer) == self.buffer_size:
+                    for roi_name, roi_config in self.roi_configs.items():
+                        movement = self.calculate_movement_rate(roi_config)
+                        self.movement_buffers[roi_name].append(movement)
+                        movements[roi_name] = movement
+                        
+                        # Keep buffer at vector_size
+                        if len(self.movement_buffers[roi_name]) > self.vector_size:
+                            self.movement_buffers[roi_name].pop(0)
+                
+                # Check if it's time to save movement vectors
+                if current_time - self.last_vector_time >= self.vector_interval:
+                    self.save_movement_vectors()
+                    self.last_vector_time = current_time
+            else:
+                # Clear movement buffers when stopping calculation
+                if hasattr(self, 'movement_buffers'):
+                    for roi_name in self.movement_buffers:
+                        self.movement_buffers[roi_name] = []
+                self.frame_buffer = []  # Clear frame buffer too
+            
+            self.last_frame_time = current_time
+            self.current_movements = movements  # Store for display
+            
             return movements if return_movements else None
             
-        ret, frame = self.cap.read()
-        if not ret:
-            raise ValueError("Failed to read frame")
+        except Exception as e:
+            print(f"\nError in frame processing: {e}")
+            movements = {}
+            self.reconnect()
             
-        # Update frame buffer
-        self.frame_buffer.append(frame.copy())
-        if len(self.frame_buffer) > self.buffer_size:
-            self.frame_buffer.pop(0)
-            
-        # Only calculate and save if we're in calculation mode
-        if self.calculating:
-            # Calculate movement for each ROI if we have enough frames
-            if len(self.frame_buffer) == self.buffer_size:
-                for roi_name, roi_config in self.roi_configs.items():
-                    movement = self.calculate_movement_rate(roi_config)
-                    self.movement_buffers[roi_name].append(movement)
-                    movements[roi_name] = movement
-                    
-                    # Keep buffer at vector_size
-                    if len(self.movement_buffers[roi_name]) > self.vector_size:
-                        self.movement_buffers[roi_name].pop(0)
-            
-            # Check if it's time to save movement vectors
-            if current_time - self.last_vector_time >= self.vector_interval:
-                self.save_movement_vectors()
-                self.last_vector_time = current_time
-        else:
-            # Clear movement buffers when stopping calculation
-            if hasattr(self, 'movement_buffers'):
-                for roi_name in self.movement_buffers:
-                    self.movement_buffers[roi_name] = []
-            self.frame_buffer = []  # Clear frame buffer too
-            
-        self.last_frame_time = current_time
-        self.current_movements = movements  # Store for display
-        
         return movements if return_movements else None
 
     def get_csv_path(self):
@@ -607,6 +641,25 @@ class VideoInput:
             elif key == 27:  # Escape key
                 cv2.destroyWindow("Select ROI")
                 return None
+
+    def reconnect(self):
+        """Attempt to reconnect to the stream"""
+        print("Reconnecting to stream...")
+        self.is_running = False
+        if self.cap:
+            self.cap.release()
+            
+        # Get the current stream URL
+        url = self.get_stream_url('venice_live')
+        if not url:
+            print("ERROR: No stream URL found in config")
+            return
+            
+        # Try to reconnect
+        if self.connect_to_stream(url):
+            print("Successfully reconnected")
+        else:
+            print("Failed to reconnect")
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 
