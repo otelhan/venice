@@ -6,9 +6,11 @@ import time
 import socket
 import os
 import yaml
+import numpy as np
 from src.core.machine_controller import MachineController
 from src.core.states import MachineState
 from src.core.config_handler import ConfigHandler
+from datetime import datetime
 
 class ControllerNode:
     def __init__(self, controller_name, port=8765):
@@ -52,6 +54,10 @@ class ControllerNode:
         
         # Initialize to IDLE state
         self.controller.transition_to(MachineState.IDLE)
+        
+        self.uri = f"ws://localhost:{port}"
+        self.connected_nodes = set()
+        self.movement_data = []
         
     def _load_config(self):
         """Load configuration from YAML"""
@@ -121,11 +127,7 @@ class ControllerNode:
         try:
             async for message in websocket:
                 try:
-                    data = json.loads(message)
-                    print(f"\nReceived message: {data['type']}")
-                    
-                    response = await self.handle_message(data)
-                    await websocket.send(json.dumps(response))
+                    await self.handle_message(websocket, message)
                     
                 except Exception as e:
                     print(f"Error processing message: {e}")
@@ -141,47 +143,91 @@ class ControllerNode:
         finally:
             self.current_connection = None  # Clear the connection reference
     
-    async def handle_message(self, message):
-        """Handle incoming websocket message"""
-        if message['type'] == 'data':
-            movements = message['data']['movements']
-            
-            # Validate movement values
-            if not all(20 <= x <= 127 for x in movements):
-                return {"status": "error", "message": "Invalid movement values"}
+    async def handle_message(self, websocket, message):
+        """Handle incoming messages"""
+        try:
+            # Parse message data
+            if isinstance(message, str):
+                data = json.loads(message)
+            else:
+                data = message
                 
-            if len(movements) != self.max_movements_per_message:
-                return {"status": "error", "message": "Invalid number of movements"}
-
-            # Check current state
-            if self.controller.current_state == MachineState.SEND_DATA:
-                print("\nRejecting incoming data - currently sending data")
-                return {"status": "rejected", "message": "In SEND_DATA state"}
+            if isinstance(data, list) and len(data) == 33:  # timestamp + 30 movements + t_sin + t_cos
+                # Extract components
+                timestamp = data[0]
+                movement_values = data[1:31]  # 30 movement values
+                t_sin = data[31]
+                t_cos = data[32]
                 
-            elif self.controller.current_state == MachineState.DRIVE_WAVEMAKER:
-                print("\nRejecting incoming data - currently driving wavemaker")
-                return {"status": "rejected", "message": "In DRIVE_WAVEMAKER state"}
+                print(f"\nReceived movement data at {timestamp}")
                 
-            elif self.controller.current_state == MachineState.IDLE:
-                # Process immediately if IDLE
-                print("\nAccepting incoming data in IDLE state")
-                self.controller.movement_buffer = movements
-                self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                await self.controller.handle_current_state()
-                return {"status": "ok", "message": "Data accepted and processed"}
+                # Scale movement values to [20, 127]
+                min_val = min(movement_values)
+                max_val = max(movement_values)
+                scaled_values = [
+                    self.scale_movement_log(val, min_val, max_val) 
+                    for val in movement_values
+                ]
+                
+                print("Movement values scaled to [20, 127]")
+                print("First 5 scaled values:", scaled_values[:5])
+                
+                # Store the processed data
+                self.movement_data.append({
+                    'timestamp': timestamp,
+                    'raw_movements': movement_values,
+                    'scaled_movements': scaled_values,
+                    't_sin': t_sin,
+                    't_cos': t_cos
+                })
+                
+                # Send acknowledgment
+                response = {
+                    'status': 'success',
+                    'message': 'Movement data processed',
+                    'timestamp': timestamp
+                }
+                await websocket.send(json.dumps(response))
                 
             else:
-                # Buffer message if in other states
-                if len(self.incoming_buffer) < self.max_incoming_buffer:
-                    print(f"\nBuffering data - current state: {self.controller.current_state.name}")
-                    self.incoming_buffer.append(movements)
-                    print(f"Buffer size: {len(self.incoming_buffer)}/{self.max_incoming_buffer}")
-                    return {"status": "buffered", "message": "Data queued for processing"}
+                # Handle other message types (discovery, etc.)
+                message_type = data.get('type', '')
+                
+                if message_type == 'discovery':
+                    await self.handle_discovery(websocket, data)
+                elif message_type == 'connect':
+                    await self.handle_connection(websocket, data)
                 else:
-                    print("\nRejecting data - buffer full")
-                    return {"status": "rejected", "message": "Buffer full"}
-
-        return {"status": "ok"}
+                    print(f"Unknown message type: {message_type}")
+                    
+        except Exception as e:
+            print(f"Error handling message: {e}")
+            error_response = {
+                'status': 'error',
+                'message': str(e)
+            }
+            await websocket.send(json.dumps(error_response))
+    
+    @staticmethod
+    def scale_movement_log(raw_movement, min_value, max_value):
+        """Applies logarithmic scaling and converts movement to [20, 127] for DS1841 control."""
+        try:
+            # Ensure values are in valid range
+            if max_value <= min_value:
+                return 20  # Return minimum if range is invalid
+                
+            # Apply logarithmic scaling
+            log_scaled = np.log1p(raw_movement - min_value) / np.log1p(max_value - min_value)
+            
+            # Convert to integer in [20, 127] range
+            scaled = int(round(20 + log_scaled * (127 - 20)))
+            
+            # Ensure output is within bounds
+            return max(20, min(127, scaled))
+            
+        except Exception as e:
+            print(f"Error scaling movement value: {e}")
+            return 20  # Return minimum value on error
 
     def clear_incoming_buffer(self):
         """Clear the incoming message buffer"""
