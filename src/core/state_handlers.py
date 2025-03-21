@@ -45,11 +45,12 @@ class StateHandler:
         
         # Outgoing buffer for collected energy values
         self.outgoing_buffer = {
-            'movements': [],  # Store movement commands (20-127)
-            'energy_values': [],  # Store corresponding energy readings
-            'timestamps': []  # Store timestamps for each reading
+            'energy_values': [],  # Store energy readings from camera
+            'timestamp': None,    # Original timestamp from incoming data
+            't_sin': 0.0,        # Time encoding from incoming data
+            't_cos': 0.0
         }
-        self.max_buffer_size = 30  # Maximum number of values to store
+        self.max_buffer_size = 30
         
     def find_kb2040_port(self):
         """Find the KB2040 port"""
@@ -143,17 +144,20 @@ class StateHandler:
             return 127  # Default to max on error
 
     def drive_wavemaker(self):
-        """Drive the wavemaker with movement data"""
+        """Drive the wavemaker with pot values and collect energy"""
         if not self.serial:
             print("ERROR: No serial connection to KB2040")
             return True
         
         try:
             print("=== Starting wavemaker control ===")
-            print(f"Processing {len(self.movement_buffer)} movements")
+            print(f"Processing {len(self.movement_buffer)} pot values")
             
             # Start camera
             self.camera.start_camera()
+            
+            # Clear previous energy values
+            self.outgoing_buffer['energy_values'] = []
             
             # Turn on wavemaker
             print("\nTurning wavemaker ON...")
@@ -163,11 +167,11 @@ class StateHandler:
             
             time.sleep(1)  # Wait after turning on
             
-            # Process each movement
-            for i, movement in enumerate(self.movement_buffer, 1):
-                # Send movement value to KB2040
-                command = f"{movement}\n"
-                print(f"\nSending movement {i}/30: {movement}")
+            # Process each pot value
+            for i, pot_value in enumerate(self.movement_buffer, 1):
+                # Send pot value to KB2040
+                command = f"{pot_value}\n"
+                print(f"\nSending pot value {i}/30: {pot_value}")
                 self.serial.write(command.encode())
                 response = self.serial.readline().decode().strip()
                 print(f"Response: {response}")
@@ -178,16 +182,8 @@ class StateHandler:
                     energy = self.camera.calculate_frame_energy(frame)
                     print(f"Frame {i} energy: {energy:.2f}")
                     
-                    # Store in outgoing buffer
-                    self.outgoing_buffer['movements'].append(movement)
+                    # Store energy value
                     self.outgoing_buffer['energy_values'].append(energy)
-                    self.outgoing_buffer['timestamps'].append(time.time())
-                    
-                    # Maintain buffer size
-                    if len(self.outgoing_buffer['movements']) > self.max_buffer_size:
-                        self.outgoing_buffer['movements'].pop(0)
-                        self.outgoing_buffer['energy_values'].pop(0)
-                        self.outgoing_buffer['timestamps'].pop(0)
                     
                     # Update plot
                     self.camera.update_energy_plot(energy)
@@ -231,79 +227,63 @@ class StateHandler:
         except Exception as e:
             print(f"Error updating plot: {e}")
 
-    def _energy_to_movement(self, energy_value):
+    def _energy_to_movement(self, energy_value, min_val, max_val):
         """Convert energy value to movement value (20-127)"""
         # Assuming energy values are in range 0-8
         # Map to 20-127 range using non-linear transformation
         normalized = min(max(energy_value / 8.0, 0), 1)  # Normalize to 0-1
         # Apply non-linear transformation (squared) to emphasize higher energies
         movement = int(20 + (normalized * normalized * (127 - 20)))
-        return min(max(movement, 20), 127)  # Ensure within bounds
+        # Scale to pot range
+        scaled = int(min_val + (movement * (max_val - min_val) / 127))
+        return min(max(scaled, 20), 127)  # Ensure within bounds
 
     async def send_data(self, destination):
-        """Send collected data to destination controller"""
+        """Send collected energy data to destination controller"""
         try:
             print(f"\nPreparing to send data to {destination}")
             
-            # Get destination controller config from full config
-            if not self.full_config or 'controllers' not in self.full_config:
-                print("No controller configuration found!")
-                print("Config:", self.config)
-                return False
-            
+            # Get destination controller config
             dest_config = self.full_config['controllers'].get(destination)
             if not dest_config:
                 print(f"Unknown destination controller: {destination}")
-                print("Available controllers:", list(self.full_config['controllers'].keys()))
                 return False
             
-            # Convert energy values to movement values
-            energy_values = self.outgoing_buffer.get('energy_values', [])
-            movement_data = {
-                'type': 'data',
+            # Convert energy values to pot values [20, 127]
+            energy_values = self.outgoing_buffer['energy_values']
+            if not energy_values:
+                print("No energy values to send")
+                return False
+                
+            # Scale energy values to pot range
+            min_val = min(energy_values)
+            max_val = max(energy_values)
+            pot_values = [
+                self._energy_to_movement(e, min_val, max_val) 
+                for e in energy_values
+            ]
+            
+            # Create standardized data packet
+            data_packet = {
+                'type': 'movement_data',
+                'timestamp': self.outgoing_buffer['timestamp'],
                 'data': {
-                    'movements': [self._energy_to_movement(e) for e in energy_values]
+                    'pot_values': pot_values,
+                    't_sin': self.outgoing_buffer['t_sin'],
+                    't_cos': self.outgoing_buffer['t_cos']
                 }
             }
             
-            print(f"Converted {len(energy_values)} energy values to movements")
-            print(f"Destination IP: {dest_config['ip']}")
-            print(f"Destination MAC: {dest_config['mac']}")
-            
+            print(f"Sending {len(pot_values)} pot values to {destination}")
             uri = f"ws://{dest_config['ip']}:8765"
-            print(f"Connecting to: {uri}")
             
-            try:
-                async with await asyncio.wait_for(
-                    websockets.connect(uri), 
-                    timeout=5
-                ) as websocket:
-                    try:
-                        await asyncio.wait_for(
-                            websocket.send(json.dumps(movement_data)),
-                            timeout=3
-                        )
-                        response = await asyncio.wait_for(
-                            websocket.recv(),
-                            timeout=3
-                        )
-                        response_data = json.loads(response)
-                        print(f"Response from {destination}: {response_data}")
-                        
-                        # Return True for both success and rejection
-                        # This lets MachineController handle the retry logic
-                        return True
-                            
-                    except asyncio.TimeoutError:
-                        print(f"Timeout waiting for response from {destination}")
-                        return False
-                        
-            except (asyncio.TimeoutError,
-                    websockets.exceptions.WebSocketException,
-                    ConnectionRefusedError) as e:
-                print(f"Connection failed: {e}")
-                return False
-            
+            # Send data
+            async with await asyncio.wait_for(websockets.connect(uri), timeout=5) as websocket:
+                await asyncio.wait_for(websocket.send(json.dumps(data_packet)), timeout=3)
+                response = await asyncio.wait_for(websocket.recv(), timeout=3)
+                print(f"Response from {destination}: {response}")
+                return True
+                
         except Exception as e:
             print(f"Error sending data: {e}")
             return False

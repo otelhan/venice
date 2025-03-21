@@ -200,7 +200,7 @@ class ControllerNode:
                         }
                         
                         # Send to next node if configured
-                        dest = self.config.get('destination')
+                        dest = self.controller_config.get('destination')
                         if dest:
                             print(f"\nSending to next node: {dest}")
                             self.controller.transition_to(MachineState.SEND_DATA)
