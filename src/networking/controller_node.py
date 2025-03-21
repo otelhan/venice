@@ -280,7 +280,7 @@ class ControllerNode:
         if self.incoming_buffer and self.controller.current_state == MachineState.IDLE:
             print(f"\nProcessing {len(self.incoming_buffer)} buffered sets of movements")
             message = self.incoming_buffer.pop(0)  # Get oldest set of movements
-            await self.handle_message({'type': 'data', 'data': {'movements': message}})
+            await self.handle_message(message)  # message is already in correct format
 
     async def execute_command(self, command):
         """Execute a command"""
