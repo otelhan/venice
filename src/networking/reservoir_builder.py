@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from src.networking.input_node import InputNode
 import numpy as np
+import traceback
 
 class ReservoirModelBuilder:
     def __init__(self):
@@ -22,6 +23,9 @@ class ReservoirModelBuilder:
         self.connected_reservoir = None
         self.is_listening = False
         self.received_data = []
+        self.waiting_for_ack = False  # Track if waiting for acknowledgment
+        self.server = None  # WebSocket server
+        self.port = 8765
         
     def _load_config(self):
         """Load controller configurations"""
@@ -127,89 +131,142 @@ class ReservoirModelBuilder:
         except Exception as e:
             print(f"Error saving output: {e}")
             
+    async def start_server(self):
+        """Start WebSocket server to listen for acknowledgments"""
+        try:
+            self.server = await websockets.serve(
+                self.handle_connection,
+                "0.0.0.0",
+                self.port,
+                ping_interval=None
+            )
+            print(f"\nListening for acknowledgments on port {self.port}")
+            
+        except Exception as e:
+            print(f"Error starting server: {e}")
+            
+    async def handle_connection(self, websocket):
+        """Handle incoming acknowledgment messages"""
+        try:
+            async for message in websocket:
+                data = json.loads(message)
+                if data.get('type') == 'ready_signal':
+                    print("\nReceived ready signal from trainer")
+                    self.waiting_for_ack = False
+                    
+        except Exception as e:
+            print(f"Error handling connection: {e}")
+            
     async def process_data_file(self, file_path):
         """Process a movement vector file and send to reservoir"""
         try:
+            # Start acknowledgment server
+            server = await websockets.serve(
+                self.handle_connection,
+                "0.0.0.0",
+                self.port,
+                ping_interval=None
+            )
+            print(f"\nListening for acknowledgments on port {self.port}")
+            
+            # Create task to keep server running
+            server_task = asyncio.create_task(server.wait_closed())
+            
             # Read CSV file
             df = pd.read_csv(file_path)
             print(f"\nProcessing {file_path.name}")
             
-            # Handle both naming formats (roi_1_m0 and ROI_1_1)
-            roi_columns = []
-            if 'roi_1_m0' in df.columns:  # Check for m0 format
-                roi_columns = [f'roi_1_m{i}' for i in range(30)]
-            else:  # Try ROI format
-                roi_columns = [f'ROI_1_{i+1}' for i in range(30)]
-            
-            time_columns = ['t_sin', 't_cos']
-            
-            # Verify columns exist
-            if not all(col in df.columns for col in roi_columns + time_columns):
-                print("Error: CSV file missing required columns")
-                print("Required columns:", roi_columns + time_columns)
-                print("Available columns:", df.columns.tolist())
-                return False
-            
-            # Process each row with delay
-            total_rows = len(df)
-            for i, row in df.iterrows():
-                # Get ROI1 movement values
-                movement_values = row[roi_columns].tolist()
+            try:
+                # Handle both naming formats (roi_1_m0 and ROI_1_1)
+                roi_columns = []
+                if 'roi_1_m0' in df.columns:  # Check for m0 format
+                    roi_columns = [f'roi_1_m{i}' for i in range(30)]
+                else:  # Try ROI format
+                    roi_columns = [f'ROI_1_{i+1}' for i in range(30)]
                 
-                # Scale movement values to pot values [20, 127]
-                min_val = min(movement_values)
-                max_val = max(movement_values)
-                pot_values = [
-                    self.scale_movement_log(val, min_val, max_val) 
-                    for val in movement_values
-                ]
+                time_columns = ['t_sin', 't_cos']
                 
-                # Create standardized data packet
-                data_packet = {
-                    'type': 'movement_data',
-                    'timestamp': row['timestamp'] if 'timestamp' in row else str(datetime.now()),
-                    'data': {
-                        'pot_values': pot_values,  # 30 scaled digital potentiometer values [20-127]
-                        't_sin': float(row['t_sin']),
-                        't_cos': float(row['t_cos'])
-                    }
-                }
-                
-                # Print first data packet as example
-                if i == 0:
-                    print("\nFirst data packet to be sent:")
-                    print("\nOriginal movement values (first 5):", movement_values[:5])
-                    print("Scaled pot values (first 5):", pot_values[:5])
-                    print("Time encoding:", f"sin={row['t_sin']:.3f}, cos={row['t_cos']:.3f}")
-                    print("\nFull JSON packet:")
-                    print(json.dumps(data_packet, indent=2))
-                    print("\nVerifying pot values are in range [20, 127]...")
-                    out_of_range = [v for v in pot_values if v < 20 or v > 127]
-                    if out_of_range:
-                        print("WARNING: Some values out of range:", out_of_range)
-                    else:
-                        print("All pot values in valid range")
-                    input("\nPress Enter to start sending data...")
-                
-                # Send to reservoir
-                print(f"\rSending row {i+1}/{total_rows}", end='')
-                response = await self.input_node.send_data(
-                    self.connected_reservoir,
-                    data_packet
-                )
-                
-                if response.get('status') == 'error':
-                    print(f"\nError sending row {i+1}: {response.get('message')}")
+                # Verify columns exist
+                if not all(col in df.columns for col in roi_columns + time_columns):
+                    print("Error: CSV file missing required columns")
+                    print("Required columns:", roi_columns + time_columns)
+                    print("Available columns:", df.columns.tolist())
                     return False
                 
-                # Wait 10 seconds before next row
-                await asyncio.sleep(10)
+                # Process first row immediately without waiting for acknowledgment
+                self.waiting_for_ack = False
+                
+                # Process each row
+                total_rows = len(df)
+                for i, row in df.iterrows():
+                    if i > 0:  # Wait for ack after first row
+                        self.waiting_for_ack = True
+                        while self.waiting_for_ack:
+                            await asyncio.sleep(0.1)
+                    
+                    # Get ROI1 movement values
+                    movement_values = row[roi_columns].tolist()
+                    
+                    # Scale movement values to pot values [20, 127]
+                    min_val = min(movement_values)
+                    max_val = max(movement_values)
+                    pot_values = [
+                        self.scale_movement_log(val, min_val, max_val) 
+                        for val in movement_values
+                    ]
+                    
+                    # Create standardized data packet
+                    data_packet = {
+                        'type': 'movement_data',
+                        'timestamp': row['timestamp'] if 'timestamp' in row else str(datetime.now()),
+                        'data': {
+                            'pot_values': pot_values,  # 30 scaled digital potentiometer values [20-127]
+                            't_sin': float(row['t_sin']),
+                            't_cos': float(row['t_cos'])
+                        }
+                    }
+                    
+                    # Print first data packet as example
+                    if i == 0:
+                        print("\nFirst data packet to be sent:")
+                        print("\nOriginal movement values (first 5):", movement_values[:5])
+                        print("Scaled pot values (first 5):", pot_values[:5])
+                        print("Time encoding:", f"sin={row['t_sin']:.3f}, cos={row['t_cos']:.3f}")
+                        print("\nFull JSON packet:")
+                        print(json.dumps(data_packet, indent=2))
+                        print("\nVerifying pot values are in range [20, 127]...")
+                        out_of_range = [v for v in pot_values if v < 20 or v > 127]
+                        if out_of_range:
+                            print("WARNING: Some values out of range:", out_of_range)
+                        else:
+                            print("All pot values in valid range")
+                        input("\nPress Enter to start sending data...")
+                    
+                    # Send to reservoir
+                    print(f"\rSending row {i+1}/{total_rows}", end='')
+                    response = await self.input_node.send_data(
+                        self.connected_reservoir,
+                        data_packet
+                    )
+                    
+                    if response.get('status') == 'error':
+                        print(f"\nError sending row {i+1}: {response.get('message')}")
+                        return False
+                    
+                    # Wait 10 seconds before next row
+                    await asyncio.sleep(10)
             
+            finally:
+                # Clean up server
+                server.close()
+                await server.wait_closed()
+                
             print("\nCompleted processing file")
             return True
             
         except Exception as e:
             print(f"\nError processing file: {e}")
+            traceback.print_exc()  # Print full traceback
             return False
 
     @staticmethod

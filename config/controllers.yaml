@@ -19,7 +19,7 @@ controllers:
     mac: 2c:cf:67:8b:24:f6
   res01:
     description: Reservoir Controller 01
-    destination: res03
+    destination: res02
     display:
       enabled: true
       show_camera: true
@@ -37,20 +37,30 @@ controllers:
     mac: 2c:cf:67:8b:2b:d4
   res03:
     description: Reservoir Controller 03
-    destination: res00
+    destination: trainer
     display:
       enabled: true
       show_camera: true
       show_plots: true
     ip: 192.168.1.254
     mac: 2c:cf:67:8b:fe:ab
-  tester:
-    description: Test Controller
+  trainer:
+    description: Reservoir Trainer
+    destination: builder
     display:
-      enabled: true
-      show_camera: true
-      show_plots: true
+      enabled: false
+      show_camera: false
+      show_plots: false
     ip: 192.168.1.106
+    mac: a4:cf:99:57:e6:d2
+  builder:
+    description: Reservoir Builder
+    display:
+      enabled: false
+      show_camera: false
+      show_plots: false
+    ip: 192.168.1.106
+    port: 8765
     mac: a4:cf:99:57:e6:d2
 servo_config:
   controllers:
