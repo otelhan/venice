@@ -151,74 +151,82 @@ class ControllerNode:
                 data = json.loads(message)
             else:
                 data = message
+            
+            if data.get('type') == 'movement_data':
+                # Extract data
+                timestamp = data['timestamp']
+                pot_values = data['data']['pot_values']
+                t_sin = data['data']['t_sin']
+                t_cos = data['data']['t_cos']
                 
-            # Handle list format (from reservoir builder)
-            if isinstance(data, list) and len(data) == 33:
-                timestamp = data[0]
-                movement_values = data[1:31]
-                t_sin = data[31]
-                t_cos = data[32]
+                print(f"\nReceived movement data at {timestamp}")
+                print("Pot values (first 5):", pot_values[:5])
                 
-            # Handle dict format (from test_reservoir_driver)
-            elif isinstance(data, dict) and data.get('type') == 'data':
-                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                movement_values = data['data']['movements']
-                t_sin = 0.0  # Default values since they're not in this format
-                t_cos = 0.0
+                # Send to machine controller to drive wavemaker
+                if self.controller.current_state == MachineState.IDLE:
+                    print("\nDriving wavemaker with pot values")
+                    self.controller.movement_buffer = pot_values
+                    self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
+                    await self.controller.handle_current_state()
+                    
+                    # Get energy values from camera
+                    print("\nCollecting energy values from camera")
+                    self.controller.transition_to(MachineState.COLLECT_SIGNAL)
+                    energy_values = await self.controller.handle_current_state()
+                    
+                    if energy_values:
+                        # Modulate energy with time encoding
+                        print("\nModulating energy values with time encoding")
+                        modulated_values = self.modulate_energy_with_time(energy_values, t_sin, t_cos)
+                        
+                        # Scale modulated values to pot range [20, 127]
+                        print("\nScaling modulated values to pot range")
+                        min_val = min(modulated_values)
+                        max_val = max(modulated_values)
+                        new_pot_values = [
+                            self.scale_movement_log(val, min_val, max_val) 
+                            for val in modulated_values
+                        ]
+                        
+                        # Prepare data for next node
+                        next_node_data = {
+                            'type': 'movement_data',
+                            'timestamp': timestamp,  # Keep original timestamp
+                            'data': {
+                                'pot_values': new_pot_values,
+                                't_sin': t_sin,  # Keep original time encoding
+                                't_cos': t_cos
+                            }
+                        }
+                        
+                        # Send to next node if configured
+                        dest = self.config.get('destination')
+                        if dest:
+                            print(f"\nSending to next node: {dest}")
+                            self.controller.transition_to(MachineState.SEND_DATA)
+                            await self.send_data_to(dest, next_node_data)
+                else:
+                    print(f"\nBuffering data - current state: {self.controller.current_state.name}")
+                    if len(self.incoming_buffer) < self.max_incoming_buffer:
+                        self.incoming_buffer.append(data)
+                
+                # Send acknowledgment
+                response = {
+                    'status': 'success',
+                    'message': 'Movement data processed',
+                    'timestamp': timestamp
+                }
+                await websocket.send(json.dumps(response))
                 
             else:
                 # Handle other message types (discovery, etc.)
                 message_type = data.get('type', '')
                 if message_type == 'discovery':
                     await self.handle_discovery(websocket, data)
-                    return
                 elif message_type == 'connect':
                     await self.handle_connection(websocket, data)
-                    return
                 else:
                     print(f"Unknown message format: {data}")
-                    return
-            
-            print(f"\nReceived movement data at {timestamp}")
-            
-            # Scale movement values to [20, 127]
-            min_val = min(movement_values)
-            max_val = max(movement_values)
-            scaled_values = [
-                self.scale_movement_log(val, min_val, max_val) 
-                for val in movement_values
-            ]
-            
-            print("Movement values scaled to [20, 127]")
-            print("First 5 scaled values:", scaled_values[:5])
-            
-            # Store the processed data
-            self.movement_data.append({
-                'timestamp': timestamp,
-                'raw_movements': movement_values,
-                'scaled_movements': scaled_values,
-                't_sin': t_sin,
-                't_cos': t_cos
-            })
-            
-            # Send to machine controller
-            if self.controller.current_state == MachineState.IDLE:
-                print("\nSending scaled values to machine controller")
-                self.controller.movement_buffer = scaled_values
-                self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                await self.controller.handle_current_state()
-            else:
-                print(f"\nBuffering data - current state: {self.controller.current_state.name}")
-                if len(self.incoming_buffer) < self.max_incoming_buffer:
-                    self.incoming_buffer.append(scaled_values)
-                
-            # Send acknowledgment
-            response = {
-                'status': 'success',
-                'message': 'Movement data processed',
-                'timestamp': timestamp
-            }
-            await websocket.send(json.dumps(response))
                 
         except Exception as e:
             print(f"Error handling message: {e}")
@@ -227,27 +235,39 @@ class ControllerNode:
                 'message': str(e)
             }
             await websocket.send(json.dumps(error_response))
-    
+
+    @staticmethod
+    def modulate_energy_with_time(energy_values, t_sin, t_cos):
+        """
+        Modulates a list of energy values based on time encoding (t_sin and t_cos).
+        
+        Parameters:
+            energy_values (list or np.array): List of 30 float energy values.
+            t_sin (float): Time sine encoding in [-1, 1].
+            t_cos (float): Time cosine encoding in [-1, 1].
+
+        Returns:
+            list: Modulated energy values (same length as input).
+        """
+        # Compute modulation factor based on time encoding
+        # Modulation range will be [0.8, 1.2] across a full 24h cycle
+        modulation_factor = 0.8 + 0.1 * t_sin + 0.1 * t_cos
+
+        # Apply modulation to each energy value
+        return [e * modulation_factor for e in energy_values]
+
     @staticmethod
     def scale_movement_log(raw_movement, min_value, max_value):
         """Applies logarithmic scaling and converts movement to [20, 127] for DS1841 control."""
         try:
-            # Ensure values are in valid range
             if max_value <= min_value:
-                return 20  # Return minimum if range is invalid
-                
-            # Apply logarithmic scaling
+                return 20
             log_scaled = np.log1p(raw_movement - min_value) / np.log1p(max_value - min_value)
-            
-            # Convert to integer in [20, 127] range
             scaled = int(round(20 + log_scaled * (127 - 20)))
-            
-            # Ensure output is within bounds
             return max(20, min(127, scaled))
-            
         except Exception as e:
             print(f"Error scaling movement value: {e}")
-            return 20  # Return minimum value on error
+            return 20
 
     def clear_incoming_buffer(self):
         """Clear the incoming message buffer"""

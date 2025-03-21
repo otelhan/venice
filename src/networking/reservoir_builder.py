@@ -8,6 +8,7 @@ import websockets
 from datetime import datetime
 from pathlib import Path
 from src.networking.input_node import InputNode
+import numpy as np
 
 class ReservoirModelBuilder:
     def __init__(self):
@@ -149,41 +150,53 @@ class ReservoirModelBuilder:
                 print("Available columns:", df.columns.tolist())
                 return False
             
-            # Select only ROI_1 and time encoding columns
-            data_df = df[roi_columns + time_columns]
-            total_rows = len(data_df)
-            print(f"Found {total_rows} movement vectors")
-            
             # Process each row with delay
-            for i, row in data_df.iterrows():
-                # Get movement values as a list
-                movements = row[roi_columns].tolist()
+            total_rows = len(df)
+            for i, row in df.iterrows():
+                # Get ROI1 movement values
+                movement_values = row[roi_columns].tolist()
                 
-                # Print first data packet
+                # Scale movement values to pot values [20, 127]
+                min_val = min(movement_values)
+                max_val = max(movement_values)
+                pot_values = [
+                    self.scale_movement_log(val, min_val, max_val) 
+                    for val in movement_values
+                ]
+                
+                # Create standardized data packet
+                data_packet = {
+                    'type': 'movement_data',
+                    'timestamp': row['timestamp'] if 'timestamp' in row else str(datetime.now()),
+                    'data': {
+                        'pot_values': pot_values,  # 30 scaled digital potentiometer values [20-127]
+                        't_sin': float(row['t_sin']),
+                        't_cos': float(row['t_cos'])
+                    }
+                }
+                
+                # Print first data packet as example
                 if i == 0:
                     print("\nFirst data packet to be sent:")
-                    print("\nPacket format:")
-                    print("[", end='')
-                    # First timestamp
-                    print(f"{row['timestamp'] if 'timestamp' in row else 'N/A'}, ", end='')
-                    # Then 30 movement values
-                    for i, val in enumerate(movements):
-                        print(f"{val:.6f}", end='')
-                        print(", ", end='')
-                    # Finally t_sin and t_cos
-                    print(f"{row['t_sin']:.6f}, ", end='')
-                    print(f"{row['t_cos']:.6f}", end='')
-                    print("]")
-                    print("\nOrder: [timestamp, 30 movement values, t_sin, t_cos]")
-                    print("Length:", len(movements) + 3)  # timestamp + 30 movements + 2 time values
+                    print("\nOriginal movement values (first 5):", movement_values[:5])
+                    print("Scaled pot values (first 5):", pot_values[:5])
+                    print("Time encoding:", f"sin={row['t_sin']:.3f}, cos={row['t_cos']:.3f}")
+                    print("\nFull JSON packet:")
+                    print(json.dumps(data_packet, indent=2))
+                    print("\nVerifying pot values are in range [20, 127]...")
+                    out_of_range = [v for v in pot_values if v < 20 or v > 127]
+                    if out_of_range:
+                        print("WARNING: Some values out of range:", out_of_range)
+                    else:
+                        print("All pot values in valid range")
                     input("\nPress Enter to start sending data...")
                 
                 # Send to reservoir
                 print(f"\rSending row {i+1}/{total_rows}", end='')
-                
-                # Send movements directly like test_reservoir_driver
-                self.input_node.movement_buffer = movements
-                response = await self.input_node.send_movement_data(self.connected_reservoir)
+                response = await self.input_node.send_data(
+                    self.connected_reservoir,
+                    data_packet
+                )
                 
                 if response.get('status') == 'error':
                     print(f"\nError sending row {i+1}: {response.get('message')}")
@@ -198,6 +211,35 @@ class ReservoirModelBuilder:
         except Exception as e:
             print(f"\nError processing file: {e}")
             return False
+
+    @staticmethod
+    def scale_movement_log(raw_movement, min_value, max_value):
+        """
+        Applies logarithmic scaling and converts movement to [20, 127] for DS1841 control.
+        Guarantees output values are within [20, 127] range.
+        """
+        try:
+            # Handle invalid input cases
+            if max_value <= min_value:
+                return 20
+            if raw_movement <= min_value:
+                return 20
+            if raw_movement >= max_value:
+                return 127
+                
+            # Apply logarithmic scaling
+            log_scaled = np.log1p(raw_movement - min_value) / np.log1p(max_value - min_value)
+            # log_scaled will be between 0 and 1
+            
+            # Scale to [20, 127] range
+            scaled = int(round(20 + log_scaled * (127 - 20)))
+            
+            # Double-check bounds
+            return max(20, min(127, scaled))
+            
+        except Exception as e:
+            print(f"Error scaling movement value: {e}")
+            return 20  # Return minimum value on error
 
 async def main():
     builder = ReservoirModelBuilder()
