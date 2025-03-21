@@ -10,28 +10,22 @@ import matplotlib.pyplot as plt
 import yaml
 
 class InputNode:
-    def __init__(self, controller_port=8765):
-        self.controller_port = controller_port
+    def __init__(self):
+        self.config = self._load_config()
+        self.controller_port = 8765  # Fixed port for all controllers
+        self.controllers = {}  # Map of controller IDs to IPs
         self.processor = VideoProcessor()
         self.movement_buffer = []
         
-        # Load config with correct path
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # Go up one more level
-            'config', 
-            'controllers.yaml'
-        )
-        print(f"Loading config from: {config_path}")  # Debug print
-        
+    def _load_config(self):
+        """Load configuration from YAML"""
         try:
+            config_path = os.path.join('config', 'controllers.yaml')
             with open(config_path, 'r') as f:
-                self.config = yaml.safe_load(f)
-                self.controllers = self.config.get('controllers', {})
-                print(f"Loaded controllers: {list(self.controllers.keys())}")  # Debug print
+                return yaml.safe_load(f)
         except Exception as e:
             print(f"Error loading config: {e}")
-            self.config = None
-            self.controllers = {}
+            return None
         
     def get_controller_name(self, mac):
         """Get controller name from MAC address"""
@@ -116,37 +110,34 @@ class InputNode:
         except Exception as e:
             print(f"Error sending command: {e}")
             
-    async def send_data(self, controller_id, data):
-        """Send data packet to controller"""
-        if controller_id not in self.controllers:
-            print(f"Unknown controller: {controller_id}")
-            return
-            
-        ip = self.controllers[controller_id]
-        uri = f"ws://{ip}:{self.controller_port}"
-        
+    async def send_data(self, target_name, data):
+        """Send data to a target reservoir node"""
         try:
-            # Increase timeout and disable ping to handle large data transfers
-            async with websockets.connect(
-                uri, 
-                ping_interval=None,
-                ping_timeout=None,
-                close_timeout=30
-            ) as websocket:
-                message = {
-                    "type": "data",
-                    "data": data,
-                    "controller_id": controller_id,
-                    "timestamp": time.time()
-                }
-                print("Sending movement data...")
-                await websocket.send(json.dumps(message))
-                print("Waiting for response...")
+            # Get target config
+            target_config = self.config['controllers'].get(target_name)
+            if not target_config:
+                print(f"Target config not found for {target_name}")
+                return {'status': 'error', 'message': f'Unknown target: {target_name}'}
+            
+            # Extract IP and use fixed port
+            target_ip = target_config.get('ip')
+            if not target_ip:
+                print(f"IP address not found in config for {target_name}")
+                return {'status': 'error', 'message': 'IP address not found'}
+            
+            # Build connection URI
+            uri = f"ws://{target_ip}:{self.controller_port}"
+            print(f"Connecting to: {uri}")
+            
+            # Connect and send data
+            async with websockets.connect(uri) as websocket:
+                await websocket.send(json.dumps(data))
                 response = await websocket.recv()
-                print(f"Data transmission response: {response}")
                 return json.loads(response)
+                
         except Exception as e:
-            print(f"Error sending data: {e}")
+            print(f"Connection error: {str(e)}")
+            return {'status': 'error', 'message': f'Error sending data: {str(e)}'}
             
     async def get_controller_status(self, controller_id):
         """Get status from controller"""
