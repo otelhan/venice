@@ -159,7 +159,7 @@ class StateHandler:
             # Clear previous energy values
             self.outgoing_buffer['energy_values'] = []
             
-            # Turn on wavemaker
+            # Turn on wavemaker and drive with incoming pot values
             print("\nTurning wavemaker ON...")
             self.serial.write(b"on\n")
             response = self.serial.readline().decode().strip()
@@ -167,7 +167,7 @@ class StateHandler:
             
             time.sleep(1)  # Wait after turning on
             
-            # Process each pot value
+            # Process each pot value and collect energy
             for i, pot_value in enumerate(self.movement_buffer, 1):
                 # Send pot value to KB2040
                 command = f"{pot_value}\n"
@@ -181,14 +181,34 @@ class StateHandler:
                 if frame is not None:
                     energy = self.camera.calculate_frame_energy(frame)
                     print(f"Frame {i} energy: {energy:.2f}")
-                    
-                    # Store energy value
                     self.outgoing_buffer['energy_values'].append(energy)
-                    
-                    # Update plot
                     self.camera.update_energy_plot(energy)
                 
                 time.sleep(1)  # Wait between movements
+            
+            # Apply time encoding to energy values
+            print("\nApplying time encoding to energy values")
+            modulated_values = [
+                e * (0.8 + 0.1 * self.incoming_t_sin + 0.1 * self.incoming_t_cos)
+                for e in self.outgoing_buffer['energy_values']
+            ]
+            
+            # Scale modulated values to pot range [20-127]
+            print("Converting modulated energy to pot values")
+            min_val = min(modulated_values)
+            max_val = max(modulated_values)
+            pot_values = [
+                self._energy_to_movement(e, min_val, max_val) 
+                for e in modulated_values
+            ]
+            
+            # Store results for sending
+            self.outgoing_buffer.update({
+                'timestamp': self.incoming_timestamp,
+                'pot_values': pot_values,
+                't_sin': self.incoming_t_sin,
+                't_cos': self.incoming_t_cos
+            })
             
             return True
             
@@ -263,9 +283,9 @@ class StateHandler:
                 for e in energy_values
             ]
             
-            # Create standardized data packet
+            # Prepare energy data packet
             data_packet = {
-                'type': 'movement_data',
+                'type': 'energy_data',
                 'timestamp': self.outgoing_buffer['timestamp'],
                 'data': {
                     'pot_values': pot_values,
@@ -274,28 +294,9 @@ class StateHandler:
                 }
             }
             
-            print(f"Sending {len(pot_values)} pot values to {destination}")
-            uri = f"ws://{dest_config['ip']}:8765"
-            
-            # Send data
-            async with await asyncio.wait_for(websockets.connect(uri), timeout=5) as websocket:
-                await asyncio.wait_for(websocket.send(json.dumps(data_packet)), timeout=3)
-                response = await asyncio.wait_for(websocket.recv(), timeout=3)
-                print(f"Response from {destination}: {response}")
-                return True
+            # Let the controller node handle the sending
+            return data_packet
                 
         except Exception as e:
-            print(f"Error sending data: {e}")
-            return False
-
-    async def handle_collect_signal(self):
-        """Collect signal from camera"""
-        try:
-            # ... camera collection code ...
-            
-            # Make sure we're returning the energy values
-            return energy_values  # This should be a list of 30 values
-            
-        except Exception as e:
-            print(f"Error collecting signal: {e}")
+            print(f"Error preparing data: {e}")
             return None

@@ -266,7 +266,7 @@ class ReservoirTrainer:
                 try:
                     data = json.loads(message)
                     
-                    if data.get('type') == 'energy_data':
+                    if data.get('type') == 'pot_data':  # Changed from 'energy_data'
                         success = await self.handle_received_data(data)
                         response = {
                             'status': 'success' if success else 'error',
