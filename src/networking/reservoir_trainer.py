@@ -75,15 +75,14 @@ class ReservoirTrainer:
             print(f"\nAppending to existing file: {latest_file}")
             return latest_file
             
-        # Create new file with current timestamp
-        file_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"reservoir_training_{file_timestamp}.csv"
+        # Create new file if none exists
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"reservoir_training_{timestamp}.csv"
         filepath = os.path.join(self.data_dir, filename)
         
         # Create empty DataFrame with required columns
         df = pd.DataFrame(columns=[
-            'timestamp',  # This will store the received data timestamp
-            *[f'energy_value_{i}' for i in range(30)],
+            'timestamp',
             *[f'pot_value_{i}' for i in range(30)],
             't_sin',
             't_cos'
@@ -100,55 +99,43 @@ class ReservoirTrainer:
                 print(f"Cannot handle data in {self.current_state.value} state")
                 return False
                 
-            # Extract data with better error handling
-            timestamp = data.get('timestamp', 'No timestamp')
-            if not isinstance(data.get('data'), dict):
-                print("Error: Invalid data format received")
-                print("Received data:", data)
-                return False
-                
-            # Handle pot data from reservoir
-            if data.get('type') == 'pot_data':
-                # Use timestamp from received data
-                timestamp = data.get('timestamp', 'No timestamp')
-                pot_values = data['data'].get('pot_values', [])
-                t_sin = data['data'].get('t_sin', 0.0)
-                t_cos = data['data'].get('t_cos', 0.0)
-                
-                # Print formatted data
-                print("\n" + "="*50)
-                print(f"Received Pot Data at {timestamp}")
-                print("-"*50)
-                print("Pot Values:")
-                for i in range(0, 30, 5):  # Print 5 values per line
-                    values = pot_values[i:i+5]
-                    print(f"{i:2d}-{i+4:2d}: {values}")
-                print(f"Time Encoding: sin={t_sin:.3f}, cos={t_cos:.3f}")
-                print("="*50)
-                
-                # Create or get file
-                if not self.current_file:
-                    self.current_file = self.create_new_file()
-                
-                # Save data with original timestamp
-                row_data = {
-                    'timestamp': timestamp,
-                    **{f'pot_value_{i}': val for i, val in enumerate(pot_values)},
-                    't_sin': t_sin,
-                    't_cos': t_cos
-                }
-                
-                # Append to CSV
-                df = pd.DataFrame([row_data])
-                df.to_csv(self.current_file, mode='a', header=False, index=False)
-                
-                # Signal builder to send next row
-                await self.signal_input_node()
-                return True
-            else:
-                print(f"Unexpected data type: {data.get('type')}")
-                return False
-                
+            # Extract data
+            timestamp = data['timestamp']
+            pot_values = data['data']['pot_values']
+            t_sin = data['data']['t_sin']
+            t_cos = data['data']['t_cos']
+            
+            # Print formatted data
+            print("\n" + "="*50)
+            print(f"Received Data at {timestamp}")
+            print("-"*50)
+            print("Pot Values:")
+            for i in range(0, 30, 5):  # Print 5 values per line
+                values = pot_values[i:i+5]
+                print(f"{i:2d}-{i+4:2d}: {values}")
+            print(f"Time Encoding: sin={t_sin:.3f}, cos={t_cos:.3f}")
+            print("="*50)
+            
+            # Create file if needed
+            if not self.current_file:
+                self.current_file = self.create_new_file()
+            
+            # Save data
+            row_data = {
+                'timestamp': timestamp,
+                **{f'pot_value_{i}': val for i, val in enumerate(pot_values)},
+                't_sin': t_sin,
+                't_cos': t_cos
+            }
+            
+            # Append to CSV
+            df = pd.DataFrame([row_data])
+            df.to_csv(self.current_file, mode='a', header=False, index=False)
+            
+            # Signal input node to send next row
+            await self.signal_input_node()
+            return True
+            
         except Exception as e:
             print(f"Error handling received data: {e}")
             return False
@@ -260,19 +247,13 @@ class ReservoirTrainer:
                 try:
                     data = json.loads(message)
                     
-                    if data.get('type') == 'pot_data':  # Changed from 'energy_data'
+                    if data.get('type') == 'movement_data':
                         success = await self.handle_received_data(data)
                         response = {
                             'status': 'success' if success else 'error',
                             'message': 'Data processed' if success else 'Processing failed'
                         }
                         await websocket.send(json.dumps(response))
-                    else:
-                        print(f"Unexpected data type: {data.get('type')}")
-                        await websocket.send(json.dumps({
-                            'status': 'error',
-                            'message': f"Unexpected data type: {data.get('type')}"
-                        }))
                         
                 except Exception as e:
                     print(f"Error processing message: {e}")

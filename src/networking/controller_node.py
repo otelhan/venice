@@ -146,48 +146,66 @@ class ControllerNode:
     async def handle_message(self, websocket, message):
         """Handle incoming messages"""
         try:
+            # Parse message data
             if isinstance(message, str):
                 data = json.loads(message)
             else:
                 data = message
             
-            if data.get('type') == 'pot_data':
-                # Extract incoming data
+            if data.get('type') == 'movement_data':  # Keep type name for backwards compatibility
+                # Extract data
                 timestamp = data['timestamp']
-                pot_values = data['data']['pot_values']
+                incoming_pot_values = data['data']['pot_values']  # Renamed for clarity
                 t_sin = data['data']['t_sin']
                 t_cos = data['data']['t_cos']
                 
-                print(f"\nReceived pot data at {timestamp}")
-                print("Incoming pot values (first 5):", pot_values[:5])
+                print(f"\nReceived pot values at {timestamp}")
+                print("Incoming pot values (first 5):", incoming_pot_values[:5])
                 
+                # Process data if in IDLE state
                 if self.controller.current_state == MachineState.IDLE:
-                    # Store incoming data in state handler
-                    self.controller.state_handler.incoming_timestamp = timestamp
-                    self.controller.state_handler.incoming_t_sin = t_sin
-                    self.controller.state_handler.incoming_t_cos = t_cos
-                    self.controller.state_handler.movement_buffer = pot_values
-                    
-                    # First drive wavemaker and collect energy
-                    print("\nDriving wavemaker with pot values")
+                    # 1. Drive wavemaker with received pot values
+                    print("\nDriving wavemaker with incoming pot values")
+                    self.controller.movement_buffer = incoming_pot_values
                     self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                    success = await self.controller.handle_current_state()
+                    await self.controller.handle_current_state()
                     
-                    if success:
-                        # Only proceed to send data if drive_wavemaker was successful
-                        print("\nPreparing to send collected data")
-                        self.controller.transition_to(MachineState.SEND_DATA)
-                        data_packet = await self.controller.handle_current_state()
+                    # 2. Get energy values from camera
+                    print("\nCollecting energy values from camera")
+                    self.controller.transition_to(MachineState.COLLECT_SIGNAL)
+                    energy_values = await self.controller.handle_current_state()
+                    
+                    if energy_values:
+                        # 3. Modulate energy with time encoding
+                        print("\nModulating energy values with time encoding")
+                        modulated_energy = self.modulate_energy_with_time(energy_values, t_sin, t_cos)
                         
-                        if data_packet:
-                            # Send to next node
-                            dest = self.controller_config.get('destination')
-                            if dest:
-                                print(f"\nSending pot data to: {dest}")
-                                await self.send_data_to(dest, data_packet)
-                    else:
-                        print("Failed to drive wavemaker - not sending data")
-                        self.controller.transition_to(MachineState.IDLE)
+                        # 4. Convert energy values back to pot values [20, 127]
+                        print("\nConverting energy values to pot values")
+                        min_val = min(modulated_energy)
+                        max_val = max(modulated_energy)
+                        new_pot_values = [
+                            self.scale_movement_log(val, min_val, max_val) 
+                            for val in modulated_energy
+                        ]
+                        
+                        # 5. Prepare standardized data packet
+                        next_node_data = {
+                            'type': 'movement_data',
+                            'timestamp': timestamp,
+                            'data': {
+                                'pot_values': new_pot_values,  # Always use pot_values in data
+                                't_sin': t_sin,
+                                't_cos': t_cos
+                            }
+                        }
+                        
+                        # 6. Send to next node if configured
+                        dest = self.controller_config.get('destination')
+                        if dest:
+                            print(f"\nSending to next node: {dest}")
+                            self.controller.transition_to(MachineState.SEND_DATA)
+                            await self.send_data_to(dest, next_node_data)
                 else:
                     print(f"\nBuffering data - current state: {self.controller.current_state.name}")
                     if len(self.incoming_buffer) < self.max_incoming_buffer:
@@ -196,7 +214,7 @@ class ControllerNode:
                 # Send acknowledgment
                 response = {
                     'status': 'success',
-                    'message': 'Movement data processed',
+                    'message': 'Pot values processed',
                     'timestamp': timestamp
                 }
                 await websocket.send(json.dumps(response))
@@ -218,6 +236,39 @@ class ControllerNode:
                 'message': str(e)
             }
             await websocket.send(json.dumps(error_response))
+
+    @staticmethod
+    def modulate_energy_with_time(energy_values, t_sin, t_cos):
+        """
+        Modulates a list of energy values based on time encoding (t_sin and t_cos).
+        
+        Parameters:
+            energy_values (list or np.array): List of 30 float energy values.
+            t_sin (float): Time sine encoding in [-1, 1].
+            t_cos (float): Time cosine encoding in [-1, 1].
+
+        Returns:
+            list: Modulated energy values (same length as input).
+        """
+        # Compute modulation factor based on time encoding
+        # Modulation range will be [0.8, 1.2] across a full 24h cycle
+        modulation_factor = 0.8 + 0.1 * t_sin + 0.1 * t_cos
+
+        # Apply modulation to each energy value
+        return [e * modulation_factor for e in energy_values]
+
+    @staticmethod
+    def scale_movement_log(raw_movement, min_value, max_value):
+        """Applies logarithmic scaling and converts movement to [20, 127] for DS1841 control."""
+        try:
+            if max_value <= min_value:
+                return 20
+            log_scaled = np.log1p(raw_movement - min_value) / np.log1p(max_value - min_value)
+            scaled = int(round(20 + log_scaled * (127 - 20)))
+            return max(20, min(127, scaled))
+        except Exception as e:
+            print(f"Error scaling movement value: {e}")
+            return 20
 
     def clear_incoming_buffer(self):
         """Clear the incoming message buffer"""

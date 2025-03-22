@@ -236,8 +236,8 @@ class ReservoirModelBuilder:
                     
                     # Create standardized data packet
                     data_packet = {
-                        'type': 'pot_data',
-                        'timestamp': row['timestamp'] if 'timestamp' in row else None,
+                        'type': 'movement_data',
+                        'timestamp': row['timestamp'] if 'timestamp' in row else str(datetime.now()),
                         'data': {
                             'pot_values': pot_values,  # 30 scaled digital potentiometer values [20-127]
                             't_sin': float(row['t_sin']),

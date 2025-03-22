@@ -52,11 +52,6 @@ class StateHandler:
         }
         self.max_buffer_size = 30
         
-        # Add attributes for incoming data
-        self.incoming_timestamp = None
-        self.incoming_t_sin = None 
-        self.incoming_t_cos = None
-        
     def find_kb2040_port(self):
         """Find the KB2040 port"""
         for port in serial.tools.list_ports.comports():
@@ -155,14 +150,7 @@ class StateHandler:
             return True
         
         try:
-            print("\nChecking incoming data:")
-            print(f"- Timestamp: {self.incoming_timestamp}")
-            print(f"- t_sin: {self.incoming_t_sin}")
-            print(f"- t_cos: {self.incoming_t_cos}")
-            print(f"- Movement buffer length: {len(self.movement_buffer)}")
-            print(f"- First 5 values: {self.movement_buffer[:5] if self.movement_buffer else 'empty'}")
-            
-            print("\n=== Starting wavemaker control ===")
+            print("=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} pot values")
             
             # Start camera
@@ -171,7 +159,7 @@ class StateHandler:
             # Clear previous energy values
             self.outgoing_buffer['energy_values'] = []
             
-            # Turn on wavemaker and drive with incoming pot values
+            # Turn on wavemaker
             print("\nTurning wavemaker ON...")
             self.serial.write(b"on\n")
             response = self.serial.readline().decode().strip()
@@ -179,7 +167,7 @@ class StateHandler:
             
             time.sleep(1)  # Wait after turning on
             
-            # Process each pot value and collect energy
+            # Process each pot value
             for i, pot_value in enumerate(self.movement_buffer, 1):
                 # Send pot value to KB2040
                 command = f"{pot_value}\n"
@@ -193,40 +181,14 @@ class StateHandler:
                 if frame is not None:
                     energy = self.camera.calculate_frame_energy(frame)
                     print(f"Frame {i} energy: {energy:.2f}")
+                    
+                    # Store energy value
                     self.outgoing_buffer['energy_values'].append(energy)
+                    
+                    # Update plot
                     self.camera.update_energy_plot(energy)
                 
                 time.sleep(1)  # Wait between movements
-            
-            # Apply time encoding to energy values
-            print("\nApplying time encoding to energy values")
-            modulated_values = [
-                e * (0.8 + 0.1 * self.incoming_t_sin + 0.1 * self.incoming_t_cos)
-                for e in self.outgoing_buffer['energy_values']
-            ]
-            
-            # Scale modulated values to pot range [20-127]
-            print("Converting modulated energy to pot values")
-            min_val = min(modulated_values)
-            max_val = max(modulated_values)
-            
-            # Logarithmic scaling to match DS1841's taper
-            pot_values = [
-                int(20 + (np.log1p(val - min_val) / np.log1p(max_val - min_val)) * (127 - 20))
-                if max_val > min_val else 20
-                for val in modulated_values
-            ]
-            
-            # Ensure values are within bounds
-            pot_values = [max(20, min(127, val)) for val in pot_values]
-            
-            # Store results for sending
-            self.outgoing_buffer.update({
-                'timestamp': self.incoming_timestamp,
-                'pot_values': pot_values,
-                't_sin': self.incoming_t_sin,
-                't_cos': self.incoming_t_cos
-            })
             
             return True
             
@@ -265,6 +227,17 @@ class StateHandler:
         except Exception as e:
             print(f"Error updating plot: {e}")
 
+    def _energy_to_movement(self, energy_value, min_val, max_val):
+        """Convert energy value to movement value (20-127)"""
+        # Assuming energy values are in range 0-8
+        # Map to 20-127 range using non-linear transformation
+        normalized = min(max(energy_value / 8.0, 0), 1)  # Normalize to 0-1
+        # Apply non-linear transformation (squared) to emphasize higher energies
+        movement = int(20 + (normalized * normalized * (127 - 20)))
+        # Scale to pot range
+        scaled = int(min_val + (movement * (max_val - min_val) / 127))
+        return min(max(scaled, 20), 127)  # Ensure within bounds
+
     async def send_data(self, destination):
         """Send collected energy data to destination controller"""
         try:
@@ -276,25 +249,41 @@ class StateHandler:
                 print(f"Unknown destination controller: {destination}")
                 return False
             
-            # Check if we have data to send
-            if not self.outgoing_buffer.get('pot_values'):
-                print("No pot values to send")
-                return None
+            # Convert energy values to pot values [20, 127]
+            energy_values = self.outgoing_buffer['energy_values']
+            if not energy_values:
+                print("No energy values to send")
+                return False
                 
-            # Prepare data packet
+            # Scale energy values to pot range
+            min_val = min(energy_values)
+            max_val = max(energy_values)
+            pot_values = [
+                self._energy_to_movement(e, min_val, max_val) 
+                for e in energy_values
+            ]
+            
+            # Create standardized data packet
             data_packet = {
-                'type': 'pot_data',
+                'type': 'movement_data',
                 'timestamp': self.outgoing_buffer['timestamp'],
                 'data': {
-                    'pot_values': self.outgoing_buffer['pot_values'],
+                    'pot_values': pot_values,
                     't_sin': self.outgoing_buffer['t_sin'],
                     't_cos': self.outgoing_buffer['t_cos']
                 }
             }
             
-            # Let the controller node handle the sending
-            return data_packet
+            print(f"Sending {len(pot_values)} pot values to {destination}")
+            uri = f"ws://{dest_config['ip']}:8765"
+            
+            # Send data
+            async with await asyncio.wait_for(websockets.connect(uri), timeout=5) as websocket:
+                await asyncio.wait_for(websocket.send(json.dumps(data_packet)), timeout=3)
+                response = await asyncio.wait_for(websocket.recv(), timeout=3)
+                print(f"Response from {destination}: {response}")
+                return True
                 
         except Exception as e:
-            print(f"Error preparing data: {e}")
-            return None
+            print(f"Error sending data: {e}")
+            return False
