@@ -79,12 +79,15 @@ class StateHandler:
             self.movement_buffer.extend(movements)
             print(f"\nCollected {len(movements)} new measurements")
             
-            # Handle command input here
-            while True:
-                print("\nEnter 'd' for drive wavemaker, 'q' to quit: ")
-                command = input().strip().lower()
-                if command in ['d', 'q']:
-                    return command
+            # Remove this user input block
+            # while True:
+            #     print("\nEnter 'd' for drive wavemaker, 'q' to quit: ")
+            #     command = input().strip().lower()
+            #     if command in ['d', 'q']:
+            #         return command
+            
+            # Instead, automatically transition
+            return 'd'  # Return drive command to continue flow
 
     def serial_worker(self):
         """Worker thread for serial communication"""

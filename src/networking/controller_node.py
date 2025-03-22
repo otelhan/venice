@@ -151,10 +151,10 @@ class ControllerNode:
             else:
                 data = message
             
-            if data.get('type') == 'movement_data':  # Keep type name for backwards compatibility
+            if data.get('type') == 'movement_data':
                 # Extract data
                 timestamp = data['timestamp']
-                incoming_pot_values = data['data']['pot_values']  # Renamed for clarity
+                incoming_pot_values = data['data']['pot_values']
                 t_sin = data['data']['t_sin']
                 t_cos = data['data']['t_cos']
                 
@@ -163,7 +163,7 @@ class ControllerNode:
                 
                 # Process data if in IDLE state
                 if self.controller.current_state == MachineState.IDLE:
-                    # Store timing data in state handler's buffer before processing
+                    # Store timing data
                     self.controller.state_handler.outgoing_buffer.update({
                         'timestamp': timestamp,
                         't_sin': t_sin,
@@ -175,48 +175,20 @@ class ControllerNode:
                     print(f"t_sin: {t_sin}")
                     print(f"t_cos: {t_cos}")
                     
-                    # 1. Drive wavemaker with received pot values
-                    print("\nDriving wavemaker with incoming pot values")
+                    # Process through states
                     self.controller.movement_buffer = incoming_pot_values
+                    
+                    # Drive wavemaker
                     self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
                     await self.controller.handle_current_state()
                     
-                    # 2. Get energy values from camera
-                    print("\nCollecting energy values from camera")
-                    self.controller.transition_to(MachineState.COLLECT_SIGNAL)
-                    energy_values = await self.controller.handle_current_state()
+                    # Send data to trainer
+                    self.controller.transition_to(MachineState.SEND_DATA)
+                    await self.controller.handle_current_state()
                     
-                    if energy_values:
-                        # 3. Modulate energy with time encoding
-                        print("\nModulating energy values with time encoding")
-                        modulated_energy = self.modulate_energy_with_time(energy_values, t_sin, t_cos)
-                        
-                        # 4. Convert energy values back to pot values [20, 127]
-                        print("\nConverting energy values to pot values")
-                        min_val = min(modulated_energy)
-                        max_val = max(modulated_energy)
-                        new_pot_values = [
-                            self.scale_movement_log(val, min_val, max_val) 
-                            for val in modulated_energy
-                        ]
-                        
-                        # 5. Prepare standardized data packet
-                        next_node_data = {
-                            'type': 'movement_data',
-                            'timestamp': timestamp,
-                            'data': {
-                                'pot_values': new_pot_values,  # Always use pot_values in data
-                                't_sin': t_sin,
-                                't_cos': t_cos
-                            }
-                        }
-                        
-                        # 6. Send to next node if configured
-                        dest = self.controller_config.get('destination')
-                        if dest:
-                            print(f"\nSending to next node: {dest}")
-                            self.controller.transition_to(MachineState.SEND_DATA)
-                            await self.send_data_to(dest, next_node_data)
+                    # Return to IDLE to be ready for next data
+                    self.controller.transition_to(MachineState.IDLE)
+                    
                 else:
                     print(f"\nBuffering data - current state: {self.controller.current_state.name}")
                     if len(self.incoming_buffer) < self.max_incoming_buffer:
