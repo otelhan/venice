@@ -152,8 +152,19 @@ class ReservoirModelBuilder:
             async for message in websocket:
                 data = json.loads(message)
                 if data.get('type') == 'ready_signal':
+                    if not self.waiting_for_ack:
+                        print("\nWarning: Received ready signal while not waiting")
+                        continue
+                        
                     print("\nReceived ready signal from trainer")
                     self.waiting_for_ack = False
+                    
+                    # Send acknowledgment response
+                    response = {
+                        'status': 'success',
+                        'message': 'Acknowledgment received'
+                    }
+                    await websocket.send(json.dumps(response))
                     
         except Exception as e:
             print(f"Error handling connection: {e}")

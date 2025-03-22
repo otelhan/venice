@@ -312,20 +312,21 @@ class ControllerNode:
 
     async def send_data_to(self, target_name, data):
         """Send data to another controller"""
-        target = self.config['controllers'].get(target_name)  # Use self.config directly
-        if not target:
-            print(f"Unknown target controller: {target_name}")
-            return False
-            
         try:
-            uri = f"ws://{target['ip']}:{self.port}"
+            target = self.config['controllers'].get(target_name)
+            if not target:
+                print(f"Unknown target controller: {target_name}")
+                return False
+                
+            target_port = target.get('port', 8765)  # Get configured port
+            uri = f"ws://{target['ip']}:{target_port}"
             print(f"Sending to {uri}")
+            
             async with websockets.connect(uri) as websocket:
-                # Send the data packet as-is, maintaining the format
                 await websocket.send(json.dumps(data))
                 response = await websocket.recv()
                 print(f"Response from {target_name}: {response}")
                 return True
         except Exception as e:
-            print(f"Error sending data to {target_name}: {e}")
+            print(f"Error sending data: {str(e)}")  # Print actual error
             return False 
