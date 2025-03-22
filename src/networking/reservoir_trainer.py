@@ -99,6 +99,13 @@ class ReservoirTrainer:
                 print(f"Cannot handle data in {self.current_state.value} state")
                 return False
                 
+            # Extract and print full data
+            print("\nReceived Row Data:")
+            print("-" * 50)
+            print("Raw data packet:")
+            print(json.dumps(data, indent=2))
+            print("-" * 50)
+            
             # Extract data
             timestamp = data['timestamp']
             pot_values = data['data']['pot_values']
@@ -107,7 +114,7 @@ class ReservoirTrainer:
             
             # Print formatted data
             print("\n" + "="*50)
-            print(f"Received Data at {timestamp}")
+            print(f"Processed Data at {timestamp}")
             print("-"*50)
             print("Pot Values:")
             for i in range(0, 30, 5):  # Print 5 values per line
