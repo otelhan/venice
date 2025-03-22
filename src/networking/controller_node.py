@@ -188,13 +188,14 @@ class ControllerNode:
                             for val in modulated_values
                         ]
                         
-                        # Prepare data for next node
+                        # Prepare energy data for next node
                         next_node_data = {
-                            'type': 'movement_data',
-                            'timestamp': timestamp,  # Keep original timestamp
+                            'type': 'energy_data',  # Changed from 'movement_data'
+                            'timestamp': timestamp,
                             'data': {
-                                'pot_values': new_pot_values,
-                                't_sin': t_sin,  # Keep original time encoding
+                                'energy_values': modulated_values,  # Original energy values
+                                'pot_values': new_pot_values,      # Scaled to [20-127]
+                                't_sin': t_sin,
                                 't_cos': t_cos
                             }
                         }
@@ -202,7 +203,7 @@ class ControllerNode:
                         # Send to next node if configured
                         dest = self.controller_config.get('destination')
                         if dest:
-                            print(f"\nSending to next node: {dest}")
+                            print(f"\nSending energy data to: {dest}")
                             self.controller.transition_to(MachineState.SEND_DATA)
                             await self.send_data_to(dest, next_node_data)
                 else:
@@ -344,4 +345,4 @@ class ControllerNode:
         except Exception as e:
             print(f"Error sending data: {str(e)}")
             print("Full data that failed to send:", json.dumps(data, indent=2))
-            return False 
+            return False
