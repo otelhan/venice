@@ -171,19 +171,23 @@ class ControllerNode:
                     # First drive wavemaker and collect energy
                     print("\nDriving wavemaker with pot values")
                     self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                    await self.controller.handle_current_state()
+                    success = await self.controller.handle_current_state()
                     
-                    # Then prepare and send data
-                    print("\nPreparing to send collected data")
-                    self.controller.transition_to(MachineState.SEND_DATA)
-                    data_packet = await self.controller.handle_current_state()
-                    
-                    if data_packet:
-                        # Send to next node
-                        dest = self.controller_config.get('destination')
-                        if dest:
-                            print(f"\nSending pot data to: {dest}")
-                            await self.send_data_to(dest, data_packet)
+                    if success:
+                        # Only proceed to send data if drive_wavemaker was successful
+                        print("\nPreparing to send collected data")
+                        self.controller.transition_to(MachineState.SEND_DATA)
+                        data_packet = await self.controller.handle_current_state()
+                        
+                        if data_packet:
+                            # Send to next node
+                            dest = self.controller_config.get('destination')
+                            if dest:
+                                print(f"\nSending pot data to: {dest}")
+                                await self.send_data_to(dest, data_packet)
+                    else:
+                        print("Failed to drive wavemaker - not sending data")
+                        self.controller.transition_to(MachineState.IDLE)
                 else:
                     print(f"\nBuffering data - current state: {self.controller.current_state.name}")
                     if len(self.incoming_buffer) < self.max_incoming_buffer:
