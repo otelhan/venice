@@ -25,7 +25,8 @@ class ReservoirModelBuilder:
         self.received_data = []
         self.waiting_for_ack = False  # Track if waiting for acknowledgment
         self.server = None  # WebSocket server
-        self.port = 8765
+        self.send_port = 8765  # Standard port for sending to res00
+        self.listen_port = self.config['controllers']['builder'].get('listen_port', 8766)
         
     def _load_config(self):
         """Load controller configurations"""
@@ -88,7 +89,7 @@ class ReservoirModelBuilder:
             return
             
         reservoir_ip = self.config['controllers'][self.connected_reservoir]['ip']
-        uri = f"ws://{reservoir_ip}:8765"
+        uri = f"ws://{reservoir_ip}:{self.send_port}"
         
         print(f"\nListening for data from {self.connected_reservoir}...")
         self.is_listening = True
@@ -137,10 +138,10 @@ class ReservoirModelBuilder:
             self.server = await websockets.serve(
                 self.handle_connection,
                 "0.0.0.0",
-                self.port,
+                self.listen_port,
                 ping_interval=None
             )
-            print(f"\nListening for acknowledgments on port {self.port}")
+            print(f"\nListening for acknowledgments on port {self.listen_port}")
             
         except Exception as e:
             print(f"Error starting server: {e}")
@@ -160,14 +161,14 @@ class ReservoirModelBuilder:
     async def process_data_file(self, file_path):
         """Process a movement vector file and send to reservoir"""
         try:
-            # Start acknowledgment server
+            # Start acknowledgment server on listen_port
             server = await websockets.serve(
                 self.handle_connection,
                 "0.0.0.0",
-                self.port,
+                self.listen_port,  # Use listen_port
                 ping_interval=None
             )
-            print(f"\nListening for acknowledgments on port {self.port}")
+            print(f"\nListening for acknowledgments on port {self.listen_port}")
             
             # Create task to keep server running
             server_task = asyncio.create_task(server.wait_closed())
