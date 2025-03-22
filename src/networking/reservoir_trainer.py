@@ -107,25 +107,20 @@ class ReservoirTrainer:
                 print("Received data:", data)
                 return False
                 
-            # Handle energy data from reservoir
-            if data.get('type') == 'energy_data':
+            # Handle pot data from reservoir
+            if data.get('type') == 'pot_data':
                 # Use timestamp from received data
-                timestamp = data.get('timestamp', 'No timestamp')  # Original timestamp from data
-                energy_values = data['data'].get('energy_values', [])
+                timestamp = data.get('timestamp', 'No timestamp')
                 pot_values = data['data'].get('pot_values', [])
                 t_sin = data['data'].get('t_sin', 0.0)
                 t_cos = data['data'].get('t_cos', 0.0)
                 
                 # Print formatted data
                 print("\n" + "="*50)
-                print(f"Received Energy Data at {timestamp}")  # Show original timestamp
+                print(f"Received Pot Data at {timestamp}")
                 print("-"*50)
-                print("Energy Values:")
+                print("Pot Values:")
                 for i in range(0, 30, 5):  # Print 5 values per line
-                    values = energy_values[i:i+5]
-                    print(f"{i:2d}-{i+4:2d}: {values}")
-                print("\nPot Values:")
-                for i in range(0, 30, 5):
                     values = pot_values[i:i+5]
                     print(f"{i:2d}-{i+4:2d}: {values}")
                 print(f"Time Encoding: sin={t_sin:.3f}, cos={t_cos:.3f}")
@@ -137,8 +132,7 @@ class ReservoirTrainer:
                 
                 # Save data with original timestamp
                 row_data = {
-                    'timestamp': timestamp,  # Use original timestamp from data
-                    **{f'energy_value_{i}': val for i, val in enumerate(energy_values)},
+                    'timestamp': timestamp,
                     **{f'pot_value_{i}': val for i, val in enumerate(pot_values)},
                     't_sin': t_sin,
                     't_cos': t_cos

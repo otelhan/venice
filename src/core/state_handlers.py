@@ -197,10 +197,16 @@ class StateHandler:
             print("Converting modulated energy to pot values")
             min_val = min(modulated_values)
             max_val = max(modulated_values)
+            
+            # Logarithmic scaling to match DS1841's taper
             pot_values = [
-                self._energy_to_movement(e, min_val, max_val) 
-                for e in modulated_values
+                int(20 + (np.log1p(val - min_val) / np.log1p(max_val - min_val)) * (127 - 20))
+                if max_val > min_val else 20
+                for val in modulated_values
             ]
+            
+            # Ensure values are within bounds
+            pot_values = [max(20, min(127, val)) for val in pot_values]
             
             # Store results for sending
             self.outgoing_buffer.update({
@@ -247,17 +253,6 @@ class StateHandler:
         except Exception as e:
             print(f"Error updating plot: {e}")
 
-    def _energy_to_movement(self, energy_value, min_val, max_val):
-        """Convert energy value to movement value (20-127)"""
-        # Assuming energy values are in range 0-8
-        # Map to 20-127 range using non-linear transformation
-        normalized = min(max(energy_value / 8.0, 0), 1)  # Normalize to 0-1
-        # Apply non-linear transformation (squared) to emphasize higher energies
-        movement = int(20 + (normalized * normalized * (127 - 20)))
-        # Scale to pot range
-        scaled = int(min_val + (movement * (max_val - min_val) / 127))
-        return min(max(scaled, 20), 127)  # Ensure within bounds
-
     async def send_data(self, destination):
         """Send collected energy data to destination controller"""
         try:
@@ -269,26 +264,17 @@ class StateHandler:
                 print(f"Unknown destination controller: {destination}")
                 return False
             
-            # Convert energy values to pot values [20, 127]
-            energy_values = self.outgoing_buffer['energy_values']
-            if not energy_values:
-                print("No energy values to send")
-                return False
+            # Check if we have data to send
+            if not self.outgoing_buffer.get('pot_values'):
+                print("No pot values to send")
+                return None
                 
-            # Scale energy values to pot range
-            min_val = min(energy_values)
-            max_val = max(energy_values)
-            pot_values = [
-                self._energy_to_movement(e, min_val, max_val) 
-                for e in energy_values
-            ]
-            
             # Prepare data packet
             data_packet = {
                 'type': 'pot_data',
                 'timestamp': self.outgoing_buffer['timestamp'],
                 'data': {
-                    'pot_values': pot_values,
+                    'pot_values': self.outgoing_buffer['pot_values'],
                     't_sin': self.outgoing_buffer['t_sin'],
                     't_cos': self.outgoing_buffer['t_cos']
                 }
