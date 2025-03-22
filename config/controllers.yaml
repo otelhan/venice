@@ -15,7 +15,7 @@ controllers:
       show_camera: true
       show_plots: true
     ip: 192.168.1.74
-    last_seen: 1738471877.2202702
+    port: 8765
     mac: 2c:cf:67:8b:24:f6
   res01:
     description: Reservoir Controller 01
@@ -25,6 +25,7 @@ controllers:
       show_camera: true
       show_plots: true
     ip: 192.168.1.178
+    port: 8765
     mac: 2c:cf:67:8c:50:b7
   res02:
     description: Reservoir Controller 02
@@ -34,6 +35,7 @@ controllers:
       show_camera: true
       show_plots: true
     ip: 192.168.1.30
+    port: 8765
     mac: 2c:cf:67:8b:2b:d4
   res03:
     description: Reservoir Controller 03
@@ -43,6 +45,7 @@ controllers:
       show_camera: true
       show_plots: true
     ip: 192.168.1.254
+    port: 8765
     mac: 2c:cf:67:8b:fe:ab
   trainer:
     description: Reservoir Trainer
@@ -61,6 +64,7 @@ controllers:
       show_plots: false
     ip: 192.168.1.106
     port: 8765
+    listen_port: 8766
     mac: a4:cf:99:57:e6:d2
 servo_config:
   controllers:
