@@ -320,13 +320,28 @@ class ControllerNode:
                 
             target_port = target.get('port', 8765)  # Get configured port
             uri = f"ws://{target['ip']}:{target_port}"
-            print(f"Sending to {uri}")
+            
+            # Debug print data before sending
+            print("\nPreparing to send data to", target_name)
+            print("Target URI:", uri)
+            print("Data format:")
+            print("-" * 50)
+            print("Type:", data.get('type'))
+            print("Timestamp:", data.get('timestamp'))
+            if 'data' in data:
+                print("Data contents:")
+                print("- pot_values (first 5):", data['data']['pot_values'][:5], "...")
+                print("- t_sin:", data['data']['t_sin'])
+                print("- t_cos:", data['data']['t_cos'])
+            print("-" * 50)
             
             async with websockets.connect(uri) as websocket:
                 await websocket.send(json.dumps(data))
                 response = await websocket.recv()
                 print(f"Response from {target_name}: {response}")
                 return True
+                
         except Exception as e:
-            print(f"Error sending data: {str(e)}")  # Print actual error
+            print(f"Error sending data: {str(e)}")
+            print("Full data that failed to send:", json.dumps(data, indent=2))
             return False 

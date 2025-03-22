@@ -154,17 +154,24 @@ class ReservoirModelBuilder:
                 if data.get('type') == 'ready_signal':
                     if not self.waiting_for_ack:
                         print("\nWarning: Received ready signal while not waiting")
+                        # Send rejection response
+                        response = {
+                            'status': 'error',
+                            'message': 'Not waiting for acknowledgment'
+                        }
+                        await websocket.send(json.dumps(response))
                         continue
                         
                     print("\nReceived ready signal from trainer")
                     self.waiting_for_ack = False
                     
-                    # Send acknowledgment response
+                    # Send success response and close connection
                     response = {
                         'status': 'success',
                         'message': 'Acknowledgment received'
                     }
                     await websocket.send(json.dumps(response))
+                    break  # Exit the message loop after handling one acknowledgment
                     
         except Exception as e:
             print(f"Error handling connection: {e}")
