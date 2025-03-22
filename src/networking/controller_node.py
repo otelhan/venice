@@ -151,7 +151,7 @@ class ControllerNode:
             else:
                 data = message
             
-            if data.get('type') == 'pot_data':  # Changed from 'movement_data'
+            if data.get('type') == 'pot_data':
                 # Extract incoming data
                 timestamp = data['timestamp']
                 pot_values = data['data']['pot_values']
@@ -162,7 +162,19 @@ class ControllerNode:
                 print("Incoming pot values (first 5):", pot_values[:5])
                 
                 if self.controller.current_state == MachineState.IDLE:
-                    # Get data packet from state handler
+                    # Store incoming data in state handler
+                    self.controller.state_handler.incoming_timestamp = timestamp
+                    self.controller.state_handler.incoming_t_sin = t_sin
+                    self.controller.state_handler.incoming_t_cos = t_cos
+                    self.controller.state_handler.movement_buffer = pot_values
+                    
+                    # First drive wavemaker and collect energy
+                    print("\nDriving wavemaker with pot values")
+                    self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
+                    await self.controller.handle_current_state()
+                    
+                    # Then prepare and send data
+                    print("\nPreparing to send collected data")
                     self.controller.transition_to(MachineState.SEND_DATA)
                     data_packet = await self.controller.handle_current_state()
                     
