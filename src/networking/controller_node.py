@@ -146,7 +146,6 @@ class ControllerNode:
     async def handle_message(self, websocket, message):
         """Handle incoming messages"""
         try:
-            # Parse message data
             if isinstance(message, str):
                 data = json.loads(message)
             else:
@@ -164,6 +163,18 @@ class ControllerNode:
                 
                 # Process data if in IDLE state
                 if self.controller.current_state == MachineState.IDLE:
+                    # Store timing data in state handler's buffer before processing
+                    self.controller.state_handler.outgoing_buffer.update({
+                        'timestamp': timestamp,
+                        't_sin': t_sin,
+                        't_cos': t_cos
+                    })
+                    
+                    print("\nStored timing data in buffer:")
+                    print(f"Timestamp: {timestamp}")
+                    print(f"t_sin: {t_sin}")
+                    print(f"t_cos: {t_cos}")
+                    
                     # 1. Drive wavemaker with received pot values
                     print("\nDriving wavemaker with incoming pot values")
                     self.controller.movement_buffer = incoming_pot_values

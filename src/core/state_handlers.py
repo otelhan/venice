@@ -158,14 +158,20 @@ class StateHandler:
             self.camera.start_camera()
             
             # Store current timing data
-            current_buffer = self.outgoing_buffer.copy()  # Make a copy to preserve all values
+            current_buffer = self.outgoing_buffer.copy()
             
+            # Verify we have timing data
+            if not current_buffer['timestamp']:
+                print("Error: Missing timestamp in buffer")
+                print("Current buffer:", current_buffer)
+                return False
+                
             # Only clear energy values, preserve timing data
             self.outgoing_buffer = {
                 'energy_values': [],
-                'timestamp': current_buffer['timestamp'],  # Keep original
-                't_sin': current_buffer['t_sin'],         # Keep original
-                't_cos': current_buffer['t_cos']          # Keep original
+                'timestamp': current_buffer['timestamp'],
+                't_sin': current_buffer['t_sin'],
+                't_cos': current_buffer['t_cos']
             }
             
             print("\nPreserved timing data:")
