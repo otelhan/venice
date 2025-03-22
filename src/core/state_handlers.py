@@ -157,8 +157,22 @@ class StateHandler:
             # Start camera
             self.camera.start_camera()
             
-            # Clear previous energy values
-            self.outgoing_buffer['energy_values'] = []
+            # Clear previous energy values but preserve timestamp and time encoding
+            timestamp = self.outgoing_buffer.get('timestamp')
+            t_sin = self.outgoing_buffer.get('t_sin', 0.0)
+            t_cos = self.outgoing_buffer.get('t_cos', 0.0)
+            
+            if not timestamp:
+                print("Error: No timestamp in buffer from previous node")
+                return False
+                
+            # Reset buffer with preserved timing data
+            self.outgoing_buffer = {
+                'energy_values': [],
+                'timestamp': timestamp,  # Preserve original timestamp
+                't_sin': t_sin,         # Preserve original time encoding
+                't_cos': t_cos
+            }
             
             # Turn on wavemaker
             print("\nTurning wavemaker ON...")
