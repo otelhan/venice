@@ -266,13 +266,19 @@ class ReservoirTrainer:
                 try:
                     data = json.loads(message)
                     
-                    if data.get('type') == 'movement_data':
+                    if data.get('type') == 'energy_data':
                         success = await self.handle_received_data(data)
                         response = {
                             'status': 'success' if success else 'error',
                             'message': 'Data processed' if success else 'Processing failed'
                         }
                         await websocket.send(json.dumps(response))
+                    else:
+                        print(f"Unexpected data type: {data.get('type')}")
+                        await websocket.send(json.dumps({
+                            'status': 'error',
+                            'message': f"Unexpected data type: {data.get('type')}"
+                        }))
                         
                 except Exception as e:
                     print(f"Error processing message: {e}")
