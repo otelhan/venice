@@ -52,6 +52,11 @@ class StateHandler:
         }
         self.max_buffer_size = 30
         
+        # Add attributes for incoming data
+        self.incoming_timestamp = None
+        self.incoming_t_sin = None 
+        self.incoming_t_cos = None
+        
     def find_kb2040_port(self):
         """Find the KB2040 port"""
         for port in serial.tools.list_ports.comports():
@@ -150,7 +155,14 @@ class StateHandler:
             return True
         
         try:
-            print("=== Starting wavemaker control ===")
+            print("\nChecking incoming data:")
+            print(f"- Timestamp: {self.incoming_timestamp}")
+            print(f"- t_sin: {self.incoming_t_sin}")
+            print(f"- t_cos: {self.incoming_t_cos}")
+            print(f"- Movement buffer length: {len(self.movement_buffer)}")
+            print(f"- First 5 values: {self.movement_buffer[:5] if self.movement_buffer else 'empty'}")
+            
+            print("\n=== Starting wavemaker control ===")
             print(f"Processing {len(self.movement_buffer)} pot values")
             
             # Start camera
