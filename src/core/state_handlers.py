@@ -287,3 +287,15 @@ class StateHandler:
         except Exception as e:
             print(f"Error sending data: {e}")
             return False
+
+    async def handle_collect_signal(self):
+        """Collect signal from camera"""
+        try:
+            # ... camera collection code ...
+            
+            # Make sure we're returning the energy values
+            return energy_values  # This should be a list of 30 values
+            
+        except Exception as e:
+            print(f"Error collecting signal: {e}")
+            return None

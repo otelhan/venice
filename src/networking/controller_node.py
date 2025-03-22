@@ -153,17 +153,17 @@ class ControllerNode:
                 data = message
             
             if data.get('type') == 'movement_data':
-                # Extract data
+                # Extract incoming movement data
                 timestamp = data['timestamp']
                 pot_values = data['data']['pot_values']
                 t_sin = data['data']['t_sin']
                 t_cos = data['data']['t_cos']
                 
                 print(f"\nReceived movement data at {timestamp}")
-                print("Pot values (first 5):", pot_values[:5])
+                print("Incoming pot values (first 5):", pot_values[:5])
                 
-                # Send to machine controller to drive wavemaker
                 if self.controller.current_state == MachineState.IDLE:
+                    # Drive wavemaker with received pot values
                     print("\nDriving wavemaker with pot values")
                     self.controller.movement_buffer = pot_values
                     self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
@@ -179,8 +179,8 @@ class ControllerNode:
                         print("\nModulating energy values with time encoding")
                         modulated_values = self.modulate_energy_with_time(energy_values, t_sin, t_cos)
                         
-                        # Scale modulated values to pot range [20, 127]
-                        print("\nScaling modulated values to pot range")
+                        # Scale to pot range [20, 127]
+                        print("\nScaling modulated energy to pot values")
                         min_val = min(modulated_values)
                         max_val = max(modulated_values)
                         new_pot_values = [
@@ -188,22 +188,22 @@ class ControllerNode:
                             for val in modulated_values
                         ]
                         
-                        # Prepare energy data for next node
+                        # Prepare energy data packet
                         next_node_data = {
-                            'type': 'energy_data',  # Changed from 'movement_data'
+                            'type': 'energy_data',
                             'timestamp': timestamp,
                             'data': {
-                                'energy_values': modulated_values,  # Original energy values
-                                'pot_values': new_pot_values,      # Scaled to [20-127]
+                                'pot_values': new_pot_values,  # Only send final pot values
                                 't_sin': t_sin,
                                 't_cos': t_cos
                             }
                         }
                         
-                        # Send to next node if configured
+                        # Send to next node
                         dest = self.controller_config.get('destination')
                         if dest:
                             print(f"\nSending energy data to: {dest}")
+                            print("Outgoing pot values (first 5):", new_pot_values[:5])
                             self.controller.transition_to(MachineState.SEND_DATA)
                             await self.send_data_to(dest, next_node_data)
                 else:
