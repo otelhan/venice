@@ -283,9 +283,9 @@ class StateHandler:
                 for e in energy_values
             ]
             
-            # Prepare energy data packet
+            # Prepare data packet
             data_packet = {
-                'type': 'energy_data',
+                'type': 'pot_data',
                 'timestamp': self.outgoing_buffer['timestamp'],
                 'data': {
                     'pot_values': pot_values,
