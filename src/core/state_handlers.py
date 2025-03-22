@@ -14,6 +14,7 @@ from src.core.states import MachineState
 import json
 import websockets
 import asyncio
+from datetime import datetime
 
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
@@ -249,13 +250,17 @@ class StateHandler:
                 print(f"Unknown destination controller: {destination}")
                 return False
             
-            # Convert energy values to pot values [20, 127]
-            energy_values = self.outgoing_buffer['energy_values']
-            if not energy_values:
+            # Verify we have all required data
+            if not self.outgoing_buffer['energy_values']:
                 print("No energy values to send")
                 return False
                 
-            # Scale energy values to pot range
+            if not self.outgoing_buffer['timestamp']:
+                print("Warning: No timestamp in buffer, using current time")
+                self.outgoing_buffer['timestamp'] = datetime.now().isoformat()
+            
+            # Convert energy values to pot values [20, 127]
+            energy_values = self.outgoing_buffer['energy_values']
             min_val = min(energy_values)
             max_val = max(energy_values)
             pot_values = [
@@ -265,17 +270,23 @@ class StateHandler:
             
             # Create standardized data packet
             data_packet = {
-                'type': 'movement_data',
+                'type': 'movement_data',  # Standard type for all nodes
                 'timestamp': self.outgoing_buffer['timestamp'],
                 'data': {
-                    'pot_values': pot_values,
+                    'pot_values': pot_values,  # Always 30 values [20-127]
                     't_sin': self.outgoing_buffer['t_sin'],
                     't_cos': self.outgoing_buffer['t_cos']
                 }
             }
             
-            print(f"Sending {len(pot_values)} pot values to {destination}")
-            uri = f"ws://{dest_config['ip']}:8765"
+            # Debug print before sending
+            print("\nSending data packet:")
+            print(json.dumps(data_packet, indent=2))
+            
+            # Get configured port
+            dest_port = dest_config.get('port', 8765)
+            uri = f"ws://{dest_config['ip']}:{dest_port}"
+            print(f"Sending to {destination} at {uri}")
             
             # Send data
             async with await asyncio.wait_for(websockets.connect(uri), timeout=5) as websocket:
@@ -286,4 +297,5 @@ class StateHandler:
                 
         except Exception as e:
             print(f"Error sending data: {e}")
+            traceback.print_exc()  # Print full error trace
             return False

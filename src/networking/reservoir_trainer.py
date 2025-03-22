@@ -248,6 +248,18 @@ class ReservoirTrainer:
                     data = json.loads(message)
                     
                     if data.get('type') == 'movement_data':
+                        print("\nReceived data packet:")
+                        print(json.dumps(data, indent=2))  # Print full packet for verification
+                        
+                        # Verify data structure
+                        if not all(key in data.get('data', {}) for key in ['pot_values', 't_sin', 't_cos']):
+                            print("Error: Invalid data format - missing required fields")
+                            await websocket.send(json.dumps({
+                                'status': 'error',
+                                'message': 'Invalid data format'
+                            }))
+                            continue
+                            
                         success = await self.handle_received_data(data)
                         response = {
                             'status': 'success' if success else 'error',
@@ -255,6 +267,19 @@ class ReservoirTrainer:
                         }
                         await websocket.send(json.dumps(response))
                         
+                    else:
+                        print(f"Unexpected message type: {data.get('type')}")
+                        await websocket.send(json.dumps({
+                            'status': 'error',
+                            'message': f"Unexpected message type: {data.get('type')}"
+                        }))
+                        
+                except json.JSONDecodeError:
+                    print("Error: Invalid JSON format")
+                    await websocket.send(json.dumps({
+                        'status': 'error',
+                        'message': 'Invalid JSON format'
+                    }))
                 except Exception as e:
                     print(f"Error processing message: {e}")
                     await websocket.send(json.dumps({
