@@ -10,6 +10,11 @@ from pathlib import Path
 from src.networking.input_node import InputNode
 import numpy as np
 import traceback
+from enum import Enum
+
+class BuilderState(Enum):
+    IDLE = "IDLE"
+    SENDING_DATA = "SENDING_DATA"
 
 class ReservoirModelBuilder:
     def __init__(self):
@@ -18,13 +23,14 @@ class ReservoirModelBuilder:
         
         # Initialize connection state
         self.waiting_for_ack = False
-        self.server = None  # WebSocket server
+        self.server = None
         self.listen_port = self.config['controllers']['builder'].get('listen_port', 8766)
+        self.current_state = BuilderState.IDLE
         
         # Get destination from config
         if self.config and 'controllers' in self.config:
             self.builder_config = self.config['controllers'].get('builder', {})
-            self.destination = self.builder_config.get('destination', 'res00')  # Default to res00
+            self.destination = self.builder_config.get('destination', 'res00')
             print(f"\nBuilder config:", self.builder_config)
             print(f"Destination: {self.destination}")
         else:
@@ -76,25 +82,35 @@ class ReservoirModelBuilder:
             }
             
             # Send to destination
+            self.transition_to(BuilderState.SENDING_DATA)
             success = await self.send_to_destination(data)
+            
+            # Return to IDLE and wait for ready signal
+            self.transition_to(BuilderState.IDLE)
+            
             if success:
-                print(f"\nListening for trainer signal on port {self.listen_port}")
-                # Start listening server
-                async with websockets.serve(
+                print(f"\nStarting listener on port {self.listen_port}")
+                server = await websockets.serve(
                     self.handle_connection, 
                     "0.0.0.0", 
                     self.listen_port
-                ) as server:
-                    # Wait for acknowledgment
-                    while self.waiting_for_ack:
-                        await asyncio.sleep(0.1)
-                    print("Received acknowledgment, continuing...")
+                )
+                
+                print("Waiting for trainer acknowledgment...")
+                while self.waiting_for_ack:
+                    await asyncio.sleep(0.1)
+                print("Received acknowledgment, continuing...")
+                
+                # Close server after acknowledgment
+                server.close()
+                await server.wait_closed()
             else:
                 print(f"Failed to send data to {self.destination}")
                 
         except Exception as e:
             print(f"Error processing file: {e}")
             print("Available columns:", df.columns.tolist())
+            self.transition_to(BuilderState.IDLE)
 
     @staticmethod
     def scale_movement_log(raw_movement, min_value, max_value):
@@ -156,37 +172,26 @@ class ReservoirModelBuilder:
             print(f"Error sending to {self.destination}: {e}")
             return False
 
-    async def handle_signal(self, websocket, signal):
-        """Handle incoming ready signal from trainer"""
+    async def handle_connection(self, websocket):
+        """Handle incoming websocket connections"""
         try:
-            signal_data = json.loads(signal)
-            
-            if signal_data.get('type') == 'ready_signal':
-                if self.waiting_for_ack:  # Only accept signal if waiting for acknowledgment
+            async for message in websocket:
+                data = json.loads(message)
+                if data.get('type') == 'ready_signal':
                     print("Received ready signal from trainer")
-                    self.waiting_for_ack = False  # Reset flag
+                    self.waiting_for_ack = False
                     await websocket.send(json.dumps({
                         'status': 'success',
-                        'message': 'Signal acknowledged'
+                        'message': 'Ready signal received'
                     }))
                 else:
-                    print("Not waiting for acknowledgment")
+                    print(f"Unexpected message type: {data.get('type')}")
                     await websocket.send(json.dumps({
                         'status': 'error',
-                        'message': 'Not waiting for acknowledgment'
+                        'message': 'Invalid message type'
                     }))
-            else:
-                await websocket.send(json.dumps({
-                    'status': 'error',
-                    'message': 'Invalid signal type'
-                }))
-
         except Exception as e:
-            print(f"Error handling signal: {e}")
-            await websocket.send(json.dumps({
-                'status': 'error',
-                'message': str(e)
-            }))
+            print(f"Error handling connection: {e}")
 
     async def start(self):
         """Start by sending first row to destination, then listen for trainer"""
@@ -208,6 +213,11 @@ class ReservoirModelBuilder:
 
         except Exception as e:
             print(f"Error starting builder: {e}")
+
+    def transition_to(self, new_state):
+        """Transition to a new state"""
+        print(f"\nTransitioning from {self.current_state.name} to {new_state.name}")
+        self.current_state = new_state
 
 async def main():
     builder = ReservoirModelBuilder()

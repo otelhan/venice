@@ -309,7 +309,8 @@ class ControllerNode:
     async def send_data_to(self, target_name, data):
         """Send data to another controller"""
         max_retries = 3
-        retry_delay = 10  # increased to 10 seconds
+        first_retry_delay = 30  # 30 seconds for first retry
+        retry_delay = 10  # 10 seconds for subsequent retries
         connection_timeout = 10  # seconds
         
         try:
@@ -323,8 +324,9 @@ class ControllerNode:
             
             for attempt in range(max_retries):
                 if attempt > 0:
-                    print(f"\nWaiting {retry_delay} seconds before retry {attempt + 1}/{max_retries}...")
-                    await asyncio.sleep(retry_delay)
+                    delay = first_retry_delay if attempt == 1 else retry_delay
+                    print(f"\nWaiting {delay} seconds before retry {attempt + 1}/{max_retries}...")
+                    await asyncio.sleep(delay)
                 
                 try:
                     async with await asyncio.wait_for(
