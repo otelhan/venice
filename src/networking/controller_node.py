@@ -151,6 +151,18 @@ class ControllerNode:
             else:
                 data = message
             
+            # If we're not in IDLE state, we're busy
+            if self.controller.current_state != MachineState.IDLE:
+                print(f"\nBusy processing in state: {self.controller.current_state.name}")
+                response = {
+                    'status': 'busy',
+                    'message': f'Controller busy in state {self.controller.current_state.name}'
+                }
+                await websocket.send(json.dumps(response))
+                return
+                
+            # Handle message if we're ready...
+            
             if data.get('type') == 'movement_data':
                 # Extract data
                 timestamp = data['timestamp']
@@ -296,35 +308,42 @@ class ControllerNode:
 
     async def send_data_to(self, target_name, data):
         """Send data to another controller"""
+        max_retries = 3
+        retry_delay = 5  # increased to 5 seconds
+        
         try:
             target = self.config['controllers'].get(target_name)
             if not target:
                 print(f"Unknown target controller: {target_name}")
                 return False
-                
-            target_port = target.get('port', 8765)  # Get configured port
+
+            target_port = target.get('port', 8765)
             uri = f"ws://{target['ip']}:{target_port}"
             
-            # Debug print data before sending
-            print("\nPreparing to send data to", target_name)
-            print("Target URI:", uri)
-            print("Data format:")
-            print("-" * 50)
-            print("Type:", data.get('type'))
-            print("Timestamp:", data.get('timestamp'))
-            if 'data' in data:
-                print("Data contents:")
-                print("- pot_values (first 5):", data['data']['pot_values'][:5], "...")
-                print("- t_sin:", data['data']['t_sin'])
-                print("- t_cos:", data['data']['t_cos'])
-            print("-" * 50)
+            print(f"\nPreparing to send data to {target_name}")
+            print(f"Target URI: {uri}")
             
-            async with websockets.connect(uri) as websocket:
-                await websocket.send(json.dumps(data))
-                response = await websocket.recv()
-                print(f"Response from {target_name}: {response}")
-                return True
-                
+            for attempt in range(max_retries):
+                try:
+                    async with websockets.connect(uri) as websocket:
+                        await websocket.send(json.dumps(data))
+                        response = await websocket.recv()
+                        response_data = json.loads(response)
+                        
+                        if response_data.get('status') == 'busy':
+                            print(f"{target_name} is busy, waiting {retry_delay} seconds...")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                            
+                        print(f"Response from {target_name}: {response}")
+                        return True
+                except Exception as e:
+                    print(f"Attempt {attempt + 1} failed: {e}")
+                    await asyncio.sleep(retry_delay)
+            
+            print(f"Failed to send after {max_retries} attempts")
+            return False
+
         except Exception as e:
             print(f"Error sending data: {str(e)}")
             print("Full data that failed to send:", json.dumps(data, indent=2))

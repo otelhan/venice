@@ -177,93 +177,41 @@ class ReservoirModelBuilder:
             print(f"Error handling connection: {e}")
             
     async def process_data_file(self, file_path):
-        """Process a movement vector file and send to reservoir"""
+        """Process data from CSV file and send to trainer"""
         try:
-            # Start acknowledgment server
-            server = await websockets.serve(
-                self.handle_connection,
-                "0.0.0.0",
-                self.listen_port,
-                ping_interval=None
-            )
-            print(f"\nListening for acknowledgments on port {self.listen_port}")
-            
-            # Read CSV file
-            print(f"\nReading file: {file_path}")
+            print(f"\nProcessing file: {file_path}")
             df = pd.read_csv(file_path)
             
-            # Verify data format
-            roi_columns = []
-            if 'roi_1_m0' in df.columns:
-                roi_columns = [f'roi_1_m{i}' for i in range(30)]
-            else:
-                roi_columns = [f'ROI_1_{i+1}' for i in range(30)]
-                
-            time_columns = ['t_sin', 't_cos']
-            
-            if not all(col in df.columns for col in roi_columns + time_columns):
-                print("Error: CSV file missing required columns")
-                print("Required columns:", roi_columns + time_columns)
-                print("Available columns:", df.columns.tolist())
-                return False
-            
-            # Process each row
-            total_rows = len(df)
-            for i, row in df.iterrows():
-                # Get movement values and scale to pot values
-                movement_values = row[roi_columns].tolist()
-                min_val = min(movement_values)
-                max_val = max(movement_values)
-                pot_values = [
-                    self.scale_movement_log(val, min_val, max_val) 
-                    for val in movement_values
-                ]
-                
-                # Create data packet
-                data_packet = {
+            for index, row in df.iterrows():
+                if self.waiting_for_ack:
+                    print("Still waiting for previous acknowledgment...")
+                    continue
+                    
+                # Extract data
+                data = {
                     'type': 'movement_data',
-                    'timestamp': row['timestamp'] if 'timestamp' in row else str(datetime.now()),
+                    'timestamp': row['timestamp'],
                     'data': {
-                        'pot_values': pot_values,
-                        't_sin': float(row['t_sin']),
-                        't_cos': float(row['t_cos'])
+                        'pot_values': [row[f'pot_value_{i}'] for i in range(30)],
+                        't_sin': row['t_sin'],
+                        't_cos': row['t_cos']
                     }
                 }
                 
-                print(f"\nSending row {i+1}/{total_rows}")
-                
-                # Set waiting flag BEFORE sending
-                self.waiting_for_ack = True
-                
-                # Send data and wait for initial response
-                response = await self.input_node.send_data(
-                    self.connected_reservoir,
-                    data_packet
-                )
-                
-                if response.get('status') == 'error':
-                    print(f"\nError sending row {i+1}: {response.get('message')}")
-                    return False
-                
-                # Wait for trainer's acknowledgment
-                print("\nWaiting for trainer acknowledgment...")
-                while self.waiting_for_ack:
-                    await asyncio.sleep(0.1)  # Small sleep to prevent busy waiting
+                # Send to trainer
+                success = await self.send_to_trainer(data)
+                if success:
+                    print("Waiting for trainer acknowledgment...")
+                    # Wait here until we get acknowledgment
+                    while self.waiting_for_ack:
+                        await asyncio.sleep(0.1)
+                    print("Received trainer acknowledgment, continuing...")
+                else:
+                    print("Failed to send data to trainer")
+                    break
                     
-                print("Received trainer acknowledgment, continuing...")
-                await asyncio.sleep(10)  # Wait before next row
-            
-            # Clean up server
-            server.close()
-            await server.wait_closed()
-            
-            print("\nCompleted processing file")
-            return True
-            
         except Exception as e:
-            print(f"\nError processing file: {e}")
-            traceback.print_exc()  # Print full traceback
-            return False
+            print(f"Error processing file: {e}")
 
     @staticmethod
     def scale_movement_log(raw_movement, min_value, max_value):
@@ -302,21 +250,20 @@ class ReservoirModelBuilder:
                 print("Trainer configuration not found!")
                 return False
 
-            uri = f"ws://{trainer_config['ip']}:{trainer_config['port']}"
-            print(f"\nPreparing to send data to trainer at {uri}")
+            uri = f"ws://{trainer_config['ip']}:{trainer_config.get('listen_port', 8765)}"
+            print(f"\nSending to trainer at {uri}")
 
             async with websockets.connect(uri) as websocket:
                 # Send the data
                 await websocket.send(json.dumps(data))
-                print("Data sent, waiting for acknowledgment...")
-
-                # Wait for acknowledgment from trainer
+                
+                # Wait for response
                 response = await websocket.recv()
                 response_data = json.loads(response)
                 
                 if response_data.get('status') == 'success':
                     print("Data accepted by trainer")
-                    self.waiting_for_ack = True  # Set flag to indicate waiting for signal
+                    self.waiting_for_ack = True  # Set flag here after successful send
                     return True
                 else:
                     print(f"Trainer rejected data: {response_data.get('message')}")
@@ -334,7 +281,7 @@ class ReservoirModelBuilder:
             if signal_data.get('type') == 'ready_signal':
                 if self.waiting_for_ack:  # Only accept signal if waiting for acknowledgment
                     print("Received ready signal from trainer")
-                    self.waiting_for_ack = False
+                    self.waiting_for_ack = False  # Reset flag
                     await websocket.send(json.dumps({
                         'status': 'success',
                         'message': 'Signal acknowledged'
