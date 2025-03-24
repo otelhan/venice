@@ -45,58 +45,30 @@ class MachineController:
         
     async def handle_current_state(self):
         """Handle the current state"""
-        print(f"\nHandling state: {self.current_state.name}")
-        
-        if self.current_state == MachineState.DRIVE_WAVEMAKER:
-            if self.movement_buffer and self.serial:
-                print(f"Movement buffer size: {len(self.movement_buffer)}")
-                self.state_handler.movement_buffer = self.movement_buffer
-                self.state_handler.serial = self.serial
-                next_state = self.state_handler.drive_wavemaker()
-                if next_state:
-                    print("Transitioning to SEND_DATA")
-                    if hasattr(self, 'node'):
-                        self.node.clear_incoming_buffer()
-                    self.transition_to(MachineState.SEND_DATA)
-                    self.send_retries = 0
-                    await self.handle_current_state()
-                
-        elif self.current_state == MachineState.SEND_DATA:
-            dest = self.config.get('destination')
-            if dest:
-                print(f"\nAttempting to send data to {dest}")
-                print(f"Current retry count: {self.send_retries}/{self.max_retries}")
-                
-                success = await self.state_handler.send_data(dest)
-                if success:
-                    print("Data accepted by destination")
-                    self.send_retries = 0
-                    print("Transitioning back to IDLE")
-                    self.transition_to(MachineState.IDLE)
-                    await asyncio.sleep(1)  # Give time for state change to settle
-                    if hasattr(self, 'node'):
-                        await self.node.process_buffer()
-                else:
-                    self.send_retries += 1
-                    if self.send_retries >= self.max_retries:
-                        print(f"Failed to send after {self.max_retries} attempts")
-                        print("Transitioning back to IDLE")
-                        self.transition_to(MachineState.IDLE)
-                        await asyncio.sleep(1)  # Give time for state change to settle
+        try:
+            if self.current_state == MachineState.DRIVE_WAVEMAKER:
+                if self.movement_buffer and self.serial:
+                    print(f"Movement buffer size: {len(self.movement_buffer)}")
+                    self.state_handler.movement_buffer = self.movement_buffer
+                    self.state_handler.serial = self.serial
+                    next_state = self.state_handler.drive_wavemaker()
+                    if next_state:
+                        print("Transitioning to SEND_DATA")
                         if hasattr(self, 'node'):
-                            await self.node.process_buffer()
-                    else:
-                        print(f"Retrying in 2 seconds... ({self.send_retries}/{self.max_retries})")
-                        await asyncio.sleep(2)  # Wait before retry
+                            self.node.clear_incoming_buffer()
+                        self.transition_to(MachineState.SEND_DATA)
+                        self.send_retries = 0
                         await self.handle_current_state()
-            else:
-                print("\nNo destination configured in config!")
-                print("Config:", self.config)
-                print("Transitioning back to IDLE")
-                self.transition_to(MachineState.IDLE)
-                # Process any buffered messages
-                if hasattr(self, 'node'):
-                    await self.node.process_buffer()
+                
+            elif self.current_state == MachineState.SEND_DATA:
+                await self.state_handler.send_data()
+            elif self.current_state == MachineState.IDLE:
+                await self.state_handler.idle()
+            # ... other states ...
+            
+        except Exception as e:
+            print(f"Error handling state {self.current_state}: {e}")
+            self.transition_to(MachineState.IDLE)
     
     def transition_to(self, new_state):
         """Transition to a new state"""

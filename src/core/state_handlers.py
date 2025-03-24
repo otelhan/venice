@@ -267,8 +267,8 @@ class StateHandler:
     async def send_data(self):
         """Send data to next controller in chain"""
         try:
-            # Get destination from config
-            destination = self.controller.controller_config.get('destination')
+            # Get destination from controller config
+            destination = self.config.get('destination')
             if not destination:
                 print("No destination configured!")
                 return
