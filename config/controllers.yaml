@@ -9,7 +9,7 @@ controllers:
     mac: 2c:cf:67:8b:24:f7
   res00:
     description: Reservoir Controller 00
-    destination: trainer
+    destination: res01
     display:
       enabled: true
       show_camera: true
@@ -19,7 +19,7 @@ controllers:
     mac: 2c:cf:67:8b:24:f6
   res01:
     description: Reservoir Controller 01
-    destination: res02
+    destination: trainer
     display:
       enabled: true
       show_camera: true
