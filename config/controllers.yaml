@@ -56,6 +56,8 @@ controllers:
       show_plots: false
     ip: 192.168.1.106
     mac: a4:cf:99:57:e6:d2
+    listen_port: 8765
+    send_port: 8766
   builder:
     description: Reservoir Builder
     display:

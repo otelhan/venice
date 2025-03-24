@@ -294,6 +294,70 @@ class ReservoirModelBuilder:
             print(f"Error scaling movement value: {e}")
             return 20  # Return minimum value on error
 
+    async def send_to_trainer(self, data):
+        """Send data to trainer and wait for acknowledgment"""
+        try:
+            trainer_config = self.config['controllers'].get('trainer')
+            if not trainer_config:
+                print("Trainer configuration not found!")
+                return False
+
+            uri = f"ws://{trainer_config['ip']}:{trainer_config['port']}"
+            print(f"\nPreparing to send data to trainer at {uri}")
+
+            async with websockets.connect(uri) as websocket:
+                # Send the data
+                await websocket.send(json.dumps(data))
+                print("Data sent, waiting for acknowledgment...")
+
+                # Wait for acknowledgment from trainer
+                response = await websocket.recv()
+                response_data = json.loads(response)
+                
+                if response_data.get('status') == 'success':
+                    print("Data accepted by trainer")
+                    self.waiting_for_ack = True  # Set flag to indicate waiting for signal
+                    return True
+                else:
+                    print(f"Trainer rejected data: {response_data.get('message')}")
+                    return False
+
+        except Exception as e:
+            print(f"Error sending to trainer: {e}")
+            return False
+
+    async def handle_signal(self, websocket, signal):
+        """Handle incoming ready signal from trainer"""
+        try:
+            signal_data = json.loads(signal)
+            
+            if signal_data.get('type') == 'ready_signal':
+                if self.waiting_for_ack:  # Only accept signal if waiting for acknowledgment
+                    print("Received ready signal from trainer")
+                    self.waiting_for_ack = False
+                    await websocket.send(json.dumps({
+                        'status': 'success',
+                        'message': 'Signal acknowledged'
+                    }))
+                else:
+                    print("Not waiting for acknowledgment")
+                    await websocket.send(json.dumps({
+                        'status': 'error',
+                        'message': 'Not waiting for acknowledgment'
+                    }))
+            else:
+                await websocket.send(json.dumps({
+                    'status': 'error',
+                    'message': 'Invalid signal type'
+                }))
+
+        except Exception as e:
+            print(f"Error handling signal: {e}")
+            await websocket.send(json.dumps({
+                'status': 'error',
+                'message': str(e)
+            }))
+
 async def main():
     builder = ReservoirModelBuilder()
     

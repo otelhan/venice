@@ -24,7 +24,12 @@ class ReservoirTrainer:
         # Get trainer-specific config
         if self.config and 'controllers' in self.config:
             self.trainer_config = self.config['controllers'].get('trainer', {})
+            # Get configured ports
+            self.listen_port = self.trainer_config.get('listen_port', 8765)  # Default to 8765
+            self.send_port = self.trainer_config.get('send_port', 8766)      # Default to 8766
             print(f"\nTrainer config:", self.trainer_config)
+            print(f"Listening on port: {self.listen_port}")
+            print(f"Sending on port: {self.send_port}")
         else:
             self.trainer_config = {}
             print("No trainer config found!")
@@ -41,10 +46,6 @@ class ReservoirTrainer:
         self.model_dir = os.path.join('models')
         os.makedirs(self.model_dir, exist_ok=True)
         self.model = None
-        
-        # Listen on 8765 for res00, send on 8766 to builder
-        self.listen_port = self.config['controllers']['trainer'].get('listen_port', 8765)
-        self.send_port = self.config['controllers']['trainer'].get('send_port', 8766)
         
     def _load_config(self):
         """Load configuration from YAML"""
@@ -92,60 +93,48 @@ class ReservoirTrainer:
         print(f"\nCreated new training file: {filepath}")
         return filepath
         
-    async def handle_received_data(self, data):
-        """Handle received data from reservoir"""
+    async def handle_message(self, websocket, data):
+        """Handle incoming messages"""
         try:
-            if self.current_state != TrainerState.RECEIVING_DATA:
-                print(f"Cannot handle data in {self.current_state.value} state")
-                return False
+            if data.get('type') == 'movement_data':
+                print("\nReceived movement data")
                 
-            # Extract and print full data
-            print("\nReceived Row Data:")
-            print("-" * 50)
-            print("Raw data packet:")
-            print(json.dumps(data, indent=2))
-            print("-" * 50)
-            
-            # Extract data
-            timestamp = data['timestamp']
-            pot_values = data['data']['pot_values']
-            t_sin = data['data']['t_sin']
-            t_cos = data['data']['t_cos']
-            
-            # Print formatted data
-            print("\n" + "="*50)
-            print(f"Processed Data at {timestamp}")
-            print("-"*50)
-            print("Pot Values:")
-            for i in range(0, 30, 5):  # Print 5 values per line
-                values = pot_values[i:i+5]
-                print(f"{i:2d}-{i+4:2d}: {values}")
-            print(f"Time Encoding: sin={t_sin:.3f}, cos={t_cos:.3f}")
-            print("="*50)
-            
-            # Create file if needed
-            if not self.current_file:
-                self.current_file = self.create_new_file()
-            
-            # Save data
-            row_data = {
-                'timestamp': timestamp,
-                **{f'pot_value_{i}': val for i, val in enumerate(pot_values)},
-                't_sin': t_sin,
-                't_cos': t_cos
-            }
-            
-            # Append to CSV
-            df = pd.DataFrame([row_data])
-            df.to_csv(self.current_file, mode='a', header=False, index=False)
-            
-            # Signal input node to send next row
-            await self.signal_input_node()
-            return True
+                # Save data to CSV
+                timestamp = data['timestamp']
+                pot_values = data['data']['pot_values']
+                t_sin = data['data']['t_sin'] 
+                t_cos = data['data']['t_cos']
+                
+                # Create/append to CSV file
+                if not self.current_file:
+                    filename = f"reservoir_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                    self.current_file = os.path.join(self.data_dir, filename)
+                    
+                # Save to CSV
+                self.save_to_csv(timestamp, pot_values, t_sin, t_cos)
+                
+                # Send acknowledgment back
+                response = {
+                    'status': 'success',
+                    'message': 'Data processed'
+                }
+                await websocket.send(json.dumps(response))
+
+                # Signal builder we're ready for next data
+                builder_uri = f"ws://{self.config['controllers']['builder']['ip']}:{self.config['controllers']['builder']['port']}"
+                async with websockets.connect(builder_uri) as builder_ws:
+                    signal = {
+                        'type': 'ready_signal',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    await builder_ws.send(json.dumps(signal))
             
         except Exception as e:
-            print(f"Error handling received data: {e}")
-            return False
+            print(f"Error handling message: {e}")
+            await websocket.send(json.dumps({
+                'status': 'error',
+                'message': str(e)
+            }))
             
     async def signal_input_node(self):
         """Signal builder that we're ready for next row"""
@@ -267,12 +256,7 @@ class ReservoirTrainer:
                             }))
                             continue
                             
-                        success = await self.handle_received_data(data)
-                        response = {
-                            'status': 'success' if success else 'error',
-                            'message': 'Data processed' if success else 'Processing failed'
-                        }
-                        await websocket.send(json.dumps(response))
+                        await self.handle_message(websocket, data)
                         
                     else:
                         print(f"Unexpected message type: {data.get('type')}")
