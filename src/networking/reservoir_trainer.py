@@ -107,7 +107,7 @@ class ReservoirTrainer:
                 
                 # Create/append to CSV file
                 if not self.current_file:
-                    filename = f"movement_vectors_{timestamp.split()[0].replace('-','')}.csv"  # Use date from timestamp
+                    filename = f"movement_vectors_{timestamp.split()[0].replace('-','')}.csv"
                     self.current_file = os.path.join(self.data_dir, filename)
                     
                 # Save to CSV
@@ -120,14 +120,8 @@ class ReservoirTrainer:
                 }
                 await websocket.send(json.dumps(response))
 
-                # Signal builder we're ready for next data - use same timestamp
-                builder_uri = f"ws://{self.config['controllers']['builder']['ip']}:{self.config['controllers']['builder']['port']}"
-                async with websockets.connect(builder_uri) as builder_ws:
-                    signal = {
-                        'type': 'ready_signal',
-                        'timestamp': timestamp  # Use original timestamp
-                    }
-                    await builder_ws.send(json.dumps(signal))
+                # Signal we're ready for next data
+                await self.signal_input_node()
             
         except Exception as e:
             print(f"Error handling message: {e}")
@@ -245,7 +239,7 @@ class ReservoirTrainer:
                     
                     if data.get('type') == 'movement_data':
                         print("\nReceived data packet:")
-                        print(json.dumps(data, indent=2))  # Print full packet for verification
+                        print(json.dumps(data, indent=2))
                         
                         # Verify data structure
                         if not all(key in data.get('data', {}) for key in ['pot_values', 't_sin', 't_cos']):
@@ -258,7 +252,7 @@ class ReservoirTrainer:
                             
                         await self.handle_message(websocket, data)
                         
-                    else:
+                    else:  # Remove ready_signal handling, only handle movement_data
                         print(f"Unexpected message type: {data.get('type')}")
                         await websocket.send(json.dumps({
                             'status': 'error',
