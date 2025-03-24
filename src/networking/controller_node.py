@@ -311,7 +311,7 @@ class ControllerNode:
         max_retries = 3
         first_retry_delay = 30  # 30 seconds for first retry
         retry_delay = 10  # 10 seconds for subsequent retries
-        connection_timeout = 10  # seconds
+        connection_timeout = 15  # increased timeout for initial connection
         
         try:
             target = self.config['controllers'].get(target_name)
@@ -323,33 +323,54 @@ class ControllerNode:
             print(f"\nSending to {target_name} at {uri}")
             
             for attempt in range(max_retries):
-                if attempt > 0:
-                    delay = first_retry_delay if attempt == 1 else retry_delay
-                    print(f"\nWaiting {delay} seconds before retry {attempt + 1}/{max_retries}...")
-                    await asyncio.sleep(delay)
-                
                 try:
+                    if attempt > 0:
+                        delay = first_retry_delay if attempt == 1 else retry_delay
+                        print(f"\nAttempt {attempt + 1}/{max_retries} - Waiting {delay} seconds before retry...")
+                        await asyncio.sleep(delay)
+                    
+                    print(f"Connecting to {target_name} (attempt {attempt + 1}/{max_retries})")
+                    
+                    # First check if target is reachable
+                    try:
+                        import socket
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(2)
+                        result = sock.connect_ex((target['ip'], target.get('port', 8765)))
+                        sock.close()
+                        
+                        if result != 0:
+                            print(f"Target {target_name} is not reachable")
+                            continue
+                    except Exception as e:
+                        print(f"Network error checking {target_name}: {e}")
+                        continue
+
+                    # Try to connect and send data
                     async with await asyncio.wait_for(
                         websockets.connect(uri), 
                         timeout=connection_timeout
                     ) as websocket:
+                        print(f"Connected to {target_name}, sending data...")
                         await websocket.send(json.dumps(data))
                         response = await websocket.recv()
                         response_data = json.loads(response)
                         
                         if response_data.get('status') == 'busy':
-                            print(f"{target_name} is busy, will retry...")
+                            print(f"{target_name} is busy, will retry after delay")
                             continue
                             
                         print(f"Response from {target_name}: {response}")
                         return True
                         
                 except asyncio.TimeoutError:
-                    print(f"Connection timeout (attempt {attempt + 1}/{max_retries})")
+                    print(f"Connection timeout to {target_name}")
+                except websockets.exceptions.ConnectionClosed:
+                    print(f"Connection closed by {target_name}")
                 except Exception as e:
-                    print(f"Connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(f"Error connecting to {target_name}: {e}")
             
-            print(f"Failed to send after {max_retries} attempts")
+            print(f"Failed to send to {target_name} after {max_retries} attempts")
             return False
 
         except Exception as e:

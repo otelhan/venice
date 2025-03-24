@@ -64,49 +64,53 @@ class ReservoirModelBuilder:
             print(f"\nProcessing file: {file_path}")
             df = pd.read_csv(file_path)
             
-            # Get second row (index 1)
-            second_row = df.iloc[1]
-            
-            # Extract ROI values
-            roi_values = [second_row[f'roi_1_m{i}'] for i in range(30)]
-            
-            # Create data packet
-            data = {
-                'type': 'movement_data',
-                'timestamp': second_row['timestamp'] if 'timestamp' in second_row else str(datetime.now()),
-                'data': {
-                    'pot_values': roi_values,
-                    't_sin': float(second_row['t_sin']),
-                    't_cos': float(second_row['t_cos'])
+            # Process each row starting from second row (index 1)
+            for index in range(1, len(df)):
+                row = df.iloc[index]
+                
+                # Extract ROI values
+                roi_values = [row[f'roi_1_m{i}'] for i in range(30)]
+                
+                # Create data packet
+                data = {
+                    'type': 'movement_data',
+                    'timestamp': row['timestamp'] if 'timestamp' in row else str(datetime.now()),
+                    'data': {
+                        'pot_values': roi_values,
+                        't_sin': float(row['t_sin']),
+                        't_cos': float(row['t_cos'])
+                    }
                 }
-            }
-            
-            # Send to destination
-            self.transition_to(BuilderState.SENDING_DATA)
-            success = await self.send_to_destination(data)
-            
-            # Return to IDLE and wait for ready signal
-            self.transition_to(BuilderState.IDLE)
-            
-            if success:
-                print(f"\nStarting listener on port {self.listen_port}")
-                server = await websockets.serve(
-                    self.handle_connection, 
-                    "0.0.0.0", 
-                    self.listen_port
-                )
                 
-                print("Waiting for trainer acknowledgment...")
-                while self.waiting_for_ack:
-                    await asyncio.sleep(0.1)
-                print("Received acknowledgment, continuing...")
+                print(f"\nProcessing row {index} of {len(df)-1}")
                 
-                # Close server after acknowledgment
-                server.close()
-                await server.wait_closed()
-            else:
-                print(f"Failed to send data to {self.destination}")
+                # Send to destination
+                self.transition_to(BuilderState.SENDING_DATA)
+                success = await self.send_to_destination(data)
                 
+                # Return to IDLE and wait for ready signal
+                self.transition_to(BuilderState.IDLE)
+                
+                if success:
+                    print(f"\nStarting listener on port {self.listen_port}")
+                    server = await websockets.serve(
+                        self.handle_connection, 
+                        "0.0.0.0", 
+                        self.listen_port
+                    )
+                    
+                    print("Waiting for trainer acknowledgment...")
+                    while self.waiting_for_ack:
+                        await asyncio.sleep(0.1)
+                    print("Received acknowledgment, continuing...")
+                    
+                    # Close server after acknowledgment
+                    server.close()
+                    await server.wait_closed()
+                else:
+                    print(f"Failed to send data to {self.destination}")
+                    break  # Stop if send fails
+                    
         except Exception as e:
             print(f"Error processing file: {e}")
             print("Available columns:", df.columns.tolist())
