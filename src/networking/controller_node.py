@@ -319,14 +319,17 @@ class ControllerNode:
                 return False
 
             uri = f"ws://{target['ip']}:{target.get('port', 8765)}"
-            print(f"\nSending to {target_name} at {uri}")
             
             for attempt in range(max_retries):
                 try:
                     if attempt > 0:
-                        print(f"\nWaiting {send_delay} seconds before next attempt...")
-                        await asyncio.sleep(send_delay)
+                        print(f"\nWaiting before next attempt...")
+                        for remaining in range(send_delay, 0, -1):
+                            print(f"Next attempt in {remaining} seconds...", end='\r')
+                            await asyncio.sleep(1)
+                        print("\nAttempting to send...")
                     
+                    print(f"\nSending to {target_name} at {uri}")
                     print(f"Connecting to {target_name} (attempt {attempt + 1}/{max_retries})")
                     
                     # First check if target is reachable
@@ -359,6 +362,13 @@ class ControllerNode:
                             continue
                             
                         print(f"Response from {target_name}: {response}")
+                        
+                        # After successful send, wait 30 seconds before returning
+                        print("\nWaiting before next data packet...")
+                        for remaining in range(send_delay, 0, -1):
+                            print(f"Next packet in {remaining} seconds...", end='\r')
+                            await asyncio.sleep(1)
+                        print("\nReady for next packet")
                         return True
                         
                 except asyncio.TimeoutError:
