@@ -100,14 +100,14 @@ class ReservoirTrainer:
                 print("\nReceived movement data")
                 
                 # Save data to CSV
-                timestamp = data['timestamp']
+                timestamp = data['timestamp']  # Use incoming timestamp
                 pot_values = data['data']['pot_values']
                 t_sin = data['data']['t_sin'] 
                 t_cos = data['data']['t_cos']
                 
                 # Create/append to CSV file
                 if not self.current_file:
-                    filename = f"reservoir_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                    filename = f"movement_vectors_{timestamp.split()[0].replace('-','')}.csv"  # Use date from timestamp
                     self.current_file = os.path.join(self.data_dir, filename)
                     
                 # Save to CSV
@@ -120,12 +120,12 @@ class ReservoirTrainer:
                 }
                 await websocket.send(json.dumps(response))
 
-                # Signal builder we're ready for next data
+                # Signal builder we're ready for next data - use same timestamp
                 builder_uri = f"ws://{self.config['controllers']['builder']['ip']}:{self.config['controllers']['builder']['port']}"
                 async with websockets.connect(builder_uri) as builder_ws:
                     signal = {
                         'type': 'ready_signal',
-                        'timestamp': datetime.now().isoformat()
+                        'timestamp': timestamp  # Use original timestamp
                     }
                     await builder_ws.send(json.dumps(signal))
             
@@ -312,6 +312,32 @@ class ReservoirTrainer:
                 
             else:
                 print("\nInvalid choice")
+
+    def save_to_csv(self, timestamp, pot_values, t_sin, t_cos):
+        """Save received data to CSV file"""
+        try:
+            # Create row data dictionary
+            row_data = {
+                'timestamp': timestamp,
+                **{f'pot_value_{i}': val for i, val in enumerate(pot_values)},
+                't_sin': t_sin,
+                't_cos': t_cos
+            }
+            
+            # Convert to DataFrame and save
+            df = pd.DataFrame([row_data])
+            
+            # Create file if it doesn't exist
+            if not self.current_file:
+                self.current_file = self.create_new_file()
+            
+            # Append to CSV
+            df.to_csv(self.current_file, mode='a', header=False, index=False)
+            print(f"Data saved to {self.current_file}")
+            
+        except Exception as e:
+            print(f"Error saving to CSV: {e}")
+            raise
 
 if __name__ == "__main__":
     trainer = ReservoirTrainer()
