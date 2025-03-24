@@ -7,10 +7,17 @@ import asyncio
 
 class MachineController:
     def __init__(self, config=None, full_config=None):
-        self.current_state = None
-        self.config = config or {}
-        self.full_config = full_config or {}  # Store full config
-        self.display_config = config.get('display', {}) if config else {}
+        """Initialize controller with config"""
+        self.config = config
+        self.full_config = full_config
+        self.current_state = MachineState.IDLE  # Initialize with IDLE
+        self.last_state = None
+        self.state_handler = StateHandler(self)
+        self.movement_buffer = []
+        
+        # Initialize serial connection
+        if not self._init_serial():
+            print("Warning: Failed to initialize serial connection")
         
         # Add retry counter and limit
         self.send_retries = 0
@@ -19,14 +26,11 @@ class MachineController:
         # Print config values
         print("\nController Configuration:")
         print(f"Full config: {self.config}")
-        print(f"Display config: {self.display_config}")
+        print(f"Display config: {self.config.get('display', {}) if self.config else {}}")
         print(f"Destination: {self.config.get('destination', 'None')}")  # Print destination
         
-        self.state_handler = StateHandler(
-            display_config=self.display_config,
-            controller_config=self.config,
-            full_config=self.full_config  # Pass full config to StateHandler
-        )
+        self.display_config = config.get('display', {}) if config else {}
+        
         self.movement_buffer = []  # Store received movements
         self.serial = None
         if not self._init_serial():
