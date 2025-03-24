@@ -87,12 +87,10 @@ class MachineController:
                 if hasattr(self, 'node'):
                     await self.node.process_buffer()
     
-    def transition_to(self, new_state: MachineState):
+    def transition_to(self, new_state):
         """Transition to a new state"""
-        if self.current_state is None:
-            print(f"Initializing state to: {new_state.name}")
-        else:
-            print(f"Transitioning from {self.current_state.name} to {new_state.name}")
+        print(f"\nTransitioning from {self.current_state.name} to {new_state.name}")
+        self.last_state = self.current_state
         self.current_state = new_state
 
     def _init_serial(self):

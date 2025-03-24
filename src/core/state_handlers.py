@@ -261,63 +261,46 @@ class StateHandler:
         scaled = int(min_val + (movement * (max_val - min_val) / 127))
         return min(max(scaled, 20), 127)  # Ensure within bounds
 
-    async def send_data(self, destination):
-        """Send collected energy data to destination controller"""
+    async def send_data(self):
+        """Send data to next controller in chain"""
         try:
-            print(f"\nPreparing to send data to {destination}")
-            
-            # Get destination controller config
-            dest_config = self.full_config['controllers'].get(destination)
-            if not dest_config:
-                print(f"Unknown destination controller: {destination}")
-                return False
-            
-            # Verify we have all required data
-            if not self.outgoing_buffer['energy_values']:
-                print("No energy values to send")
-                return False
+            # Get destination from config
+            destination = self.controller.controller_config.get('destination')
+            if not destination:
+                print("No destination configured!")
+                return
                 
-            if not self.outgoing_buffer['timestamp']:
-                print("Warning: No timestamp in buffer, using current time")
-                self.outgoing_buffer['timestamp'] = datetime.now().isoformat()
-            
-            # Convert energy values to pot values [20, 127]
-            energy_values = self.outgoing_buffer['energy_values']
-            min_val = min(energy_values)
-            max_val = max(energy_values)
-            pot_values = [
-                self._energy_to_movement(e, min_val, max_val) 
-                for e in energy_values
-            ]
-            
-            # Create standardized data packet
-            data_packet = {
-                'type': 'movement_data',  # Standard type for all nodes
+            # Send data
+            success = await self.controller.send_data_to(destination, {
+                'type': 'movement_data',
                 'timestamp': self.outgoing_buffer['timestamp'],
                 'data': {
-                    'pot_values': pot_values,  # Always 30 values [20-127]
+                    'pot_values': self.controller.movement_buffer,
                     't_sin': self.outgoing_buffer['t_sin'],
                     't_cos': self.outgoing_buffer['t_cos']
                 }
-            }
+            })
             
-            # Debug print before sending
-            print("\nSending data packet:")
-            print(json.dumps(data_packet, indent=2))
+            # Transition to IDLE (which will handle the countdown)
+            self.controller.transition_to(MachineState.IDLE)
             
-            # Get configured port
-            dest_port = dest_config.get('port', 8765)
-            uri = f"ws://{dest_config['ip']}:{dest_port}"
-            print(f"Sending to {destination} at {uri}")
-            
-            # Send data
-            async with await asyncio.wait_for(websockets.connect(uri), timeout=5) as websocket:
-                await asyncio.wait_for(websocket.send(json.dumps(data_packet)), timeout=3)
-                response = await asyncio.wait_for(websocket.recv(), timeout=3)
-                print(f"Response from {destination}: {response}")
-                return True
-                
         except Exception as e:
-            print(f"Error sending data: {e}")
-            traceback.print_exc()  # Print full error trace
-            return False
+            print(f"Error in send_data: {e}")
+            self.controller.transition_to(MachineState.IDLE)
+
+    async def idle(self):
+        """Handle IDLE state"""
+        try:
+            # If we just sent data, do countdown
+            if self.controller.last_state == MachineState.SEND_DATA:
+                print("\nWaiting before next data packet...")
+                for remaining in range(30, 0, -1):
+                    print(f"Next packet in {remaining} seconds...", end='\r')
+                    await asyncio.sleep(1)
+                print("\nReady for next packet")
+            
+            # Normal idle processing...
+            await asyncio.sleep(0.1)
+            
+        except Exception as e:
+            print(f"Error in idle state: {e}")
