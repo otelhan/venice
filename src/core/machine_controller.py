@@ -8,11 +8,24 @@ import asyncio
 class MachineController:
     def __init__(self, config=None, full_config=None):
         """Initialize controller with config"""
-        self.config = config
-        self.full_config = full_config
+        self.config = config or {}  # Default to empty dict if None
+        self.full_config = full_config or {}
         self.current_state = MachineState.IDLE  # Initialize with IDLE
         self.last_state = None
-        self.state_handler = StateHandler(self)
+        
+        # Print config values
+        print("\nController Configuration:")
+        print(f"Full config: {self.config}")
+        print(f"Display config: {self.config.get('display', {})}")
+        print(f"Destination: {self.config.get('destination', 'None')}")
+        
+        # Initialize state handler with configs
+        self.state_handler = StateHandler(
+            controller=self,
+            config=self.config,
+            full_config=self.full_config
+        )
+        
         self.movement_buffer = []
         
         # Initialize serial connection
@@ -22,12 +35,6 @@ class MachineController:
         # Add retry counter and limit
         self.send_retries = 0
         self.max_retries = 3
-        
-        # Print config values
-        print("\nController Configuration:")
-        print(f"Full config: {self.config}")
-        print(f"Display config: {self.config.get('display', {}) if self.config else {}}")
-        print(f"Destination: {self.config.get('destination', 'None')}")  # Print destination
         
         self.display_config = config.get('display', {}) if config else {}
         

@@ -19,7 +19,22 @@ from datetime import datetime
 os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11 backend instead of Wayland
 
 class StateHandler:
-    def __init__(self, display_config=None, controller_config=None, full_config=None):
+    def __init__(self, controller, config=None, full_config=None):
+        """Initialize state handler"""
+        self.controller = controller
+        self.config = config or {}  # Default to empty dict if None
+        self.full_config = full_config or {}
+        
+        # Initialize buffers
+        self.outgoing_buffer = {
+            'timestamp': None,
+            't_sin': None,
+            't_cos': None
+        }
+        
+        print(f"StateHandler config: {self.config}")
+        print(f"StateHandler destination: {self.config.get('destination', 'None')}")
+        
         self.serial_port = None
         self.port_name = None
         self.baud_rate = 9600
@@ -28,12 +43,7 @@ class StateHandler:
         self.serial_queue = Queue()
         self.serial_thread = None
         self.serial = None
-        self.display_config = display_config or {}
-        self.config = controller_config  # Store controller-specific config
-        self.full_config = full_config or {}  # Store full config with all controllers
-        
-        print(f"StateHandler config: {self.config}")
-        print(f"StateHandler destination: {self.config.get('destination', 'None')}")
+        self.display_config = self.config.get('display', {})
         
         # Initialize camera
         self.camera = None
@@ -44,13 +54,6 @@ class StateHandler:
         self.energy_values = []
         self.window_size = 100
         
-        # Outgoing buffer for collected energy values
-        self.outgoing_buffer = {
-            'energy_values': [],  # Store energy readings from camera
-            'timestamp': None,    # Original timestamp from incoming data
-            't_sin': 0.0,        # Time encoding from incoming data
-            't_cos': 0.0
-        }
         self.max_buffer_size = 30
         
     def find_kb2040_port(self):
