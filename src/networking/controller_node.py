@@ -309,7 +309,8 @@ class ControllerNode:
     async def send_data_to(self, target_name, data):
         """Send data to another controller"""
         max_retries = 3
-        retry_delay = 5  # increased to 5 seconds
+        retry_delay = 10  # increased to 10 seconds
+        connection_timeout = 10  # seconds
         
         try:
             target = self.config['controllers'].get(target_name)
@@ -317,36 +318,40 @@ class ControllerNode:
                 print(f"Unknown target controller: {target_name}")
                 return False
 
-            target_port = target.get('port', 8765)
-            uri = f"ws://{target['ip']}:{target_port}"
-            
-            print(f"\nPreparing to send data to {target_name}")
-            print(f"Target URI: {uri}")
+            uri = f"ws://{target['ip']}:{target.get('port', 8765)}"
+            print(f"\nSending to {target_name} at {uri}")
             
             for attempt in range(max_retries):
+                if attempt > 0:
+                    print(f"\nWaiting {retry_delay} seconds before retry {attempt + 1}/{max_retries}...")
+                    await asyncio.sleep(retry_delay)
+                
                 try:
-                    async with websockets.connect(uri) as websocket:
+                    async with await asyncio.wait_for(
+                        websockets.connect(uri), 
+                        timeout=connection_timeout
+                    ) as websocket:
                         await websocket.send(json.dumps(data))
                         response = await websocket.recv()
                         response_data = json.loads(response)
                         
                         if response_data.get('status') == 'busy':
-                            print(f"{target_name} is busy, waiting {retry_delay} seconds...")
-                            await asyncio.sleep(retry_delay)
+                            print(f"{target_name} is busy, will retry...")
                             continue
                             
                         print(f"Response from {target_name}: {response}")
                         return True
+                        
+                except asyncio.TimeoutError:
+                    print(f"Connection timeout (attempt {attempt + 1}/{max_retries})")
                 except Exception as e:
-                    print(f"Attempt {attempt + 1} failed: {e}")
-                    await asyncio.sleep(retry_delay)
+                    print(f"Connection error (attempt {attempt + 1}/{max_retries}): {e}")
             
             print(f"Failed to send after {max_retries} attempts")
             return False
 
         except Exception as e:
-            print(f"Error sending data: {str(e)}")
-            print("Full data that failed to send:", json.dumps(data, indent=2))
+            print(f"Error in send_data_to: {e}")
             return False
 
     async def handle_current_state(self):

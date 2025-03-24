@@ -13,21 +13,23 @@ import traceback
 
 class ReservoirModelBuilder:
     def __init__(self):
-        self.input_node = InputNode()
         self.config = self._load_config()
         self.data_dir = Path(__file__).parent.parent.parent / 'data'
-        self.output_dir = self.data_dir / 'reservoir_output'
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize connection state
-        self.connected_reservoir = None
-        self.is_listening = False
-        self.received_data = []
-        self.waiting_for_ack = False  # Track if waiting for acknowledgment
+        self.waiting_for_ack = False
         self.server = None  # WebSocket server
-        self.send_port = 8765  # Standard port for sending to res00
         self.listen_port = self.config['controllers']['builder'].get('listen_port', 8766)
         
+        # Get destination from config
+        if self.config and 'controllers' in self.config:
+            self.builder_config = self.config['controllers'].get('builder', {})
+            self.destination = self.builder_config.get('destination', 'res00')  # Default to res00
+            print(f"\nBuilder config:", self.builder_config)
+            print(f"Destination: {self.destination}")
+        else:
+            print("No builder config found!")
+            
     def _load_config(self):
         """Load controller configurations"""
         config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
@@ -50,168 +52,49 @@ class ReservoirModelBuilder:
             print(f"{i}. {file.name}")
         return csv_files
         
-    def select_reservoir(self):
-        """Select a reservoir node to connect to"""
-        print("\nAvailable reservoir nodes:")
-        reservoirs = [name for name, details in self.config['controllers'].items() 
-                     if name.startswith('res')]
-                     
-        for i, name in enumerate(reservoirs, 1):
-            details = self.config['controllers'][name]
-            print(f"{i}. {name} - {details['description']} ({details['ip']})")
-            
-        while True:
-            try:
-                choice = int(input("\nSelect reservoir (or 0 to cancel): "))
-                if choice == 0:
-                    return None
-                if 1 <= choice <= len(reservoirs):
-                    selected = reservoirs[choice-1]
-                    print(f"\nSelected {selected}")
-                    return selected
-            except ValueError:
-                print("Please enter a valid number")
-                
-    async def connect_to_reservoir(self, reservoir_name):
-        """Establish connection to selected reservoir"""
-        if not reservoir_name in self.config['controllers']:
-            print(f"Error: Unknown reservoir {reservoir_name}")
-            return False
-            
-        self.connected_reservoir = reservoir_name
-        print(f"\nConnected to {reservoir_name}")
-        return True
-        
-    async def listen_for_data(self):
-        """Listen for incoming data from reservoir"""
-        if not self.connected_reservoir:
-            print("Error: Not connected to any reservoir")
-            return
-            
-        reservoir_ip = self.config['controllers'][self.connected_reservoir]['ip']
-        uri = f"ws://{reservoir_ip}:{self.send_port}"
-        
-        print(f"\nListening for data from {self.connected_reservoir}...")
-        self.is_listening = True
-        
-        try:
-            async with websockets.connect(uri) as websocket:
-                while self.is_listening:
-                    try:
-                        message = await websocket.recv()
-                        data = json.loads(message)
-                        if data['type'] == 'reservoir_output':
-                            print(f"\nReceived data from {self.connected_reservoir}")
-                            self.received_data.append(data['data'])
-                            await self.save_output_data()
-                    except websockets.exceptions.ConnectionClosed:
-                        print("Connection closed by reservoir")
-                        break
-                    except Exception as e:
-                        print(f"Error receiving data: {e}")
-                        break
-                        
-        except Exception as e:
-            print(f"Connection error: {e}")
-        finally:
-            self.is_listening = False
-            
-    async def save_output_data(self):
-        """Save received data to timestamped CSV file"""
-        if not self.received_data:
-            return
-            
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"reservoir_output_{self.connected_reservoir}_{timestamp}.csv"
-        output_path = self.output_dir / filename
-        
-        try:
-            df = pd.DataFrame(self.received_data)
-            df.to_csv(output_path, index=False)
-            print(f"\nSaved output to {output_path}")
-        except Exception as e:
-            print(f"Error saving output: {e}")
-            
-    async def start_server(self):
-        """Start WebSocket server to listen for acknowledgments"""
-        try:
-            self.server = await websockets.serve(
-                self.handle_connection,
-                "0.0.0.0",
-                self.listen_port,
-                ping_interval=None
-            )
-            print(f"\nListening for acknowledgments on port {self.listen_port}")
-            
-        except Exception as e:
-            print(f"Error starting server: {e}")
-            
-    async def handle_connection(self, websocket):
-        """Handle incoming acknowledgment messages"""
-        try:
-            async for message in websocket:
-                data = json.loads(message)
-                if data.get('type') == 'ready_signal':
-                    if not self.waiting_for_ack:
-                        print("\nWarning: Received ready signal while not waiting")
-                        # Send rejection response
-                        response = {
-                            'status': 'error',
-                            'message': 'Not waiting for acknowledgment'
-                        }
-                        await websocket.send(json.dumps(response))
-                        continue
-                        
-                    print("\nReceived ready signal from trainer")
-                    self.waiting_for_ack = False
-                    
-                    # Send success response and close connection
-                    response = {
-                        'status': 'success',
-                        'message': 'Acknowledgment received'
-                    }
-                    await websocket.send(json.dumps(response))
-                    break  # Exit the message loop after handling one acknowledgment
-                    
-        except Exception as e:
-            print(f"Error handling connection: {e}")
-            
     async def process_data_file(self, file_path):
-        """Process data from CSV file and send to trainer"""
+        """Process data from CSV file and send to destination"""
         try:
             print(f"\nProcessing file: {file_path}")
             df = pd.read_csv(file_path)
             
-            for index, row in df.iterrows():
-                if self.waiting_for_ack:
-                    print("Still waiting for previous acknowledgment...")
-                    continue
-                    
-                # Extract data
-                data = {
-                    'type': 'movement_data',
-                    'timestamp': row['timestamp'],
-                    'data': {
-                        'pot_values': [row[f'pot_value_{i}'] for i in range(30)],
-                        't_sin': row['t_sin'],
-                        't_cos': row['t_cos']
-                    }
+            # Get second row (index 1)
+            second_row = df.iloc[1]
+            
+            # Extract ROI values
+            roi_values = [second_row[f'roi_1_m{i}'] for i in range(30)]
+            
+            # Create data packet
+            data = {
+                'type': 'movement_data',
+                'timestamp': second_row['timestamp'] if 'timestamp' in second_row else str(datetime.now()),
+                'data': {
+                    'pot_values': roi_values,
+                    't_sin': float(second_row['t_sin']),
+                    't_cos': float(second_row['t_cos'])
                 }
-                
-                # Send to trainer
-                success = await self.send_to_trainer(data)
-                if success:
-                    print("Waiting for trainer acknowledgment...")
-                    # Wait here until we get acknowledgment
+            }
+            
+            # Send to destination
+            success = await self.send_to_destination(data)
+            if success:
+                print(f"\nListening for trainer signal on port {self.listen_port}")
+                # Start listening server
+                async with websockets.serve(
+                    self.handle_connection, 
+                    "0.0.0.0", 
+                    self.listen_port
+                ) as server:
+                    # Wait for acknowledgment
                     while self.waiting_for_ack:
                         await asyncio.sleep(0.1)
-                    print("Received trainer acknowledgment, continuing...")
-                else:
-                    print("Failed to send data to trainer")
-                    break
-                    
+                    print("Received acknowledgment, continuing...")
+            else:
+                print(f"Failed to send data to {self.destination}")
+                
         except Exception as e:
             print(f"Error processing file: {e}")
+            print("Available columns:", df.columns.tolist())
 
     @staticmethod
     def scale_movement_log(raw_movement, min_value, max_value):
@@ -242,16 +125,16 @@ class ReservoirModelBuilder:
             print(f"Error scaling movement value: {e}")
             return 20  # Return minimum value on error
 
-    async def send_to_trainer(self, data):
-        """Send data to trainer and wait for acknowledgment"""
+    async def send_to_destination(self, data):
+        """Send data to configured destination node"""
         try:
-            trainer_config = self.config['controllers'].get('trainer')
-            if not trainer_config:
-                print("Trainer configuration not found!")
+            dest_config = self.config['controllers'].get(self.destination)
+            if not dest_config:
+                print(f"Destination {self.destination} configuration not found!")
                 return False
 
-            uri = f"ws://{trainer_config['ip']}:{trainer_config.get('listen_port', 8765)}"
-            print(f"\nSending to trainer at {uri}")
+            uri = f"ws://{dest_config['ip']}:{dest_config.get('port', 8765)}"
+            print(f"\nSending to {self.destination} at {uri}")
 
             async with websockets.connect(uri) as websocket:
                 # Send the data
@@ -262,15 +145,15 @@ class ReservoirModelBuilder:
                 response_data = json.loads(response)
                 
                 if response_data.get('status') == 'success':
-                    print("Data accepted by trainer")
+                    print(f"Data accepted by {self.destination}")
                     self.waiting_for_ack = True  # Set flag here after successful send
                     return True
                 else:
-                    print(f"Trainer rejected data: {response_data.get('message')}")
+                    print(f"{self.destination} rejected data: {response_data.get('message')}")
                     return False
 
         except Exception as e:
-            print(f"Error sending to trainer: {e}")
+            print(f"Error sending to {self.destination}: {e}")
             return False
 
     async def handle_signal(self, websocket, signal):
@@ -305,53 +188,58 @@ class ReservoirModelBuilder:
                 'message': str(e)
             }))
 
+    async def start(self):
+        """Start by sending first row to destination, then listen for trainer"""
+        try:
+            # First send data to destination
+            success = await self.process_data_file(self.current_file)
+            if not success:
+                print("Failed to send initial data")
+                return
+
+            # Then start listening for trainer signals
+            print(f"\nListening for trainer signals on port {self.listen_port}")
+            async with websockets.serve(
+                self.handle_connection, 
+                "0.0.0.0", 
+                self.listen_port
+            ) as server:
+                await asyncio.Future()  # run forever
+
+        except Exception as e:
+            print(f"Error starting builder: {e}")
+
 async def main():
     builder = ReservoirModelBuilder()
     
     while True:
         print("\nReservoir Model Builder")
         print("----------------------")
-        print("1. Select reservoir node")
-        print("2. Process movement data")
-        print("3. Start listening for output")
-        print("4. Stop listening")
-        print("5. Exit")
+        print("1. Process movement data")
+        print("2. Exit")
         
         choice = input("\nEnter choice: ").strip()
         
         if choice == '1':
-            reservoir = builder.select_reservoir()
-            if reservoir:
-                await builder.connect_to_reservoir(reservoir)
-                
-        elif choice == '2':
-            if not builder.connected_reservoir:
-                print("\nPlease select a reservoir first!")
-                continue
-                
             files = builder.list_available_data()
             if files:
                 try:
-                    file_num = int(input("\nSelect file number: "))
+                    file_num = int(input("\nSelect file number (or 0 to skip): "))
+                    if file_num == 0:
+                        continue
                     if 1 <= file_num <= len(files):
+                        print(f"\nProcessing {files[file_num-1].name}")
+                        print("(Will send data to configured destination:", builder.destination + ")")
                         await builder.process_data_file(files[file_num-1])
                 except ValueError:
                     print("Invalid selection")
                     
-        elif choice == '3':
-            if not builder.connected_reservoir:
-                print("\nPlease select a reservoir first!")
-                continue
-            builder.is_listening = True
-            await builder.listen_for_data()
-            
-        elif choice == '4':
-            builder.is_listening = False
-            print("\nStopped listening")
-            
-        elif choice == '5':
+        elif choice == '2':
             print("\nExiting...")
             break
+            
+        else:
+            print("\nInvalid choice")
 
 if __name__ == "__main__":
     asyncio.run(main()) 

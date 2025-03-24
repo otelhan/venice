@@ -60,6 +60,7 @@ controllers:
     send_port: 8766
   builder:
     description: Reservoir Builder
+    destination: res00
     display:
       enabled: false
       show_camera: false

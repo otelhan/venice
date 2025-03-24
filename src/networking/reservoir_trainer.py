@@ -47,6 +47,8 @@ class ReservoirTrainer:
         os.makedirs(self.model_dir, exist_ok=True)
         self.model = None
         
+        self.processed_timestamps = set()  # Add this to track processed timestamps
+        
     def _load_config(self):
         """Load configuration from YAML"""
         try:
@@ -99,8 +101,18 @@ class ReservoirTrainer:
             if data.get('type') == 'movement_data':
                 print("\nReceived movement data")
                 
+                # Check for duplicate timestamp
+                timestamp = data['timestamp']
+                if timestamp in self.processed_timestamps:
+                    print(f"Already processed data with timestamp: {timestamp}")
+                    response = {
+                        'status': 'success',  # Still return success to avoid retries
+                        'message': 'Data already processed'
+                    }
+                    await websocket.send(json.dumps(response))
+                    return
+                
                 # Save data to CSV
-                timestamp = data['timestamp']  # Use incoming timestamp
                 pot_values = data['data']['pot_values']
                 t_sin = data['data']['t_sin'] 
                 t_cos = data['data']['t_cos']
@@ -113,13 +125,16 @@ class ReservoirTrainer:
                 # Save to CSV
                 self.save_to_csv(timestamp, pot_values, t_sin, t_cos)
                 
+                # Add timestamp to processed set
+                self.processed_timestamps.add(timestamp)
+                
                 # Send acknowledgment back
                 response = {
                     'status': 'success',
                     'message': 'Data processed'
                 }
                 await websocket.send(json.dumps(response))
-
+                
                 # Signal we're ready for next data
                 await self.signal_input_node()
             
