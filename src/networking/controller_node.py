@@ -43,6 +43,10 @@ class ControllerNode(MachineController):
         self.max_incoming_buffer = 6
         self.max_movements_per_message = 30
         
+        # Connection handling
+        self.current_connection = None
+        self.server = None
+        
         # Initialize to IDLE state
         self.transition_to(MachineState.IDLE)
         
@@ -63,74 +67,40 @@ class ControllerNode(MachineController):
                         for elements in range(0,8*6,8)][::-1])
     
     async def start(self):
-        """Start the WebSocket server"""
+        """Start the controller node"""
         try:
-            # Simple server setup - one connection at a time
+            print(f"Controller {self.mac} listening on port {self.port}")
+            
             async with websockets.serve(
-                self._handle_connection, 
-                "0.0.0.0",  # Listen on all interfaces
+                self._handle_connection,
+                "0.0.0.0",
                 self.port,
-                max_size=None,  # No message size limit
-                max_queue=1     # Only queue one connection
+                ping_interval=None
             ) as server:
                 self.server = server
-                print(f"Controller {self.mac} listening on port {self.port}")
                 await asyncio.Future()  # run forever
                 
-        except OSError as e:
-            if e.errno == 48:  # Address already in use
-                print(f"Port {self.port} is already in use. Trying to clean up...")
-                await self.cleanup_port()
-                await self.start()
-            else:
-                raise e
-    
-    async def cleanup_port(self):
-        """Force cleanup of the port"""
-        try:
-            # Create a temporary socket to force port release
-            temp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            temp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            temp_socket.bind(('localhost', self.port))
-            temp_socket.close()
-            await asyncio.sleep(1)  # Give time for OS to release the port
         except Exception as e:
-            print(f"Error cleaning up port: {e}")
-    
-    async def stop(self):
-        """Stop the WebSocket server"""
-        if self.server:
-            self.server.close()
-            await self.server.wait_closed()
-            await self.cleanup_port()
-            print("Controller stopped")
-    
-    async def _handle_connection(self, websocket):
-        """Handle websocket connection"""
-        if self.current_connection is not None:
-            print("Already handling a connection, rejecting new connection")
-            await websocket.close(1013)  # Try to close gracefully
-            return
+            print(f"Error starting controller: {e}")
+            raise
 
-        self.current_connection = websocket
+    async def _handle_connection(self, websocket):
+        """Handle incoming websocket connections"""
         try:
+            # Store current connection
+            self.current_connection = websocket
+            
             async for message in websocket:
-                try:
-                    await self.handle_message(websocket, message)
-                    
-                except Exception as e:
-                    print(f"Error processing message: {e}")
-                    await websocket.send(json.dumps({
-                        "status": "error",
-                        "message": str(e)
-                    }))
+                await self.handle_message(websocket, message)
                 
         except websockets.exceptions.ConnectionClosed:
             print("Connection closed normally")
         except Exception as e:
-            print(f"Connection error: {e}")
+            print(f"Error handling connection: {e}")
         finally:
-            self.current_connection = None  # Clear the connection reference
+            # Clear connection when done
+            if self.current_connection == websocket:
+                self.current_connection = None
     
     async def handle_message(self, websocket, message):
         """Handle incoming messages"""
