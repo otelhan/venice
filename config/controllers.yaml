@@ -54,7 +54,7 @@ controllers:
       enabled: false
     ip: 192.168.1.106
     listen_port: 8765
-    send_port: 8766
+    send_port: 8777
   builder:
     description: Reservoir Builder
     destination: res00
@@ -62,7 +62,7 @@ controllers:
       enabled: false
     ip: 192.168.1.106
     send_port: 8765
-    listen_port: 8766
+    listen_port: 8777
 servo_config:
   controllers:
     main:

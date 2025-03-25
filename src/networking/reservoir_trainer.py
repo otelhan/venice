@@ -417,20 +417,35 @@ class ReservoirTrainer:
                 return False
                 
             uri = f"ws://{builder_config['ip']}:{builder_config['listen_port']}"
-            print(f"\nSending acknowledgement to builder at {uri}")
+            print(f"\nAttempting WebSocket connection:")
+            print(f"URI: {uri}")
+            print(f"Builder IP: {builder_config['ip']}")
+            print(f"Builder port: {builder_config['listen_port']}")
             
-            async with websockets.connect(uri) as websocket:
-                ack = {
-                    'type': 'ack',
-                    'timestamp': timestamp,
-                    'status': 'success'
-                }
-                await websocket.send(json.dumps(ack))
-                print("Acknowledgement sent to builder")
-                return True
+            try:
+                print("Opening WebSocket connection...")
+                async with websockets.connect(uri) as websocket:
+                    print("Connection established!")
+                    ack = {
+                        'type': 'ack',
+                        'timestamp': timestamp,
+                        'status': 'success'
+                    }
+                    print(f"Sending ack: {ack}")
+                    await websocket.send(json.dumps(ack))
+                    print("Acknowledgement sent to builder")
+                    return True
+                    
+            except ConnectionRefusedError:
+                print(f"Connection refused to {uri}")
+                print("The server is listening but actively refused the connection")
+                return False
+            except Exception as e:
+                print(f"Connection error: {type(e).__name__}: {str(e)}")
+                return False
                 
         except Exception as e:
-            print(f"Error sending acknowledgement: {e}")
+            print(f"Error in send_acknowledgement: {e}")
             return False
 
 if __name__ == "__main__":

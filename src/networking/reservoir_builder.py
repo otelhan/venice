@@ -177,21 +177,23 @@ class ReservoirModelBuilder:
 
     async def handle_connection(self, websocket):
         """Handle incoming websocket connections"""
+        print("\nBuilder: Received incoming connection")
         try:
             # Only accept connections when in IDLE state
             if self.current_state != BuilderState.IDLE:
-                print(f"Received connection in wrong state: {self.current_state}")
+                print(f"Builder: Received connection in wrong state: {self.current_state}")
                 await websocket.send(json.dumps({
                     'status': 'error',
                     'message': 'Not ready for acknowledgement'
                 }))
                 return
                 
+            print("Builder: Waiting for message...")
             # Wait for acknowledgement from trainer
             message = await websocket.recv()
             data = json.loads(message)
             
-            print(f"\nReceived from trainer: {data}")
+            print(f"Builder: Received from trainer: {data}")
             
             if data.get('type') == 'ack':
                 # Process acknowledgement and send next row
@@ -280,16 +282,25 @@ class ReservoirModelBuilder:
                 return
 
             # Then start listening for trainer signals
-            print(f"\nListening for trainer signals on port {self.listen_port}")
+            print(f"\nStarting WebSocket server...")
+            print(f"Host: 0.0.0.0 (all interfaces)")
+            print(f"Port: {self.listen_port}")
             
             # Create websocket server that keeps running
-            async with websockets.serve(
-                self.handle_connection, 
-                "0.0.0.0",  # Listen on all interfaces
-                self.listen_port,
-                ping_interval=None  # Disable ping to prevent timeouts
-            ) as server:
-                print(f"Server started on port {self.listen_port}, waiting for acknowledgements...")
+            try:
+                server = await websockets.serve(
+                    self.handle_connection, 
+                    "0.0.0.0",
+                    self.listen_port,
+                    ping_interval=None
+                )
+                
+                print(f"Server started successfully")
+                print(f"Current state: {self.current_state.name}, waiting for acknowledgements...")
+                
+                # Give server time to fully initialize
+                await asyncio.sleep(1)
+                
                 # Keep the server running until all data is sent
                 while True:
                     if self.current_state == BuilderState.IDLE:
@@ -299,6 +310,12 @@ class ReservoirModelBuilder:
                                 print("All data sent, stopping server")
                                 break
                     await asyncio.sleep(0.1)
+                    
+                server.close()
+                await server.wait_closed()
+            except Exception as e:
+                print(f"Error starting WebSocket server: {e}")
+                raise
 
         except Exception as e:
             print(f"Error starting builder: {e}")
