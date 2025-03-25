@@ -318,7 +318,9 @@ class ControllerNode:
                 print(f"Unknown target controller: {target_name}")
                 return False
 
-            uri = f"ws://{target['ip']}:{target.get('port', 8765)}"
+            # Use send_port if target is trainer/builder, otherwise use default port
+            port = target.get('send_port', target.get('port', 8765))
+            uri = f"ws://{target['ip']}:{port}"
             print(f"\nSending to {target_name} at {uri}")
             
             for attempt in range(max_retries):
@@ -338,7 +340,7 @@ class ControllerNode:
                         import socket
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         sock.settimeout(2)
-                        result = sock.connect_ex((target['ip'], target.get('port', 8765)))
+                        result = sock.connect_ex((target['ip'], port))
                         sock.close()
                         
                         if result != 0:

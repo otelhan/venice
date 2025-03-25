@@ -12,9 +12,10 @@ from pathlib import Path
 class TrainerState(Enum):
     IDLE = "IDLE"
     RECEIVING_DATA = "RECEIVING_DATA"
+    PROCESSING_DATA = "PROCESSING_DATA"
+    SENDING_ACK = "SENDING_ACK"
     TRAINING_MODEL = "TRAINING_MODEL"
     SAVING_MODEL = "SAVING_MODEL"
-    SENDING_OUTPUT = "SENDING_OUTPUT"
 
 class ReservoirTrainer:
     def __init__(self):
@@ -25,29 +26,34 @@ class ReservoirTrainer:
         if self.config and 'controllers' in self.config:
             self.trainer_config = self.config['controllers'].get('trainer', {})
             # Get configured ports
-            self.listen_port = self.trainer_config.get('listen_port', 8765)  # Default to 8765
-            self.send_port = self.trainer_config.get('send_port', 8766)      # Default to 8766
+            self.listen_port = self.trainer_config.get('listen_port', 8765)
+            self.send_port = self.trainer_config.get('send_port', 8766)
             print(f"\nTrainer config:", self.trainer_config)
             print(f"Listening on port: {self.listen_port}")
             print(f"Sending on port: {self.send_port}")
+            
+            # Get builder config for acknowledgements
+            builder_config = self.config['controllers'].get('builder')
+            if builder_config:
+                self.builder_ip = builder_config['ip']
+                self.builder_port = builder_config.get('listen_port', 8766)
+            else:
+                print("Warning: No builder configuration found")
         else:
-            self.trainer_config = {}
-            print("No trainer config found!")
+            print("Error: No trainer configuration found!")
+            raise ValueError("Missing trainer configuration")
             
         # Setup data storage
         self.data_dir = os.path.join('data', 'training')
         os.makedirs(self.data_dir, exist_ok=True)
         self.current_file = None
         
-        # Track input node for signaling
-        self.input_node_ip = self.config['controllers']['res00']['ip']
+        self.processed_timestamps = set()  # Track processed timestamps
         
         # Add model directory
         self.model_dir = os.path.join('models')
         os.makedirs(self.model_dir, exist_ok=True)
         self.model = None
-        
-        self.processed_timestamps = set()  # Add this to track processed timestamps
         
     def _load_config(self):
         """Load configuration from YAML"""
@@ -123,7 +129,7 @@ class ReservoirTrainer:
                     self.current_file = os.path.join(self.data_dir, filename)
                     
                 # Save to CSV
-                self.save_to_csv(timestamp, pot_values, t_sin, t_cos)
+                self.save_to_csv(data)
                 
                 # Add timestamp to processed set
                 self.processed_timestamps.add(timestamp)
@@ -231,25 +237,29 @@ class ReservoirTrainer:
             return False
             
     async def start_server(self):
-        """Start WebSocket server to listen for data"""
+        """Start websocket server to receive data"""
         try:
+            self.transition_to(TrainerState.IDLE)  # Start in IDLE state
+            print(f"\nStarting server on port {self.listen_port}")
+            
             async with websockets.serve(
                 self.handle_connection, 
-                "0.0.0.0",
-                self.listen_port,  # Use listen_port
-                ping_interval=None
-            ) as server:
-                print(f"\nTrainer listening on port {self.listen_port}")
-                await asyncio.Future()
+                "0.0.0.0", 
+                self.listen_port
+            ):
+                await asyncio.Future()  # run forever
                 
         except Exception as e:
-            print(f"Server error: {e}")
+            print(f"Error starting server: {e}")
+            self.transition_to(TrainerState.IDLE)
             
     async def handle_connection(self, websocket):
         """Handle incoming WebSocket connections"""
         try:
             async for message in websocket:
                 try:
+                    # Switch to RECEIVING_DATA when getting a message
+                    self.transition_to(TrainerState.RECEIVING_DATA)
                     data = json.loads(message)
                     
                     if data.get('type') == 'movement_data':
@@ -263,16 +273,27 @@ class ReservoirTrainer:
                                 'status': 'error',
                                 'message': 'Invalid data format'
                             }))
+                            self.transition_to(TrainerState.IDLE)
                             continue
-                            
-                        await self.handle_message(websocket, data)
+
+                        # Send success response to the sender
+                        await websocket.send(json.dumps({
+                            'status': 'success',
+                            'message': 'Data received'
+                        }))
                         
-                    else:  # Remove ready_signal handling, only handle movement_data
+                        # Get sender's IP
+                        sender_ip = websocket.remote_address[0]
+                        # Handle the data and send acknowledgement if needed
+                        await self.handle_movement_data(data, source_ip=sender_ip)
+                        
+                    else:
                         print(f"Unexpected message type: {data.get('type')}")
                         await websocket.send(json.dumps({
                             'status': 'error',
                             'message': f"Unexpected message type: {data.get('type')}"
                         }))
+                        self.transition_to(TrainerState.IDLE)
                         
                 except json.JSONDecodeError:
                     print("Error: Invalid JSON format")
@@ -280,51 +301,21 @@ class ReservoirTrainer:
                         'status': 'error',
                         'message': 'Invalid JSON format'
                     }))
-                except Exception as e:
-                    print(f"Error processing message: {e}")
-                    await websocket.send(json.dumps({
-                        'status': 'error',
-                        'message': str(e)
-                    }))
+                    self.transition_to(TrainerState.IDLE)
                     
         except websockets.exceptions.ConnectionClosed:
             print("Connection closed normally")
-            
-    async def run(self):
-        """Main run loop"""
-        while True:
-            print("\nReservoir Trainer")
-            print("----------------")
-            print("1. Start receiving data")
-            print("2. Train model")
-            print("3. Save model")
-            print("4. Exit")
-            
-            choice = input("\nEnter choice: ").strip()
-            
-            if choice == '1':
-                self.current_state = TrainerState.RECEIVING_DATA
-                print("\nStarting data collection...")
-                await self.start_server()
-                
-            elif choice == '2':
-                self.current_state = TrainerState.TRAINING_MODEL
-                await self.train_model()
-                
-            elif choice == '3':
-                self.current_state = TrainerState.SAVING_MODEL
-                await self.save_model()
-                
-            elif choice == '4':
-                print("\nExiting...")
-                break
-                
-            else:
-                print("\nInvalid choice")
+            self.transition_to(TrainerState.IDLE)
 
-    def save_to_csv(self, timestamp, pot_values, t_sin, t_cos):
-        """Save received data to CSV file"""
+    def save_to_csv(self, data):
+        """Save received data to CSV"""
         try:
+            # Extract data from the message
+            timestamp = data.get('timestamp')
+            pot_values = data['data']['pot_values']
+            t_sin = data['data']['t_sin']
+            t_cos = data['data']['t_cos']
+            
             # Create row data dictionary
             row_data = {
                 'timestamp': timestamp,
@@ -344,9 +335,113 @@ class ReservoirTrainer:
             df.to_csv(self.current_file, mode='a', header=False, index=False)
             print(f"Data saved to {self.current_file}")
             
+            # Mark timestamp as processed
+            self.processed_timestamps.add(timestamp)
+            
         except Exception as e:
             print(f"Error saving to CSV: {e}")
             raise
+
+    async def handle_movement_data(self, data, source_ip=None):
+        """Handle incoming movement data from any source"""
+        max_retries = 3
+        retry_delay = 2  # seconds between retries
+        
+        try:
+            # Switch to processing state
+            self.transition_to(TrainerState.PROCESSING_DATA)
+            
+            # Check if we've already processed this data
+            timestamp = data.get('timestamp')
+            if timestamp in self.processed_timestamps:
+                print(f"Already processed data with timestamp: {timestamp}")
+                self.transition_to(TrainerState.IDLE)  # Return to IDLE if already processed
+                return
+            
+            # Save to CSV
+            self.save_to_csv(data)
+            
+            # Only send acknowledgement if data came from builder
+            if source_ip == self.builder_ip:
+                self.transition_to(TrainerState.SENDING_ACK)
+                print("\nWaiting 10 seconds before sending acknowledgement...")
+                for i in range(10, 0, -1):
+                    print(f"Sending acknowledgement in {i} seconds...", end='\r')
+                    await asyncio.sleep(1)
+                print("\nSending acknowledgement now")
+                
+                # Signal builder to send next row with retries
+                uri = f"ws://{self.builder_ip}:{self.builder_port}"
+                success = False
+                
+                for attempt in range(max_retries):
+                    try:
+                        print(f"\nSignaling builder at {uri} (attempt {attempt + 1}/{max_retries})")
+                        async with websockets.connect(uri) as websocket:
+                            await websocket.send(json.dumps({
+                                'type': 'ack',
+                                'status': 'success'
+                            }))
+                            response = await websocket.recv()
+                            print(f"Builder response: {response}")
+                            success = True
+                            break  # Success, exit retry loop
+                            
+                    except Exception as e:
+                        print(f"Error on attempt {attempt + 1}: {e}")
+                        if attempt < max_retries - 1:  # Don't delay after last attempt
+                            print(f"Retrying in {retry_delay} seconds...")
+                            for i in range(retry_delay, 0, -1):
+                                print(f"Next attempt in {i} seconds...", end='\r')
+                                await asyncio.sleep(1)
+                            print("\nRetrying...")
+                
+                if not success:
+                    print("\nFailed to send acknowledgement after all retries")
+            
+            # Always return to IDLE after processing/sending
+            self.transition_to(TrainerState.IDLE)
+                    
+        except Exception as e:
+            print(f"Error handling movement data: {e}")
+            self.transition_to(TrainerState.IDLE)  # Return to IDLE on error
+            raise
+
+    def transition_to(self, new_state):
+        """Transition to a new state"""
+        print(f"\nTrainer transitioning from {self.current_state.name} to {new_state.name}")
+        self.current_state = new_state
+
+    async def run(self):
+        """Main run loop"""
+        while True:
+            print("\nReservoir Trainer")
+            print("----------------")
+            print("1. Start receiving data")
+            print("2. Train model")
+            print("3. Save model")
+            print("4. Exit")
+            
+            choice = input("\nEnter choice: ").strip()
+            
+            if choice == '1':
+                print("\nStarting data collection...")
+                await self.start_server()
+                
+            elif choice == '2':
+                self.transition_to(TrainerState.TRAINING_MODEL)
+                await self.train_model()
+                
+            elif choice == '3':
+                self.transition_to(TrainerState.SAVING_MODEL)
+                await self.save_model()
+                
+            elif choice == '4':
+                print("\nExiting...")
+                break
+                
+            else:
+                print("\nInvalid choice")
 
 if __name__ == "__main__":
     trainer = ReservoirTrainer()

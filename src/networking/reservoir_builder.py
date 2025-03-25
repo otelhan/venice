@@ -58,63 +58,53 @@ class ReservoirModelBuilder:
             print(f"{i}. {file.name}")
         return csv_files
         
-    async def process_data_file(self, file_path):
-        """Process data from CSV file and send to destination"""
+    async def process_data_file(self, file):
+        """Process a data file"""
         try:
-            print(f"\nProcessing file: {file_path}")
-            df = pd.read_csv(file_path)
+            print(f"\nProcessing {file.name}")
+            self.current_file = file
             
-            # Process each row starting from second row (index 1)
-            for index in range(1, len(df)):
-                row = df.iloc[index]
+            # Read first row
+            df = pd.read_csv(file)
+            if df.empty:
+                print("File is empty")
+                return False
                 
-                # Extract ROI values
-                roi_values = [row[f'roi_1_m{i}'] for i in range(30)]
-                
-                # Create data packet
-                data = {
-                    'type': 'movement_data',
-                    'timestamp': row['timestamp'] if 'timestamp' in row else str(datetime.now()),
-                    'data': {
-                        'pot_values': roi_values,
-                        't_sin': float(row['t_sin']),
-                        't_cos': float(row['t_cos'])
-                    }
+            # Send first row to destination
+            self.transition_to(BuilderState.SENDING_DATA)
+            first_row = df.iloc[0]
+            
+            # Extract ROI values and create data packet
+            roi_values = [first_row[f'roi_1_m{i}'] for i in range(30)]
+            data = {
+                'type': 'movement_data',
+                'timestamp': first_row['timestamp'] if 'timestamp' in first_row else str(datetime.now()),
+                'data': {
+                    'pot_values': roi_values,
+                    't_sin': float(first_row['t_sin']),
+                    't_cos': float(first_row['t_cos'])
                 }
+            }
+            
+            # Send to destination
+            success = await self.send_to_destination(data)
+            
+            # Always transition to IDLE to wait for acknowledgement
+            self.transition_to(BuilderState.IDLE)
+            
+            if success:
+                print("First row sent successfully")
+                print("Waiting for acknowledgement...")
+                return True
+            else:
+                print("Failed to send first row")
+                return False
                 
-                print(f"\nProcessing row {index} of {len(df)-1}")
-                
-                # Send to destination
-                self.transition_to(BuilderState.SENDING_DATA)
-                success = await self.send_to_destination(data)
-                
-                # Return to IDLE and wait for ready signal
-                self.transition_to(BuilderState.IDLE)
-                
-                if success:
-                    print(f"\nStarting listener on port {self.listen_port}")
-                    server = await websockets.serve(
-                        self.handle_connection, 
-                        "0.0.0.0", 
-                        self.listen_port
-                    )
-                    
-                    print("Waiting for trainer acknowledgment...")
-                    while self.waiting_for_ack:
-                        await asyncio.sleep(0.1)
-                    print("Received acknowledgment, continuing...")
-                    
-                    # Close server after acknowledgment
-                    server.close()
-                    await server.wait_closed()
-                else:
-                    print(f"Failed to send data to {self.destination}")
-                    break  # Stop if send fails
-                    
         except Exception as e:
             print(f"Error processing file: {e}")
             print("Available columns:", df.columns.tolist())
             self.transition_to(BuilderState.IDLE)
+            return False
 
     @staticmethod
     def scale_movement_log(raw_movement, min_value, max_value):
@@ -146,32 +136,50 @@ class ReservoirModelBuilder:
             return 20  # Return minimum value on error
 
     async def send_to_destination(self, data):
-        """Send data to configured destination node"""
+        """Send data to destination controller"""
+        max_retries = 3
+        retry_delay = 2  # seconds between retries
+        
         try:
-            dest_config = self.config['controllers'].get(self.destination)
-            if not dest_config:
-                print(f"Destination {self.destination} configuration not found!")
+            target = self.config['controllers'].get(self.destination)
+            if not target:
+                print(f"Unknown destination: {self.destination}")
                 return False
 
-            uri = f"ws://{dest_config['ip']}:{dest_config.get('port', 8765)}"
-            print(f"\nSending to {self.destination} at {uri}")
-
-            async with websockets.connect(uri) as websocket:
-                # Send the data
-                await websocket.send(json.dumps(data))
-                
-                # Wait for response
-                response = await websocket.recv()
-                response_data = json.loads(response)
-                
-                if response_data.get('status') == 'success':
-                    print(f"Data accepted by {self.destination}")
-                    self.waiting_for_ack = True  # Set flag here after successful send
-                    return True
-                else:
-                    print(f"{self.destination} rejected data: {response_data.get('message')}")
-                    return False
-
+            uri = f"ws://{target['ip']}:{target.get('port', 8765)}"
+            
+            # Print the data being sent
+            print("\nSending data packet:")
+            print(json.dumps(data, indent=2))
+            
+            for attempt in range(max_retries):
+                try:
+                    print(f"\nSending to {self.destination} at {uri} (attempt {attempt + 1}/{max_retries})")
+                    
+                    async with websockets.connect(uri) as websocket:
+                        await websocket.send(json.dumps(data))
+                        response = await websocket.recv()
+                        response_data = json.loads(response)
+                        
+                        if response_data.get('status') == 'success':
+                            print(f"Data accepted by {self.destination}")
+                            return True
+                        else:
+                            print(f"Error from {self.destination}:", response_data.get('message'))
+                            
+                except Exception as e:
+                    print(f"Error on attempt {attempt + 1}: {e}")
+                    
+                if attempt < max_retries - 1:  # Don't delay after last attempt
+                    print(f"Retrying in {retry_delay} seconds...")
+                    for i in range(retry_delay, 0, -1):
+                        print(f"Next attempt in {i} seconds...", end='\r')
+                        await asyncio.sleep(1)
+                    print("\nRetrying...")
+            
+            print(f"Failed to send after {max_retries} attempts")
+            return False
+                    
         except Exception as e:
             print(f"Error sending to {self.destination}: {e}")
             return False
@@ -179,23 +187,97 @@ class ReservoirModelBuilder:
     async def handle_connection(self, websocket):
         """Handle incoming websocket connections"""
         try:
-            async for message in websocket:
-                data = json.loads(message)
-                if data.get('type') == 'ready_signal':
-                    print("Received ready signal from trainer")
-                    self.waiting_for_ack = False
-                    await websocket.send(json.dumps({
-                        'status': 'success',
-                        'message': 'Ready signal received'
-                    }))
-                else:
-                    print(f"Unexpected message type: {data.get('type')}")
-                    await websocket.send(json.dumps({
-                        'status': 'error',
-                        'message': 'Invalid message type'
-                    }))
+            # Only accept connections when in IDLE state
+            if self.current_state != BuilderState.IDLE:
+                print(f"Received connection in wrong state: {self.current_state}")
+                await websocket.send(json.dumps({
+                    'status': 'error',
+                    'message': 'Not ready for acknowledgement'
+                }))
+                return
+                
+            # Wait for acknowledgement from trainer
+            message = await websocket.recv()
+            data = json.loads(message)
+            
+            print(f"\nReceived from trainer: {data}")
+            
+            if data.get('type') == 'ack':
+                # Process acknowledgement and send next row
+                await self.send_next_row()
+                await websocket.send(json.dumps({'status': 'ok'}))
+            else:
+                await websocket.send(json.dumps({
+                    'status': 'error',
+                    'message': 'Expected acknowledgement'
+                }))
+                
         except Exception as e:
             print(f"Error handling connection: {e}")
+            try:
+                await websocket.send(json.dumps({
+                    'status': 'error',
+                    'message': str(e)
+                }))
+            except:
+                pass
+
+    async def send_next_row(self):
+        """Send next row after acknowledgement"""
+        try:
+            if not self.current_file:
+                print("No file being processed")
+                return False
+
+            # Read current file
+            df = pd.read_csv(self.current_file)
+            
+            # Get current row index from state
+            current_index = getattr(self, 'current_row_index', 0)
+            next_index = current_index + 1
+
+            if next_index >= len(df):
+                print("Reached end of file")
+                return False
+
+            # Get next row
+            row = df.iloc[next_index]
+            
+            # Extract ROI values and create data packet
+            roi_values = [row[f'roi_1_m{i}'] for i in range(30)]
+            data = {
+                'type': 'movement_data',
+                'timestamp': row['timestamp'] if 'timestamp' in row else str(datetime.now()),
+                'data': {
+                    'pot_values': roi_values,
+                    't_sin': float(row['t_sin']),
+                    't_cos': float(row['t_cos'])
+                }
+            }
+
+            print("\nSending next row...")
+            # Switch to sending state
+            self.transition_to(BuilderState.SENDING_DATA)
+            
+            # Send to destination
+            success = await self.send_to_destination(data)
+            
+            print("Switching to IDLE to wait for acknowledgement...")
+            # Always return to IDLE after sending
+            self.transition_to(BuilderState.IDLE)
+            
+            if success:
+                print(f"Sent row {next_index} of {len(df)-1}")
+                self.current_row_index = next_index  # Update index after successful send
+                return True
+            else:
+                print("Failed to send next row")
+                return False
+
+        except Exception as e:
+            print(f"Error processing next row: {e}")
+            self.transition_to(BuilderState.IDLE)
+            return False
 
     async def start(self):
         """Start by sending first row to destination, then listen for trainer"""
@@ -208,15 +290,30 @@ class ReservoirModelBuilder:
 
             # Then start listening for trainer signals
             print(f"\nListening for trainer signals on port {self.listen_port}")
+            
+            # Create websocket server that keeps running
             async with websockets.serve(
                 self.handle_connection, 
-                "0.0.0.0", 
-                self.listen_port
+                "0.0.0.0",  # Listen on all interfaces
+                self.listen_port,
+                ping_interval=None  # Disable ping to prevent timeouts
             ) as server:
-                await asyncio.Future()  # run forever
+                print(f"Server started on port {self.listen_port}, waiting for acknowledgements...")
+                # Keep the server running until all data is sent
+                while True:
+                    if self.current_state == BuilderState.IDLE:
+                        if hasattr(self, 'current_row_index'):
+                            df = pd.read_csv(self.current_file)
+                            if self.current_row_index >= len(df) - 1:
+                                print("All data sent, stopping server")
+                                break
+                    await asyncio.sleep(0.1)
 
         except Exception as e:
             print(f"Error starting builder: {e}")
+            print(f"Exception details: {type(e).__name__}")  # Add more error details
+            import traceback
+            traceback.print_exc()
 
     def transition_to(self, new_state):
         """Transition to a new state"""

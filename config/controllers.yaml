@@ -52,23 +52,17 @@ controllers:
     destination: builder
     display:
       enabled: false
-      show_camera: false
-      show_plots: false
     ip: 192.168.1.106
-    mac: a4:cf:99:57:e6:d2
-    listen_port: 8765
     send_port: 8766
+    listen_port: 8765
   builder:
     description: Reservoir Builder
-    destination: res00
+    destination: trainer
     display:
       enabled: false
-      show_camera: false
-      show_plots: false
     ip: 192.168.1.106
-    port: 8765
+    send_port: 8765
     listen_port: 8766
-    mac: a4:cf:99:57:e6:d2
 servo_config:
   controllers:
     main:
