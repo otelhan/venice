@@ -48,26 +48,25 @@ class MachineController:
     async def handle_current_state(self):
         """Handle the current state"""
         try:
-            if self.current_state == MachineState.DRIVE_WAVEMAKER:
-                if self.movement_buffer and self.serial:
-                    print(f"Movement buffer size: {len(self.movement_buffer)}")
-                    self.state_handler.movement_buffer = self.movement_buffer
-                    self.state_handler.serial = self.serial
-                    next_state = self.state_handler.drive_wavemaker()
-                    if next_state:
-                        print("Transitioning to SEND_DATA")
-                        if hasattr(self, 'node'):
-                            self.node.clear_incoming_buffer()
-                        self.transition_to(MachineState.SEND_DATA)
-                        self.send_retries = 0
-                        await self.handle_current_state()
-                
-            elif self.current_state == MachineState.SEND_DATA:
-                await self.state_handler.send_data()
-            elif self.current_state == MachineState.IDLE:
+            if self.current_state == MachineState.IDLE:
                 await self.state_handler.idle()
-            # ... other states ...
-            
+                
+            elif self.current_state == MachineState.COLLECT_SIGNAL:
+                command = self.state_handler.collect_signal()
+                if command:
+                    await self.execute_command(command)
+                    
+            elif self.current_state == MachineState.DRIVE_WAVEMAKER:
+                if self.state_handler.drive_wavemaker():
+                    self.transition_to(MachineState.SEND_DATA)
+                    
+            elif self.current_state == MachineState.SEND_DATA:
+                # Call send_data directly on the controller instead of state_handler
+                await self.send_data()
+                
+            else:
+                print(f"Unhandled state: {self.current_state}")
+                
         except Exception as e:
             print(f"Error handling state {self.current_state}: {e}")
             self.transition_to(MachineState.IDLE)
