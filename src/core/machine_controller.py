@@ -116,12 +116,38 @@ class MachineController:
     async def send_data(self):
         """Send data to destination"""
         try:
-            # Should use send_to_destination instead of send_data_to
-            if hasattr(self, 'send_to_destination'):
-                await self.send_to_destination(self.outgoing_buffer)
-            else:
-                print("Error: send_to_destination method not found")
+            # Get destination from config
+            destination = self.config.get('destination')
+            if not destination:
+                print("No destination configured!")
                 self.transition_to(MachineState.IDLE)
+                return
+                
+            # Create data packet
+            data = {
+                'type': 'movement_data',
+                'timestamp': self.state_handler.outgoing_buffer['timestamp'],
+                'data': {
+                    'pot_values': self.movement_buffer,
+                    't_sin': self.state_handler.outgoing_buffer['t_sin'],
+                    't_cos': self.state_handler.outgoing_buffer['t_cos']
+                }
+            }
+            
+            # Try to send using send_to_destination if available
+            if hasattr(self, 'send_to_destination'):
+                success = await self.send_to_destination(data)
+            # Fallback to send_data_to
+            elif hasattr(self, 'send_data_to'):
+                success = await self.send_data_to(destination, data)
+            else:
+                print("Error: No send method available")
+                success = False
+                
+            if not success:
+                print("Failed to send data")
+                
+            self.transition_to(MachineState.IDLE)
                 
         except Exception as e:
             print(f"Error in send_data: {e}")
