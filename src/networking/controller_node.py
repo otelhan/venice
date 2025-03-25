@@ -306,86 +306,43 @@ class ControllerNode:
             print(f"Error in execute_command: {e}")
             return False
 
-    async def send_data_to(self, target_name, data):
-        """Send data to another controller"""
-        max_retries = 3
-        send_delay = 30  # Always wait 30 seconds between sends
-        connection_timeout = 15  # connection timeout
-        
+    async def send_to_destination(self, data):
+        """Send data to destination"""
         try:
-            target = self.config['controllers'].get(target_name)
+            target = self.config['controllers'].get(self.destination)
             if not target:
-                print(f"Unknown target controller: {target_name}")
+                print(f"Unknown destination: {self.destination}")
                 return False
-
-            # Use send_port if target is trainer/builder, otherwise use default port
-            port = target.get('send_port', target.get('port', 8765))
+                
+            # Always use port 8765 for controller communication
+            port = 8765  # Force use of standard port for all controller communication
             uri = f"ws://{target['ip']}:{port}"
-            print(f"\nSending to {target_name} at {uri}")
             
-            for attempt in range(max_retries):
+            print(f"\nSending to {self.destination} at {uri}")
+            
+            for attempt in range(self.max_retries):
                 try:
-                    if attempt > 0:
-                        print(f"\nWaiting before next attempt...")
-                        for remaining in range(send_delay, 0, -1):
-                            print(f"Next attempt in {remaining} seconds...", end='\r')
-                            await asyncio.sleep(1)
-                        print("\nAttempting to send...")
-                    
-                    print(f"\nSending to {target_name} at {uri}")
-                    print(f"Connecting to {target_name} (attempt {attempt + 1}/{max_retries})")
-                    
-                    # First check if target is reachable
-                    try:
-                        import socket
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(2)
-                        result = sock.connect_ex((target['ip'], port))
-                        sock.close()
-                        
-                        if result != 0:
-                            print(f"Target {target_name} is not reachable")
-                            continue
-                    except Exception as e:
-                        print(f"Network error checking {target_name}: {e}")
-                        continue
-
-                    # Try to connect and send data
-                    async with await asyncio.wait_for(
-                        websockets.connect(uri), 
-                        timeout=connection_timeout
-                    ) as websocket:
-                        print(f"Connected to {target_name}, sending data...")
+                    print(f"Connecting to {self.destination} (attempt {attempt + 1}/{self.max_retries})")
+                    async with websockets.connect(uri) as websocket:
                         await websocket.send(json.dumps(data))
                         response = await websocket.recv()
                         response_data = json.loads(response)
                         
-                        if response_data.get('status') == 'busy':
-                            print(f"{target_name} is busy, will retry after delay")
-                            continue
+                        if response_data.get('status') == 'success':
+                            print(f"Data accepted by {self.destination}")
+                            return True
+                        else:
+                            print(f"Error from {self.destination}:", response_data.get('message'))
                             
-                        print(f"Response from {target_name}: {response}")
-                        
-                        # After successful send, wait 30 seconds before returning
-                        print("\nWaiting before next data packet...")
-                        for remaining in range(send_delay, 0, -1):
-                            print(f"Next packet in {remaining} seconds...", end='\r')
-                            await asyncio.sleep(1)
-                        print("\nReady for next packet")
-                        return True
-                        
-                except asyncio.TimeoutError:
-                    print(f"Connection timeout to {target_name}")
-                except websockets.exceptions.ConnectionClosed:
-                    print(f"Connection closed by {target_name}")
                 except Exception as e:
-                    print(f"Error connecting to {target_name}: {e}")
-            
-            print(f"Failed to send to {target_name} after {max_retries} attempts")
+                    print(f"Target {self.destination} is not reachable")
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(1)
+                        
             return False
-
+                    
         except Exception as e:
-            print(f"Error in send_data_to: {e}")
+            print(f"Error sending to {self.destination}: {e}")
             return False
 
     async def handle_current_state(self):
