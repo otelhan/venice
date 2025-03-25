@@ -57,11 +57,17 @@ class MachineController:
                     await self.execute_command(command)
                     
             elif self.current_state == MachineState.DRIVE_WAVEMAKER:
-                if self.state_handler.drive_wavemaker():
-                    self.transition_to(MachineState.SEND_DATA)
+                # Pass the serial connection and movement buffer to state handler
+                if self.movement_buffer and self.serial:
+                    self.state_handler.movement_buffer = self.movement_buffer
+                    self.state_handler.serial = self.serial
+                    if self.state_handler.drive_wavemaker():
+                        self.transition_to(MachineState.SEND_DATA)
+                else:
+                    print("ERROR: Missing movement buffer or serial connection")
+                    self.transition_to(MachineState.IDLE)
                     
             elif self.current_state == MachineState.SEND_DATA:
-                # Call send_data directly on the controller instead of state_handler
                 await self.send_data()
                 
             else:

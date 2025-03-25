@@ -152,7 +152,7 @@ class StateHandler:
 
     def drive_wavemaker(self):
         """Drive the wavemaker with pot values and collect energy"""
-        if not self.serial:
+        if not hasattr(self, 'serial') or not self.serial:
             print("ERROR: No serial connection to KB2040")
             return True
         
