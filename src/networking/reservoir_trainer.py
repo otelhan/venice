@@ -344,11 +344,10 @@ class ReservoirTrainer:
 
     async def handle_movement_data(self, data, source_ip=None):
         """Handle incoming movement data from any source"""
-        max_retries = 3
-        retry_delay = 2  # seconds between retries
-        
         try:
-            # Switch to processing state
+            self.transition_to(TrainerState.RECEIVING_DATA)
+            
+            # Process the data
             self.transition_to(TrainerState.PROCESSING_DATA)
             
             # Check if we've already processed this data
@@ -361,50 +360,16 @@ class ReservoirTrainer:
             # Save to CSV
             self.save_to_csv(data)
             
-            # Only send acknowledgement if data came from builder
-            if source_ip == self.builder_ip:
-                self.transition_to(TrainerState.SENDING_ACK)
-                print("\nWaiting 10 seconds before sending acknowledgement...")
-                for i in range(10, 0, -1):
-                    print(f"Sending acknowledgement in {i} seconds...", end='\r')
-                    await asyncio.sleep(1)
-                print("\nSending acknowledgement now")
-                
-                # Signal builder to send next row with retries
-                uri = f"ws://{self.builder_ip}:{self.builder_port}"
-                success = False
-                
-                for attempt in range(max_retries):
-                    try:
-                        print(f"\nSignaling builder at {uri} (attempt {attempt + 1}/{max_retries})")
-                        async with websockets.connect(uri) as websocket:
-                            await websocket.send(json.dumps({
-                                'type': 'ack',
-                                'status': 'success'
-                            }))
-                            response = await websocket.recv()
-                            print(f"Builder response: {response}")
-                            success = True
-                            break  # Success, exit retry loop
-                            
-                    except Exception as e:
-                        print(f"Error on attempt {attempt + 1}: {e}")
-                        if attempt < max_retries - 1:  # Don't delay after last attempt
-                            print(f"Retrying in {retry_delay} seconds...")
-                            for i in range(retry_delay, 0, -1):
-                                print(f"Next attempt in {i} seconds...", end='\r')
-                                await asyncio.sleep(1)
-                            print("\nRetrying...")
-                
-                if not success:
-                    print("\nFailed to send acknowledgement after all retries")
+            # Send acknowledgement back to builder
+            self.transition_to(TrainerState.SENDING_ACK)
+            await self.send_acknowledgement(timestamp)
             
-            # Always return to IDLE after processing/sending
+            # Return to IDLE
             self.transition_to(TrainerState.IDLE)
-                    
+            
         except Exception as e:
             print(f"Error handling movement data: {e}")
-            self.transition_to(TrainerState.IDLE)  # Return to IDLE on error
+            self.transition_to(TrainerState.IDLE)
             raise
 
     def transition_to(self, new_state):
@@ -442,6 +407,31 @@ class ReservoirTrainer:
                 
             else:
                 print("\nInvalid choice")
+
+    async def send_acknowledgement(self, timestamp):
+        """Send acknowledgement back to builder"""
+        try:
+            builder_config = self.config['controllers'].get('builder')
+            if not builder_config:
+                print("No builder configuration found")
+                return False
+                
+            uri = f"ws://{builder_config['ip']}:{builder_config['listen_port']}"
+            print(f"\nSending acknowledgement to builder at {uri}")
+            
+            async with websockets.connect(uri) as websocket:
+                ack = {
+                    'type': 'ack',
+                    'timestamp': timestamp,
+                    'status': 'success'
+                }
+                await websocket.send(json.dumps(ack))
+                print("Acknowledgement sent to builder")
+                return True
+                
+        except Exception as e:
+            print(f"Error sending acknowledgement: {e}")
+            return False
 
 if __name__ == "__main__":
     trainer = ReservoirTrainer()
