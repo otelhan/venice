@@ -13,9 +13,39 @@ from src.core.config_handler import ConfigHandler
 from datetime import datetime
 
 class ControllerNode(MachineController):
-    def __init__(self, config=None, full_config=None):
-        super().__init__(config, full_config)
-        self.destination = config.get('destination') if config else None
+    def __init__(self, controller_name, port=8765):
+        # Load config first
+        self.config = self._load_config()
+        
+        # Get controller-specific config
+        if self.config and 'controllers' in self.config:
+            self.controller_config = self.config['controllers'].get(controller_name, {})
+            self.destination = self.controller_config.get('destination')
+            print(f"\nController Details:")
+            print(f"Name: {controller_name}")
+            print(f"Destination: {self.destination}")
+            print(f"Config: {self.controller_config}")
+        else:
+            print("No controller config found!")
+            self.controller_config = {}
+            
+        # Initialize parent with proper config
+        super().__init__(config=self.controller_config, full_config=self.config)
+        
+        # Controller node specific initialization
+        self.controller_name = controller_name
+        self.port = port
+        self.mac = self.controller_config.get('mac', self._get_mac())
+        self.ip = self.controller_config.get('ip', 'localhost')
+        
+        # Initialize buffers
+        self.incoming_buffer = []
+        self.max_incoming_buffer = 6
+        self.max_movements_per_message = 30
+        
+        # Initialize to IDLE state
+        self.transition_to(MachineState.IDLE)
+        
         self.max_retries = 3
 
     def _load_config(self):
