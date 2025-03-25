@@ -108,55 +108,8 @@ class MachineController:
 
     async def send_data_to(self, target_name, data):
         """Send data to another controller"""
-        max_retries = 3
-        send_delay = 30  # Always wait 30 seconds between sends
-        connection_timeout = 15  # connection timeout
-        
-        try:
-            target = self.full_config['controllers'].get(target_name)
-            if not target:
-                print(f"Unknown target controller: {target_name}")
-                return False
-
-            uri = f"ws://{target['ip']}:{target.get('port', 8765)}"
-            print(f"\nSending to {target_name} at {uri}")
-            
-            for attempt in range(max_retries):
-                try:
-                    if attempt > 0:
-                        print(f"\nWaiting {send_delay} seconds before next attempt...")
-                        for remaining in range(send_delay, 0, -1):
-                            print(f"Next attempt in {remaining} seconds...", end='\r')
-                            await asyncio.sleep(1)
-                        print("\nAttempting to send...")
-                    
-                    # Try to connect and send data
-                    async with await asyncio.wait_for(
-                        websockets.connect(uri), 
-                        timeout=connection_timeout
-                    ) as websocket:
-                        print(f"Connected to {target_name}, sending data...")
-                        await websocket.send(json.dumps(data))
-                        response = await websocket.recv()
-                        response_data = json.loads(response)
-                        
-                        if response_data.get('status') == 'busy':
-                            print(f"{target_name} is busy, will retry after delay")
-                            continue
-                            
-                        print(f"Response from {target_name}: {response}")
-                        return True
-                        
-                except asyncio.TimeoutError:
-                    print(f"Connection timeout to {target_name}")
-                except websockets.exceptions.ConnectionClosed:
-                    print(f"Connection closed by {target_name}")
-                except Exception as e:
-                    print(f"Error connecting to {target_name}: {e}")
-            
-            print(f"Failed to send to {target_name} after {max_retries} attempts")
-            return False
-
-        except Exception as e:
-            print(f"Error in send_data_to: {e}")
+        if hasattr(self, 'node'):
+            return await self.node.send_data_to(target_name, data)
+        else:
+            print("Error: No node reference found")
             return False

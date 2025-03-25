@@ -319,6 +319,7 @@ class ControllerNode:
                 return False
 
             uri = f"ws://{target['ip']}:{target.get('port', 8765)}"
+            print(f"\nSending to {target_name} at {uri}")
             
             for attempt in range(max_retries):
                 try:
