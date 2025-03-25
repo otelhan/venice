@@ -268,7 +268,12 @@ class ControllerNode(MachineController):
     async def send_to_destination(self, data):
         """Send data to destination"""
         try:
-            target = self.config['controllers'].get(self.destination)
+            # Get target config from full_config, not config
+            if not self.full_config or 'controllers' not in self.full_config:
+                print("No valid configuration found")
+                return False
+                
+            target = self.full_config['controllers'].get(self.destination)
             if not target:
                 print(f"Unknown destination: {self.destination}")
                 return False
