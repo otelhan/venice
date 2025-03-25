@@ -53,8 +53,8 @@ controllers:
     display:
       enabled: false
     ip: 192.168.1.106
-    send_port: 8766
     listen_port: 8765
+    send_port: 8766
   builder:
     description: Reservoir Builder
     destination: res00
