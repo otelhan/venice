@@ -152,33 +152,24 @@ class ReservoirModelBuilder:
             print("\nSending data packet:")
             print(json.dumps(data, indent=2))
             
-            for attempt in range(max_retries):
-                try:
-                    print(f"\nSending to {self.destination} at {uri} (attempt {attempt + 1}/{max_retries})")
+            # Only try once and return result - don't retry
+            try:
+                print(f"\nSending to {self.destination} at {uri}")
+                async with websockets.connect(uri) as websocket:
+                    await websocket.send(json.dumps(data))
+                    response = await websocket.recv()
+                    response_data = json.loads(response)
                     
-                    async with websockets.connect(uri) as websocket:
-                        await websocket.send(json.dumps(data))
-                        response = await websocket.recv()
-                        response_data = json.loads(response)
+                    if response_data.get('status') == 'success':
+                        print(f"Data accepted by {self.destination}")
+                        return True
+                    else:
+                        print(f"Error from {self.destination}:", response_data.get('message'))
+                        return False
                         
-                        if response_data.get('status') == 'success':
-                            print(f"Data accepted by {self.destination}")
-                            return True
-                        else:
-                            print(f"Error from {self.destination}:", response_data.get('message'))
-                            
-                except Exception as e:
-                    print(f"Error on attempt {attempt + 1}: {e}")
-                    
-                if attempt < max_retries - 1:  # Don't delay after last attempt
-                    print(f"Retrying in {retry_delay} seconds...")
-                    for i in range(retry_delay, 0, -1):
-                        print(f"Next attempt in {i} seconds...", end='\r')
-                        await asyncio.sleep(1)
-                    print("\nRetrying...")
-            
-            print(f"Failed to send after {max_retries} attempts")
-            return False
+            except Exception as e:
+                print(f"Error sending data: {e}")
+                return False
                     
         except Exception as e:
             print(f"Error sending to {self.destination}: {e}")
