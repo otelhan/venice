@@ -352,44 +352,32 @@ class ControllerNode:
         if self.current_state == MachineState.SEND_DATA:
             try:
                 # Get destination from config
-                destination = self.config.get('destination')
-                if not destination:
+                if not self.destination:
                     print("No destination configured!")
                     return
-                
-                # Get destination details
-                dest_config = self.config_handler.config['controllers'].get(destination)
-                if not dest_config:
-                    print(f"Configuration not found for {destination}")
-                    return
-                
-                uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-                print(f"\nSending to {destination} at {uri}")
-                
-                async with websockets.connect(uri) as websocket:
-                    # Send data
-                    data = {
-                        'type': 'movement_data',
-                        'timestamp': self.state_handler.outgoing_buffer['timestamp'],
-                        'data': {
-                            'pot_values': self.movement_buffer,
-                            't_sin': self.state_handler.outgoing_buffer['t_sin'],
-                            't_cos': self.state_handler.outgoing_buffer['t_cos']
-                        }
+                    
+                # Create data packet
+                data = {
+                    'type': 'movement_data',
+                    'timestamp': self.state_handler.outgoing_buffer['timestamp'],
+                    'data': {
+                        'pot_values': self.movement_buffer,
+                        't_sin': self.state_handler.outgoing_buffer['t_sin'],
+                        't_cos': self.state_handler.outgoing_buffer['t_cos']
                     }
-                    await websocket.send(json.dumps(data))
+                }
+                
+                # Send using send_to_destination
+                success = await self.send_to_destination(data)
+                
+                if success:
+                    print("Data accepted by destination")
+                    print("Transitioning back to IDLE")
+                    self.transition_to(MachineState.IDLE)
+                else:
+                    print("Failed to send data to destination")
+                    self.transition_to(MachineState.IDLE)
                     
-                    # Wait for response
-                    response = await websocket.recv()
-                    response_data = json.loads(response)
-                    print(f"Response from {destination}:", response)
-                    
-                    if response_data.get('status') == 'success':
-                        print("Data accepted by destination")
-                        print("Transitioning back to IDLE")
-                        self.transition_to(MachineState.IDLE)
-                    else:
-                        print(f"Error from {destination}:", response_data.get('message'))
-                        
             except Exception as e:
                 print(f"Error in SEND_DATA state: {e}")
+                self.transition_to(MachineState.IDLE)
