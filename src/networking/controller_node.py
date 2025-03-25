@@ -12,53 +12,12 @@ from src.core.states import MachineState
 from src.core.config_handler import ConfigHandler
 from datetime import datetime
 
-class ControllerNode:
-    def __init__(self, controller_name, port=8765):
-        self.controller_name = controller_name
-        self.port = port
-        self.config = self._load_config()  # Full config with all controllers
-        print("\nFull config loaded:", self.config)  # Debug print
-        
-        # Incoming buffer structure
-        self.incoming_buffer = []  # List of movement arrays
-        self.max_incoming_buffer = 6  # Reduced to 6 sets of movements
-        self.max_movements_per_message = 30  # Each message has 30 values (20-127)
-        
-        # Get controller-specific config
-        if self.config and 'controllers' in self.config:
-            self.controller_config = self.config['controllers'].get(controller_name, {})
-            print(f"\nController-specific config for {controller_name}:", self.controller_config)
-            print(f"Destination: {self.controller_config.get('destination', 'None')}")
-        else:
-            self.controller_config = {}
-            print("No controller config found!")
-            
-        # Initialize controller with both configs
-        self.controller = MachineController(
-            config=self.controller_config,  # Controller-specific config
-            full_config=self.config        # Full config with all controllers
-        )
-        self.controller.node = self  # Give controller reference to this node
-        
-        self.mac = self.controller_config['mac']
-        self.ip = self.controller_config['ip']
-        
-        print(f"\nController initialized:")
-        print(f"- Name: {self.controller_name}")
-        print(f"- MAC: {self.mac}")
-        print(f"- IP: {self.ip}")
-        print(f"- Display config: {self.controller_config.get('display', {})}")
-        
-        self.server = None
-        self.current_connection = None  # Track the single active connection
-        
-        # Initialize to IDLE state
-        self.controller.transition_to(MachineState.IDLE)
-        
-        self.uri = f"ws://localhost:{port}"
-        self.connected_nodes = set()
-        self.movement_data = []
-        
+class ControllerNode(MachineController):
+    def __init__(self, config=None, full_config=None):
+        super().__init__(config, full_config)
+        self.destination = config.get('destination') if config else None
+        self.max_retries = 3
+
     def _load_config(self):
         """Load configuration from YAML"""
         try:
@@ -152,11 +111,11 @@ class ControllerNode:
                 data = message
             
             # If we're not in IDLE state, we're busy
-            if self.controller.current_state != MachineState.IDLE:
-                print(f"\nBusy processing in state: {self.controller.current_state.name}")
+            if self.current_state != MachineState.IDLE:
+                print(f"\nBusy processing in state: {self.current_state.name}")
                 response = {
                     'status': 'busy',
-                    'message': f'Controller busy in state {self.controller.current_state.name}'
+                    'message': f'Controller busy in state {self.current_state.name}'
                 }
                 await websocket.send(json.dumps(response))
                 return
@@ -174,9 +133,9 @@ class ControllerNode:
                 print("Incoming pot values (first 5):", incoming_pot_values[:5])
                 
                 # Process data if in IDLE state
-                if self.controller.current_state == MachineState.IDLE:
+                if self.current_state == MachineState.IDLE:
                     # Store timing data
-                    self.controller.state_handler.outgoing_buffer.update({
+                    self.state_handler.outgoing_buffer.update({
                         'timestamp': timestamp,
                         't_sin': t_sin,
                         't_cos': t_cos
@@ -188,21 +147,21 @@ class ControllerNode:
                     print(f"t_cos: {t_cos}")
                     
                     # Process through states
-                    self.controller.movement_buffer = incoming_pot_values
+                    self.movement_buffer = incoming_pot_values
                     
                     # Drive wavemaker
-                    self.controller.transition_to(MachineState.DRIVE_WAVEMAKER)
-                    await self.controller.handle_current_state()
+                    self.transition_to(MachineState.DRIVE_WAVEMAKER)
+                    await self.handle_current_state()
                     
                     # Send data to trainer
-                    self.controller.transition_to(MachineState.SEND_DATA)
-                    await self.controller.handle_current_state()
+                    self.transition_to(MachineState.SEND_DATA)
+                    await self.handle_current_state()
                     
                     # Return to IDLE to be ready for next data
-                    self.controller.transition_to(MachineState.IDLE)
+                    self.transition_to(MachineState.IDLE)
                     
                 else:
-                    print(f"\nBuffering data - current state: {self.controller.current_state.name}")
+                    print(f"\nBuffering data - current state: {self.current_state.name}")
                     if len(self.incoming_buffer) < self.max_incoming_buffer:
                         self.incoming_buffer.append(data)
                 
@@ -273,7 +232,7 @@ class ControllerNode:
 
     async def process_buffer(self):
         """Process buffered messages when returning to IDLE"""
-        if self.incoming_buffer and self.controller.current_state == MachineState.IDLE:
+        if self.incoming_buffer and self.current_state == MachineState.IDLE:
             print(f"\nProcessing {len(self.incoming_buffer)} buffered sets of movements")
             message = self.incoming_buffer.pop(0)  # Get oldest set of movements
             await self.handle_message(message)  # message is already in correct format
@@ -296,8 +255,8 @@ class ControllerNode:
             if command in command_to_state:
                 new_state = command_to_state[command]
                 print(f"Transitioning to state: {new_state.name}")
-                self.controller.transition_to(new_state)
-                self.controller.handle_current_state()
+                self.transition_to(new_state)
+                self.handle_current_state()
                 return True
             else:
                 print(f"Unknown command: {command}")
@@ -363,16 +322,15 @@ class ControllerNode:
                 }
             }
             
-            # Send using send_to_destination
+            # Always use send_to_destination for ControllerNode
             success = await self.send_to_destination(data)
             
             if success:
                 print("Data accepted by destination")
-                print("Transitioning back to IDLE")
-                self.transition_to(MachineState.IDLE)
             else:
-                print("Failed to send data to destination")
-                self.transition_to(MachineState.IDLE)
+                print("Failed to send data")
+                
+            self.transition_to(MachineState.IDLE)
                 
         except Exception as e:
             print(f"Error in send_data: {e}")
