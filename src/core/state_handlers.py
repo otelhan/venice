@@ -264,33 +264,6 @@ class StateHandler:
         scaled = int(min_val + (movement * (max_val - min_val) / 127))
         return min(max(scaled, 20), 127)  # Ensure within bounds
 
-    async def send_data(self):
-        """Send data to next controller in chain"""
-        try:
-            # Get destination from controller config
-            destination = self.config.get('destination')
-            if not destination:
-                print("No destination configured!")
-                return
-                
-            # Send data
-            success = await self.controller.send_data_to(destination, {
-                'type': 'movement_data',
-                'timestamp': self.outgoing_buffer['timestamp'],
-                'data': {
-                    'pot_values': self.controller.movement_buffer,
-                    't_sin': self.outgoing_buffer['t_sin'],
-                    't_cos': self.outgoing_buffer['t_cos']
-                }
-            })
-            
-            # Transition to IDLE (which will handle the countdown)
-            self.controller.transition_to(MachineState.IDLE)
-            
-        except Exception as e:
-            print(f"Error in send_data: {e}")
-            self.controller.transition_to(MachineState.IDLE)
-
     async def idle(self):
         """Handle IDLE state"""
         try:

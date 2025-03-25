@@ -113,3 +113,17 @@ class MachineController:
         else:
             print("Error: No node reference found")
             return False
+
+    async def send_data(self):
+        """Send data to destination"""
+        try:
+            # Should use send_to_destination instead of send_data_to
+            if hasattr(self, 'send_to_destination'):
+                await self.send_to_destination(self.outgoing_buffer)
+            else:
+                print("Error: send_to_destination method not found")
+                self.transition_to(MachineState.IDLE)
+                
+        except Exception as e:
+            print(f"Error in send_data: {e}")
+            self.transition_to(MachineState.IDLE)

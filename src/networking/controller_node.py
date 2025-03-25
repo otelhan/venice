@@ -345,39 +345,35 @@ class ControllerNode:
             print(f"Error sending to {self.destination}: {e}")
             return False
 
-    async def handle_current_state(self):
-        """Handle the current state"""
-        print(f"\nHandling state: {self.current_state.name}")
-        
-        if self.current_state == MachineState.SEND_DATA:
-            try:
-                # Get destination from config
-                if not self.destination:
-                    print("No destination configured!")
-                    return
-                    
-                # Create data packet
-                data = {
-                    'type': 'movement_data',
-                    'timestamp': self.state_handler.outgoing_buffer['timestamp'],
-                    'data': {
-                        'pot_values': self.movement_buffer,
-                        't_sin': self.state_handler.outgoing_buffer['t_sin'],
-                        't_cos': self.state_handler.outgoing_buffer['t_cos']
-                    }
+    async def send_data(self):
+        """Send data to destination"""
+        try:
+            if not self.destination:
+                print("No destination configured!")
+                return
+                
+            # Create data packet
+            data = {
+                'type': 'movement_data',
+                'timestamp': self.state_handler.outgoing_buffer['timestamp'],
+                'data': {
+                    'pot_values': self.movement_buffer,
+                    't_sin': self.state_handler.outgoing_buffer['t_sin'],
+                    't_cos': self.state_handler.outgoing_buffer['t_cos']
                 }
-                
-                # Send using send_to_destination
-                success = await self.send_to_destination(data)
-                
-                if success:
-                    print("Data accepted by destination")
-                    print("Transitioning back to IDLE")
-                    self.transition_to(MachineState.IDLE)
-                else:
-                    print("Failed to send data to destination")
-                    self.transition_to(MachineState.IDLE)
-                    
-            except Exception as e:
-                print(f"Error in SEND_DATA state: {e}")
+            }
+            
+            # Send using send_to_destination
+            success = await self.send_to_destination(data)
+            
+            if success:
+                print("Data accepted by destination")
+                print("Transitioning back to IDLE")
                 self.transition_to(MachineState.IDLE)
+            else:
+                print("Failed to send data to destination")
+                self.transition_to(MachineState.IDLE)
+                
+        except Exception as e:
+            print(f"Error in send_data: {e}")
+            self.transition_to(MachineState.IDLE)
