@@ -266,35 +266,47 @@ class ControllerNode(MachineController):
             return False
 
     async def send_to_destination(self, data):
-        """Forward data to configured destination"""
+        """Send data to destination"""
         try:
-            dest_config = self.config['controllers'].get(self.destination)
-            if not dest_config:
-                print(f"No configuration found for {self.destination}")
+            # Get target config from full_config, not config
+            if not self.full_config or 'controllers' not in self.full_config:
+                print("No valid configuration found")
                 return False
-
-            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            print(f"\nForwarding to {self.destination} at {uri}")
-
-            async with websockets.connect(uri) as websocket:
-                await websocket.send(json.dumps(data))
                 
-                # Wait for acknowledgement from next node
+            target = self.full_config['controllers'].get(self.destination)
+            if not target:
+                print(f"Unknown destination: {self.destination}")
+                return False
+                
+            # Always use port 8765 for controller communication
+            port = 8765  # Force use of standard port for all controller communication
+            uri = f"ws://{target['ip']}:{port}"
+            
+            print(f"\nSending to {self.destination} at {uri}")
+            
+            for attempt in range(self.max_retries):
                 try:
-                    response = await websocket.recv()
-                    response_data = json.loads(response)
-                    if response_data.get('status') == 'success':
-                        print(f"Data accepted by {self.destination}")
-                        return True
-                    else:
-                        print(f"Error from {self.destination}: {response_data.get('message')}")
-                        return False
+                    print(f"Connecting to {self.destination} (attempt {attempt + 1}/{self.max_retries})")
+                    async with websockets.connect(uri) as websocket:
+                        await websocket.send(json.dumps(data))
+                        response = await websocket.recv()
+                        response_data = json.loads(response)
+                        
+                        if response_data.get('status') == 'success':
+                            print(f"Data accepted by {self.destination}")
+                            return True
+                        else:
+                            print(f"Error from {self.destination}:", response_data.get('message'))
+                            
                 except Exception as e:
-                    print(f"No acknowledgement from {self.destination}: {e}")
-                    return False
-
+                    print(f"Target {self.destination} is not reachable")
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(1)
+                        
+            return False
+                    
         except Exception as e:
-            print(f"Error forwarding to {self.destination}: {e}")
+            print(f"Error sending to {self.destination}: {e}")
             return False
 
     async def send_data(self):
@@ -328,37 +340,3 @@ class ControllerNode(MachineController):
         except Exception as e:
             print(f"Error in send_data: {e}")
             self.transition_to(MachineState.IDLE)
-
-    async def handle_connection(self, websocket, data):
-        """Handle incoming WebSocket connections"""
-        try:
-            print("\nReceived data packet:")
-            print(json.dumps(data, indent=2))
-            
-            # Forward data to destination
-            if self.destination:
-                print(f"\nForwarding to {self.destination}")
-                success = await self.send_to_destination(data)
-                if success:
-                    # Keep connection alive for a moment
-                    await asyncio.sleep(0.5)  # Give time for acknowledgement
-                    await websocket.send(json.dumps({
-                        'status': 'success',
-                        'message': 'Data forwarded'
-                    }))
-                else:
-                    await websocket.send(json.dumps({
-                        'status': 'error',
-                        'message': 'Forward failed'
-                    }))
-            else:
-                print("No destination configured")
-                await websocket.send(json.dumps({
-                    'status': 'error',
-                    'message': 'No destination configured'
-                }))
-
-        except websockets.exceptions.ConnectionClosed:
-            print("Connection closed by client")
-        except Exception as e:
-            print(f"Error handling connection: {e}")
