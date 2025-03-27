@@ -179,7 +179,7 @@ class ControllerNode(MachineController):
                 if message_type == 'discovery':
                     await self.handle_discovery(websocket, data)
                 elif message_type == 'connect':
-                    await self.handle_connection(websocket, data)
+                    await self.handle_connection(websocket)
                 else:
                     print(f"Unknown message format: {data}")
                 
@@ -266,47 +266,56 @@ class ControllerNode(MachineController):
             return False
 
     async def send_to_destination(self, data):
-        """Send data to destination"""
+        """Send data to next controller in chain"""
         try:
-            # Get target config from full_config, not config
-            if not self.full_config or 'controllers' not in self.full_config:
-                print("No valid configuration found")
+            dest_config = self.config['controllers'].get(self.destination)
+            if not dest_config:
+                print(f"No configuration found for destination: {self.destination}")
                 return False
-                
-            target = self.full_config['controllers'].get(self.destination)
-            if not target:
-                print(f"Unknown destination: {self.destination}")
-                return False
-                
-            # Always use port 8765 for controller communication
-            port = 8765  # Force use of standard port for all controller communication
-            uri = f"ws://{target['ip']}:{port}"
+
+            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
+            print(f"\nConnecting to {self.destination}:")
+            print(f"URI: {uri}")
             
-            print(f"\nSending to {self.destination} at {uri}")
-            
-            for attempt in range(self.max_retries):
-                try:
-                    print(f"Connecting to {self.destination} (attempt {attempt + 1}/{self.max_retries})")
-                    async with websockets.connect(uri) as websocket:
-                        await websocket.send(json.dumps(data))
-                        response = await websocket.recv()
-                        response_data = json.loads(response)
-                        
-                        if response_data.get('status') == 'success':
-                            print(f"Data accepted by {self.destination}")
-                            return True
-                        else:
-                            print(f"Error from {self.destination}:", response_data.get('message'))
-                            
-                except Exception as e:
-                    print(f"Target {self.destination} is not reachable")
-                    if attempt < self.max_retries - 1:
-                        await asyncio.sleep(1)
-                        
-            return False
-                    
+            async with websockets.connect(uri) as websocket:
+                print(f"Connected to {self.destination}")
+                await websocket.send(json.dumps(data))
+                
+                # Wait for response from next controller
+                response = await websocket.recv()
+                response_data = json.loads(response)
+                
+                if response_data.get('status') == 'success':
+                    print(f"Data accepted by {self.destination}")
+                    return True
+                else:
+                    print(f"Error from {self.destination}:", response_data.get('message', 'Unknown error'))
+                    return False
+
         except Exception as e:
-            print(f"Error sending to {self.destination}: {e}")
+            print(f"Error sending to destination: {e}")
+            return False
+
+    async def handle_movement_data(self, data):
+        """Handle incoming movement data"""
+        try:
+            if self.destination:
+                print(f"\nForwarding data to {self.destination}")
+                # Send to next controller in chain
+                success = await self.send_to_destination(data)
+                if not success:
+                    print(f"Failed to forward data to {self.destination}")
+                    return False
+                print(f"Data successfully forwarded to {self.destination}")
+            else:
+                # Process data locally if we're the final destination
+                print("\nProcessing movement data locally")
+                # Add local processing here
+                
+            return True
+
+        except Exception as e:
+            print(f"Error handling movement data: {e}")
             return False
 
     async def send_data(self):
@@ -340,3 +349,36 @@ class ControllerNode(MachineController):
         except Exception as e:
             print(f"Error in send_data: {e}")
             self.transition_to(MachineState.IDLE)
+
+    async def handle_connection(self, websocket):
+        """Handle incoming WebSocket connections"""
+        try:
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                    print("\nReceived data packet:")
+                    print(json.dumps(data, indent=2))
+                    
+                    # Send success response
+                    await websocket.send(json.dumps({
+                        'status': 'success',
+                        'message': 'Data received'
+                    }))
+                    
+                    # Process the data based on type
+                    if data.get('type') == 'movement_data':
+                        await self.handle_movement_data(data)
+                    else:
+                        print(f"Unknown message type: {data.get('type')}")
+                        
+                except json.JSONDecodeError:
+                    print("Error: Invalid JSON")
+                    await websocket.send(json.dumps({
+                        'status': 'error',
+                        'message': 'Invalid JSON format'
+                    }))
+                    
+        except websockets.exceptions.ConnectionClosed:
+            print("Connection closed normally")
+        except Exception as e:
+            print(f"Error handling message: {e}")

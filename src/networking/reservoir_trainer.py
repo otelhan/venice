@@ -237,22 +237,16 @@ class ReservoirTrainer:
             return False
             
     async def start_server(self):
-        """Start websocket server to receive data"""
-        try:
-            self.transition_to(TrainerState.IDLE)  # Start in IDLE state
-            print(f"\nStarting server on port {self.listen_port}")
-            
-            async with websockets.serve(
-                self.handle_connection, 
-                "0.0.0.0", 
-                self.listen_port
-            ):
-                await asyncio.Future()  # run forever
-                
-        except Exception as e:
-            print(f"Error starting server: {e}")
-            self.transition_to(TrainerState.IDLE)
-            
+        """Start WebSocket server to receive data"""
+        print(f"\nStarting trainer server on port {self.listen_port}")
+        async with websockets.serve(
+            self.handle_connection,
+            "0.0.0.0",  # Listen on all interfaces
+            self.listen_port,
+            ping_interval=None
+        ) as server:
+            await asyncio.Future()  # run forever
+
     async def handle_connection(self, websocket):
         """Handle incoming WebSocket connections"""
         try:
@@ -416,36 +410,24 @@ class ReservoirTrainer:
                 print("No builder configuration found")
                 return False
                 
+            # Connect to builder's specific IP
             uri = f"ws://{builder_config['ip']}:{builder_config['listen_port']}"
-            print(f"\nAttempting WebSocket connection:")
+            print(f"\nConnecting to builder:")
             print(f"URI: {uri}")
-            print(f"Builder IP: {builder_config['ip']}")
-            print(f"Builder port: {builder_config['listen_port']}")
             
-            try:
-                print("Opening WebSocket connection...")
-                async with websockets.connect(uri) as websocket:
-                    print("Connection established!")
-                    ack = {
-                        'type': 'ack',
-                        'timestamp': timestamp,
-                        'status': 'success'
-                    }
-                    print(f"Sending ack: {ack}")
-                    await websocket.send(json.dumps(ack))
-                    print("Acknowledgement sent to builder")
-                    return True
-                    
-            except ConnectionRefusedError:
-                print(f"Connection refused to {uri}")
-                print("The server is listening but actively refused the connection")
-                return False
-            except Exception as e:
-                print(f"Connection error: {type(e).__name__}: {str(e)}")
-                return False
+            async with websockets.connect(uri) as websocket:
+                print("Connected to builder")
+                ack = {
+                    'type': 'ack',
+                    'timestamp': timestamp,
+                    'status': 'success'
+                }
+                await websocket.send(json.dumps(ack))
+                print("Acknowledgement sent to builder")
+                return True
                 
         except Exception as e:
-            print(f"Error in send_acknowledgement: {e}")
+            print(f"Error sending acknowledgement: {e}")
             return False
 
 if __name__ == "__main__":
