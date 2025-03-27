@@ -61,11 +61,13 @@ class ReservoirModelBuilder:
     async def process_data_file(self, file):
         """Process a data file"""
         try:
-            print(f"\nProcessing {file.name}")
-            self.current_file = file
+            # Convert string path to Path object if needed
+            file_path = Path(file) if isinstance(file, str) else file
+            print(f"\nProcessing {file_path.name}")
+            self.current_file = file_path
             
             # Read first row
-            df = pd.read_csv(file)
+            df = pd.read_csv(file_path)
             if df.empty:
                 print("File is empty")
                 return False
@@ -102,7 +104,8 @@ class ReservoirModelBuilder:
                 
         except Exception as e:
             print(f"Error processing file: {e}")
-            print("Available columns:", df.columns.tolist())
+            if 'df' in locals():
+                print("Available columns:", df.columns.tolist())
             self.transition_to(BuilderState.IDLE)
             return False
 
@@ -137,42 +140,26 @@ class ReservoirModelBuilder:
 
     async def send_to_destination(self, data):
         """Send data to destination controller"""
-        max_retries = 3
-        retry_delay = 2  # seconds between retries
-        
         try:
-            target = self.config['controllers'].get(self.destination)
-            if not target:
-                print(f"Unknown destination: {self.destination}")
+            # Get destination config
+            dest_config = self.config['controllers'].get(self.destination)
+            if not dest_config:
+                print(f"No configuration found for destination: {self.destination}")
                 return False
 
-            uri = f"ws://{target['ip']}:{target.get('port', 8765)}"
+            # Connect to destination's specific IP
+            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
+            print(f"\nConnecting to {self.destination}:")
+            print(f"URI: {uri}")
             
-            # Print the data being sent
-            print("\nSending data packet:")
-            print(json.dumps(data, indent=2))
-            
-            # Only try once and return result - don't retry
-            try:
-                print(f"\nSending to {self.destination} at {uri}")
-                async with websockets.connect(uri) as websocket:
-                    await websocket.send(json.dumps(data))
-                    response = await websocket.recv()
-                    response_data = json.loads(response)
-                    
-                    if response_data.get('status') == 'success':
-                        print(f"Data accepted by {self.destination}")
-                        return True
-                    else:
-                        print(f"Error from {self.destination}:", response_data.get('message'))
-                        return False
-                        
-            except Exception as e:
-                print(f"Error sending data: {e}")
-                return False
-                    
+            async with websockets.connect(uri) as websocket:
+                print(f"Connected to {self.destination}")
+                await websocket.send(json.dumps(data))
+                print(f"Data sent to {self.destination}")
+                return True
+
         except Exception as e:
-            print(f"Error sending to {self.destination}: {e}")
+            print(f"Error sending to destination: {e}")
             return False
 
     async def handle_connection(self, websocket):
@@ -275,32 +262,32 @@ class ReservoirModelBuilder:
     async def start(self):
         """Start by sending first row to destination, then listen for trainer"""
         try:
+            # Get data file from config
+            data_file = "movement_vectors_20250316.csv"
+            self.current_file = os.path.join("data", data_file)
+            print(f"\nUsing data file: {self.current_file}")
+
             # First send data to destination
             success = await self.process_data_file(self.current_file)
             if not success:
                 print("Failed to send initial data")
                 return
 
-            # Then start listening for trainer signals
+            # Then start listening for trainer signals on all interfaces
             print(f"\nStarting WebSocket server...")
             print(f"Host: 0.0.0.0 (all interfaces)")
             print(f"Port: {self.listen_port}")
             
-            # Create websocket server that keeps running
-            try:
-                server = await websockets.serve(
-                    self.handle_connection, 
-                    "0.0.0.0",
-                    self.listen_port,
-                    ping_interval=None
-                )
-                
+            async with websockets.serve(
+                self.handle_connection, 
+                "0.0.0.0",  # Listen on all interfaces
+                self.listen_port,
+                ping_interval=None
+            ) as server:
                 print(f"Server started successfully")
-                print(f"Current state: {self.current_state.name}, waiting for acknowledgements...")
-                
-                # Give server time to fully initialize
-                await asyncio.sleep(1)
-                
+                print(f"Current state: {self.current_state.name}")
+                print("Waiting for acknowledgement before sending next row...")
+
                 # Keep the server running until all data is sent
                 while True:
                     if self.current_state == BuilderState.IDLE:
@@ -310,55 +297,28 @@ class ReservoirModelBuilder:
                                 print("All data sent, stopping server")
                                 break
                     await asyncio.sleep(0.1)
-                    
-                server.close()
-                await server.wait_closed()
-            except Exception as e:
-                print(f"Error starting WebSocket server: {e}")
-                raise
 
         except Exception as e:
-            print(f"Error starting builder: {e}")
-            print(f"Exception details: {type(e).__name__}")  # Add more error details
-            import traceback
-            traceback.print_exc()
+            print(f"Error in start: {e}")
+            return False
 
     def transition_to(self, new_state):
         """Transition to a new state"""
         print(f"\nTransitioning from {self.current_state.name} to {new_state.name}")
         self.current_state = new_state
 
-async def main():
-    builder = ReservoirModelBuilder()
-    
-    while True:
+    async def run(self):
+        """Main run loop - automatically start processing data"""
         print("\nReservoir Model Builder")
         print("----------------------")
-        print("1. Process movement data")
-        print("2. Exit")
         
-        choice = input("\nEnter choice: ").strip()
-        
-        if choice == '1':
-            files = builder.list_available_data()
-            if files:
-                try:
-                    file_num = int(input("\nSelect file number (or 0 to skip): "))
-                    if file_num == 0:
-                        continue
-                    if 1 <= file_num <= len(files):
-                        print(f"\nProcessing {files[file_num-1].name}")
-                        print("(Will send data to configured destination:", builder.destination + ")")
-                        await builder.process_data_file(files[file_num-1])
-                except ValueError:
-                    print("Invalid selection")
-                    
-        elif choice == '2':
-            print("\nExiting...")
-            break
-            
-        else:
-            print("\nInvalid choice")
+        # Automatically start processing data
+        await self.start()
+
+async def main():
+    """Start the builder automatically"""
+    builder = ReservoirModelBuilder()
+    await builder.run()
 
 if __name__ == "__main__":
     asyncio.run(main()) 
