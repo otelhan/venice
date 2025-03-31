@@ -19,7 +19,7 @@ controllers:
     mac: 2c:cf:67:8b:24:f6
   res01:
     description: Reservoir Controller 01
-    destination: trainer
+    destination: res02
     display:
       enabled: true
       show_camera: true
