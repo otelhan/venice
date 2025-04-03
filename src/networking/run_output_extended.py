@@ -379,6 +379,15 @@ class OutputController:
         print("=== Clock Move Complete ===")
         return True
 
+    def stop(self):
+        """Stop and cleanup the controller"""
+        print("\nStopping controller...")
+        # Close each controller's connection
+        for name, controller in self.output_node.controllers.items():
+            print(f"Closing {name} controller...")
+            controller.close()
+        print("Controller stopped")
+
 async def main():
     # Print welcome message
     print("\n=== Output Controller ===")
@@ -399,9 +408,10 @@ async def main():
         await controller.start()
     except KeyboardInterrupt:
         print("\nShutting down...")
+    except Exception as e:
+        print(f"\nError occurred: {e}")
     finally:
-        if controller.output_node:
-            controller.output_node.stop()
+        controller.stop()  # Use the new stop method
 
 if __name__ == "__main__":
     print("\nStarting Output Controller")
