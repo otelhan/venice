@@ -84,13 +84,13 @@ class OutputController:
                 'type': 'servo',
                 'controller': 'main',
                 'servo_id': servo_id,
-                'position': 0,  # 0 degrees is center
+                'position': 1500,  # Center position in microseconds
                 'time_ms': 1000
             }
             response = self.output_node.process_command(command)
             if response['status'] == 'ok':
-                print(f"✓ Centered cube servo {servo_id} to 0°")
-                self.servo_positions[servo_id] = 0
+                print(f"✓ Centered cube servo {servo_id}")
+                self.servo_positions[servo_id] = 0  # Track in degrees
             else:
                 print(f"✗ Failed to center cube servo {servo_id}")
             await asyncio.sleep(0.1)
@@ -100,19 +100,20 @@ class OutputController:
             'type': 'servo',
             'controller': 'secondary',
             'servo_id': 1,
-            'position': 0,  # 0 degrees is center
+            'position': 1500,  # Center position in microseconds
             'time_ms': 1000
         }
         response = self.output_node.process_command(clock_command)
         if response['status'] == 'ok':
-            print(f"✓ Centered clock servo to 0°")
-            self.clock_current_angle = 0
+            print(f"✓ Centered clock servo")
+            self.clock_current_angle = 0  # Track in degrees
         else:
             print(f"✗ Failed to center clock servo")
         
         print("=== All Servos Centered ===")
         print("\nWaiting 3 seconds...")
         await asyncio.sleep(3)  # Wait 3 seconds after centering
+        print("Wait complete, proceeding...")
 
     async def start(self):
         """Start the output node and websocket server"""
