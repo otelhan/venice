@@ -213,20 +213,54 @@ class OutputController:
 
     async def rotate_cubes(self, data):
         """Rotate servos based on histogram bin averages"""
-        print(f"\nProcessing {len(data)} values into 5 bins")
+        print(f"\n=== Processing {len(data)} values into 5 bins ===")
+        print("Input values:", data)
         
         # Create histogram bins for 5 servos
         bins = np.linspace(20, 127, 6)
         bin_indices = np.digitize(data, bins) - 1
         
+        print("\nBin ranges:")
+        for i in range(len(bins)-1):
+            print(f"Bin {i+1}: {bins[i]:.1f} to {bins[i+1]:.1f}")
+        
+        # Load servo config
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'controllers.yaml')
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+                servo_config = config.get('servo_config', {})
+                main_controller = servo_config.get('controllers', {}).get('main', {})
+                servos = main_controller.get('servos', {})
+        except Exception as e:
+            print(f"Warning: Could not load servo config: {e}")
+            servos = {}
+        
+        print("\n=== Moving Cube Servos ===")
         # Move all cube servos
         for bin_num in range(5):
             bin_values = [val for val, idx in zip(data, bin_indices) if idx == bin_num]
             servo_id = self.servo_mapping[bin_num + 1]
             
+            print(f"\nServo {servo_id} (Bin {bin_num + 1}):")
+            print(f"Values in bin: {bin_values}")
+            
             if bin_values:
                 bin_avg = sum(bin_values) / len(bin_values)
+                # Scale from input range (20-127) to angle range (-150 to 150)
                 angle = ((bin_avg - 20) / (127 - 20)) * 300 - 150
+                
+                # Get servo config
+                servo_config = servos.get(str(servo_id), {})
+                min_angle = servo_config.get('min_angle', -150.0)
+                max_angle = servo_config.get('max_angle', 150.0)
+                
+                # Clamp angle to configured limits
+                angle = max(min_angle, min(max_angle, angle))
+                
+                print(f"Bin average: {bin_avg:.1f}")
+                print(f"Calculated angle: {angle:.1f}°")
+                print(f"Servo limits: {min_angle}° to {max_angle}°")
                 
                 command = {
                     'type': 'servo',
@@ -238,31 +272,52 @@ class OutputController:
                 
                 response = self.output_node.process_command(command)
                 if response['status'] == 'ok':
-                    print(f"Servo {servo_id} → {angle:.1f}°")
+                    print(f"✓ Servo {servo_id} moved to {angle:.1f}°")
+                    # Update tracked position
+                    self.servo_positions[servo_id] = angle
                 else:
-                    print(f"Failed: Servo {servo_id}")
+                    print(f"✗ Failed to move servo {servo_id}")
                 await asyncio.sleep(0.1)
             else:
-                print(f"  No values in bin {bin_num + 1}")
+                print("No values in this bin")
         
-        print("\nAll cube servos processed")
+        print("\n=== Cube Movement Complete ===")
+        print("Final servo positions:")
+        await self.print_servo_positions()
         return True
 
     async def move_clock(self):
         """Move the clock servo in its sequence"""
         print("\n=== Moving Clock Servo ===")
         
+        # Load servo config for clock
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'controllers.yaml')
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+                servo_config = config.get('servo_config', {})
+                secondary_controller = servo_config.get('controllers', {}).get('secondary', {})
+                clock_servo = secondary_controller.get('servos', {}).get('1', {})
+        except Exception as e:
+            print(f"Warning: Could not load clock servo config: {e}")
+            clock_servo = {}
+        
         # Update clock angle
         old_angle = self.clock_current_angle
         self.clock_current_angle += 60 * self.clock_direction
         
-        # Check bounds and reverse direction if needed
-        if abs(self.clock_current_angle) >= 150:
-            self.clock_direction *= -1  # Reverse direction
-            self.clock_current_angle = 150 if self.clock_current_angle > 0 else -150
-            print(f"Hit limit, reversing direction. New direction: {self.clock_direction}")
+        # Get configured limits
+        min_angle = clock_servo.get('min_angle', -150.0)
+        max_angle = clock_servo.get('max_angle', 150.0)
         
-        print(f"Clock: {old_angle:.1f}° → {self.clock_current_angle:.1f}°")
+        # Check bounds and reverse direction if needed
+        if abs(self.clock_current_angle) >= max_angle:
+            self.clock_direction *= -1  # Reverse direction
+            self.clock_current_angle = max_angle if self.clock_current_angle > 0 else min_angle
+            print(f"Hit limit ({max_angle}°), reversing direction. New direction: {self.clock_direction}")
+        
+        print(f"Moving from {old_angle:.1f}° → {self.clock_current_angle:.1f}°")
+        print(f"Servo limits: {min_angle}° to {max_angle}°")
         
         # Send command to clock servo
         clock_command = {
@@ -274,8 +329,10 @@ class OutputController:
         }
         
         response = self.output_node.process_command(clock_command)
-        if response['status'] != 'ok':
-            print("Failed to move clock servo")
+        if response['status'] == 'ok':
+            print(f"✓ Clock moved to {self.clock_current_angle:.1f}°")
+        else:
+            print("✗ Failed to move clock servo")
         
         await asyncio.sleep(1.1)
         print("=== Clock Move Complete ===")
