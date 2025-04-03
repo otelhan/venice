@@ -39,8 +39,8 @@ class OutputController:
             5: 5     # Bin 5 maps to servo 5
         }
         
-        # Track servo positions
-        self.servo_positions = {1: 1500, 2: 1500, 3: 1500, 4: 1500, 5: 1500}
+        # Track servo positions in degrees
+        self.servo_positions = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}  # 0 degrees is center
         
         # If in test mode, load test data immediately
         if mode == 'test':
@@ -75,7 +75,7 @@ class OutputController:
         return scaled_angle
 
     async def center_all_servos(self):
-        """Center all servos to their neutral positions"""
+        """Center all servos to their neutral positions (0 degrees)"""
         print("\n=== Centering All Servos ===")
         
         # Center cube servos (main controller)
@@ -89,7 +89,7 @@ class OutputController:
             }
             response = self.output_node.process_command(command)
             if response['status'] == 'ok':
-                print(f"✓ Centered cube servo {servo_id}")
+                print(f"✓ Centered cube servo {servo_id} to 0°")
                 self.servo_positions[servo_id] = 0
             else:
                 print(f"✗ Failed to center cube servo {servo_id}")
@@ -100,17 +100,18 @@ class OutputController:
             'type': 'servo',
             'controller': 'secondary',
             'servo_id': 1,
-            'position': 0,
+            'position': 0,  # 0 degrees is center
             'time_ms': 1000
         }
         response = self.output_node.process_command(clock_command)
         if response['status'] == 'ok':
-            print(f"✓ Centered clock servo")
+            print(f"✓ Centered clock servo to 0°")
             self.clock_current_angle = 0
         else:
             print(f"✗ Failed to center clock servo")
         
         print("=== All Servos Centered ===")
+        print("\nWaiting 3 seconds...")
         await asyncio.sleep(3)  # Wait 3 seconds after centering
 
     async def start(self):
@@ -247,10 +248,8 @@ class OutputController:
         """Print current position of all servos"""
         print("\nCurrent Servo Positions:")
         print("------------------------")
-        for servo_id, position in self.servo_positions.items():
-            # Convert position to degrees (500-2500 → 0-180)
-            degrees = (position - 500) * 180 / 2000
-            print(f"Servo {servo_id}: {position} μs ({degrees:.1f}°)")
+        for servo_id, angle in self.servo_positions.items():
+            print(f"Servo {servo_id}: {angle:.1f}°")
         print("------------------------")
 
     async def rotate_cubes(self, data):
@@ -315,7 +314,6 @@ class OutputController:
                 response = self.output_node.process_command(command)
                 if response['status'] == 'ok':
                     print(f"✓ Servo {servo_id} moved to {angle:.1f}°")
-                    # Update tracked position
                     self.servo_positions[servo_id] = angle
                 else:
                     print(f"✗ Failed to move servo {servo_id}")
