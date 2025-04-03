@@ -74,6 +74,45 @@ class OutputController:
         scaled_angle = (angle_deg / 180.0) * 150
         return scaled_angle
 
+    async def center_all_servos(self):
+        """Center all servos to their neutral positions"""
+        print("\n=== Centering All Servos ===")
+        
+        # Center cube servos (main controller)
+        for servo_id in range(1, 6):
+            command = {
+                'type': 'servo',
+                'controller': 'main',
+                'servo_id': servo_id,
+                'position': 0,  # 0 degrees is center
+                'time_ms': 1000
+            }
+            response = self.output_node.process_command(command)
+            if response['status'] == 'ok':
+                print(f"✓ Centered cube servo {servo_id}")
+                self.servo_positions[servo_id] = 0
+            else:
+                print(f"✗ Failed to center cube servo {servo_id}")
+            await asyncio.sleep(0.1)
+        
+        # Center clock servo (secondary controller)
+        clock_command = {
+            'type': 'servo',
+            'controller': 'secondary',
+            'servo_id': 1,
+            'position': 0,
+            'time_ms': 1000
+        }
+        response = self.output_node.process_command(clock_command)
+        if response['status'] == 'ok':
+            print(f"✓ Centered clock servo")
+            self.clock_current_angle = 0
+        else:
+            print(f"✗ Failed to center clock servo")
+        
+        print("=== All Servos Centered ===")
+        await asyncio.sleep(3)  # Wait 3 seconds after centering
+
     async def start(self):
         """Start the output node and websocket server"""
         if not self.output_node.start():
@@ -82,6 +121,9 @@ class OutputController:
 
         print(f"\nStarting output controller in {self.mode} mode")
         print(f"Listening on port: {self.port}")
+        
+        # Center all servos at startup
+        await self.center_all_servos()
         
         # If in test mode, transition to test mode immediately
         if self.mode == 'test':
@@ -188,9 +230,9 @@ class OutputController:
                 
                 response = self.output_node.process_command(clock_command)
                 if response['status'] == 'ok':
-                    print(f"Clock moved to {target_angle:.2f}°")
+                    print(f"✓ Clock moved to {target_angle:.2f}°")
                 else:
-                    print("Failed to move clock servo")
+                    print("✗ Failed to move clock servo")
                 
                 # Process pot values
                 await self.rotate_cubes(pot_values)
