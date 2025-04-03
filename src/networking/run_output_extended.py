@@ -171,8 +171,13 @@ class OutputController:
         """Handle incoming messages"""
         msg_type = message.get('type', '')
         
-        if msg_type == 'data':
-            movements = message.get('data', {}).get('movements', [])
+        if msg_type == 'movement_data':
+            # Extract data from the message
+            timestamp = message.get('timestamp')
+            data = message.get('data', {})
+            movements = data.get('pot_values', [])
+            t_sin = data.get('t_sin')
+            t_cos = data.get('t_cos')
             
             # Validate data
             if not isinstance(movements, list) or len(movements) != 30:
@@ -180,8 +185,25 @@ class OutputController:
             
             if not all(20 <= x <= 127 for x in movements):
                 return {"status": "error", "message": "Values must be between 20 and 127"}
+            
+            if t_sin is None or t_cos is None:
+                return {"status": "error", "message": "Missing time reference data"}
 
+            print(f"\nReceived movement data at {timestamp}")
+            print(f"Time reference - sin: {t_sin:.3f}, cos: {t_cos:.3f}")
+            
+            # Store the data and time reference
             self.received_data = movements
+            self.test_data = {
+                'type': 'movement_data',
+                'timestamp': timestamp,
+                'data': {
+                    'pot_values': movements,
+                    't_sin': t_sin,
+                    't_cos': t_cos
+                }
+            }
+            
             await self.transition_to(OutputState.PREDICT)
             return {"status": "ok", "message": "Data accepted"}
             
