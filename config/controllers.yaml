@@ -47,7 +47,7 @@ controllers:
     port: 8765
   res03:
     description: Reservoir Controller 03
-    destination: trainer
+    destination: output
     display:
       enabled: true
       show_camera: true
