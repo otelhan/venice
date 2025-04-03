@@ -14,6 +14,9 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 import matplotlib.pyplot as plt
 import csv
 import pytz  # Added for timezone handling
+import websockets  # Add this import at the top
+import json
+import asyncio
 
 # Use cocoa backend for Mac, xcb for Linux
 if os.uname().sysname == 'Darwin':  # macOS
@@ -65,6 +68,22 @@ class VideoInput:
         self.retry_delay = 5  # seconds
         self.stream_timeout = 30  # seconds
         self.last_frame_success = time.time()
+
+        # Add controller connection config
+        self.destination = 'res00'
+        self.first_vector_sent = False
+        self.last_vector_time = time.time()  # Track when we last sent a vector
+        
+        # Print initial connection info
+        dest_config = self.config['controllers'].get(self.destination)
+        if dest_config:
+            print("\nInitial controller connection info:")
+            print(f"Destination: {self.destination}")
+            print(f"IP: {dest_config['ip']}")
+            print(f"Port: {dest_config.get('listen_port', 8765)}")
+            print(f"URI: ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}")
+        else:
+            print(f"\nWarning: No configuration found for {self.destination}")
 
     def load_config(self):
         """Load and initialize config with default ROI settings if needed"""
@@ -353,7 +372,7 @@ class VideoInput:
                 
                 # Check if it's time to save movement vectors
                 if current_time - self.last_vector_time >= self.vector_interval:
-                    self.save_movement_vectors()
+                    self.save_movement_vector()
                     self.last_vector_time = current_time
             else:
                 # Clear movement buffers when stopping calculation
@@ -380,44 +399,44 @@ class VideoInput:
         date_str = datetime.now().strftime('%Y%m%d')
         return base_path.parent / f"movement_vectors_{date_str}.csv"
 
-    def save_movement_vectors(self):
-        """Save movement vectors to CSV with daily rotation"""
-        # Only save if we have complete vectors
-        for roi_name, buffer in self.movement_buffers.items():
-            if len(buffer) < self.vector_size:
-                return
+    def save_movement_vector(self):
+        """Save movement vector and send to controller when full"""
+        current_time = time.time()
         
-        # Get current timestamp in Venice time
-        timestamp = self.get_venice_time()
-        csv_path = self.get_csv_path()
-        t_sin, t_cos = self.encode_time(timestamp)
-        
-        # Prepare row data with Venice timestamp
-        row = [timestamp.strftime('%Y-%m-%d %H:%M:%S')]
-        
-        # Add movement data for each ROI
-        for roi_name in sorted(self.movement_buffers.keys()):
-            row.extend(self.movement_buffers[roi_name][-self.vector_size:])
-        
-        # Add time encoding
-        row.extend([t_sin, t_cos])
-        
-        # Write to CSV
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(csv_path, mode='a', newline='') as f:
-            writer = csv.writer(f)
-            if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
-                # Write header if file is new or empty
-                header = ['timestamp']
-                for roi in sorted(self.movement_buffers.keys()):
-                    header.extend([f'{roi}_m{i}' for i in range(self.vector_size)])
-                header.extend(['t_sin', 't_cos'])
-                writer.writerow(header)
-            writer.writerow(row)
-        
-        # Clear buffers but keep last value
-        for roi_name in self.movement_buffers:
-            self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-1:]
+        # Only proceed if enough time has passed
+        if current_time - self.last_vector_time >= self.vector_interval:
+            # Check if ROI 1 has a full vector
+            if len(self.movement_buffers['roi_1']) >= 30:
+                # Get ROI 1 movement values
+                roi1_values = self.movement_buffers['roi_1'][-30:]  # Last 30 values
+                
+                # Scale values
+                min_val = min(roi1_values)
+                max_val = max(roi1_values)
+                scaled_values = [self.scale_movement_log(v, min_val, max_val) for v in roi1_values]
+                
+                # Create data packet like builder
+                data = {
+                    'type': 'movement_data',
+                    'timestamp': str(datetime.now()),
+                    'data': {
+                        'pot_values': scaled_values,
+                        't_sin': np.sin(2 * np.pi * current_time / 86400),  # Daily cycle
+                        't_cos': np.cos(2 * np.pi * current_time / 86400)
+                    }
+                }
+                
+                # Create new event loop for sending data
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self.send_to_controller(data))
+                    loop.close()
+                    print("\nMovement vector sent to controller")
+                except Exception as e:
+                    print(f"\nError sending to controller: {e}")
+
+            self.last_vector_time = current_time
 
     def run(self, stream_url):
         """Main processing loop"""
@@ -660,6 +679,49 @@ class VideoInput:
             print("Successfully reconnected")
         else:
             print("Failed to reconnect")
+
+    def scale_movement_log(self, raw_movement, min_value, max_value):
+        """Same scaling as builder uses"""
+        try:
+            if max_value <= min_value:
+                return 20
+            if raw_movement <= min_value:
+                return 20
+            if raw_movement >= max_value:
+                return 127
+                
+            log_scaled = np.log1p(raw_movement - min_value) / np.log1p(max_value - min_value)
+            scaled = int(round(20 + log_scaled * (127 - 20)))
+            return max(20, min(127, scaled))
+            
+        except Exception as e:
+            print(f"Error scaling movement value: {e}")
+            return 20
+
+    async def send_to_controller(self, data):
+        """Send data to res00 controller"""
+        try:
+            # Get controller config
+            dest_config = self.config['controllers'].get(self.destination)
+            if not dest_config:
+                print(f"No configuration found for destination: {self.destination}")
+                return False
+
+            # Connect to controller
+            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
+            print(f"\nConnecting to {self.destination}:")
+            print(f"URI: {uri}")
+            
+            async with websockets.connect(uri) as websocket:
+                print(f"Connected to {self.destination}")
+                await websocket.send(json.dumps(data))
+                print(f"Data sent to {self.destination}:")
+                print(json.dumps(data, indent=2))
+                return True
+
+        except Exception as e:
+            print(f"Error sending to controller: {e}")
+            return False
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 

@@ -1,4 +1,12 @@
 controllers:
+  builder:
+    description: Reservoir Builder
+    destination: res00
+    display:
+      enabled: false
+    ip: 192.168.1.133
+    listen_port: 8777
+    send_port: 8765
   output:
     description: Output Controller
     display:
@@ -15,8 +23,8 @@ controllers:
       show_camera: true
       show_plots: true
     ip: 192.168.1.66
-    port: 8765
     mac: 2c:cf:67:8b:24:f6
+    port: 8765
   res01:
     description: Reservoir Controller 01
     destination: res02
@@ -25,8 +33,8 @@ controllers:
       show_camera: true
       show_plots: true
     ip: 192.168.1.178
-    port: 8765
     mac: 2c:cf:67:8c:50:b7
+    port: 8765
   res02:
     description: Reservoir Controller 02
     destination: res03
@@ -35,8 +43,8 @@ controllers:
       show_camera: true
       show_plots: true
     ip: 192.168.1.30
-    port: 8765
     mac: 2c:cf:67:8b:2b:d4
+    port: 8765
   res03:
     description: Reservoir Controller 03
     destination: trainer
@@ -45,8 +53,8 @@ controllers:
       show_camera: true
       show_plots: true
     ip: 192.168.1.254
-    port: 8765
     mac: 2c:cf:67:8b:fe:ab
+    port: 8765
   trainer:
     description: Reservoir Trainer
     destination: builder
@@ -55,14 +63,6 @@ controllers:
     ip: 192.168.1.106
     listen_port: 8765
     send_port: 8777
-  builder:
-    description: Reservoir Builder
-    destination: res00
-    display:
-      enabled: false
-    ip: 192.168.1.133
-    send_port: 8765
-    listen_port: 8777
 servo_config:
   controllers:
     main:

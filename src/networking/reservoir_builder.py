@@ -163,44 +163,27 @@ class ReservoirModelBuilder:
             return False
 
     async def handle_connection(self, websocket):
-        """Handle incoming websocket connections"""
-        print("\nBuilder: Received incoming connection")
+        """Handle incoming WebSocket connections"""
         try:
-            # Only accept connections when in IDLE state
-            if self.current_state != BuilderState.IDLE:
-                print(f"Builder: Received connection in wrong state: {self.current_state}")
-                await websocket.send(json.dumps({
-                    'status': 'error',
-                    'message': 'Not ready for acknowledgement'
-                }))
-                return
-                
-            print("Builder: Waiting for message...")
-            # Wait for acknowledgement from trainer
-            message = await websocket.recv()
-            data = json.loads(message)
+            async for message in websocket:
+                data = json.loads(message)
+                if data.get('type') == 'ack':
+                    print("\nReceived acknowledgement")
+                    print(json.dumps(data, indent=2))
+                    
+                    # Send next row after acknowledgement
+                    print("\nSending next row...")
+                    await self.send_next_row()
+                    
+                    # Don't close connection - keep waiting for next ack
+                    
+        except websockets.exceptions.ConnectionClosed:
+            print("\nAcknowledgement connection closed - waiting for new connection")
+            # Don't exit - let the server keep running
             
-            print(f"Builder: Received from trainer: {data}")
-            
-            if data.get('type') == 'ack':
-                # Process acknowledgement and send next row
-                await self.send_next_row()
-                await websocket.send(json.dumps({'status': 'ok'}))
-            else:
-                await websocket.send(json.dumps({
-                    'status': 'error',
-                    'message': 'Expected acknowledgement'
-                }))
-                
         except Exception as e:
-            print(f"Error handling connection: {e}")
-            try:
-                await websocket.send(json.dumps({
-                    'status': 'error',
-                    'message': str(e)
-                }))
-            except:
-                pass
+            print(f"Error handling acknowledgement: {e}")
+            # Keep server running
 
     async def send_next_row(self):
         """Send next row after acknowledgement"""
