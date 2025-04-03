@@ -42,6 +42,16 @@ class OutputController:
         # Track servo positions in degrees
         self.servo_positions = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}  # 0 degrees is center
         
+        # Add clock position mapping (6 positions)
+        self.clock_positions = {
+            0: -150,  # 0-3 hours
+            1: -90,   # 4-7 hours
+            2: -30,   # 8-11 hours
+            3: 30,    # 12-15 hours
+            4: 90,    # 16-19 hours
+            5: 150    # 20-23 hours
+        }
+        
         # If in test mode, load test data immediately
         if mode == 'test':
             self.load_test_data()
@@ -213,30 +223,12 @@ class OutputController:
             if self.test_data:
                 # Extract values from test data
                 data = self.test_data['data']
-                t_sin = data['t_sin']
-                t_cos = data['t_cos']
                 pot_values = data['pot_values']
                 
-                # Calculate clock angle
-                target_angle = self.calculate_clock_angle(t_sin, t_cos)
-                print(f"\nTest Mode - Moving clock to angle: {target_angle:.2f}°")
+                # First move clock using new method
+                await self.move_clock()
                 
-                # Move clock to calculated position
-                clock_command = {
-                    'type': 'servo',
-                    'controller': 'secondary',
-                    'servo_id': 1,
-                    'position': target_angle,
-                    'time_ms': 1000
-                }
-                
-                response = self.output_node.process_command(clock_command)
-                if response['status'] == 'ok':
-                    print(f"✓ Clock moved to {target_angle:.2f}°")
-                else:
-                    print("✗ Failed to move clock servo")
-                
-                # Process pot values
+                # Then process pot values
                 await self.rotate_cubes(pot_values)
                 
                 # Return to idle
@@ -327,53 +319,77 @@ class OutputController:
         await self.print_servo_positions()
         return True
 
+    def get_time_sector(self, t_sin, t_cos):
+        """
+        Convert t_sin and t_cos to hour (0-23) and then map to one of 6 positions
+        Returns: (hour, sector, angle)
+        """
+        # Calculate angle in radians and convert to hours
+        angle_rad = math.atan2(t_sin, t_cos)
+        hours = ((angle_rad + math.pi) * 12 / math.pi) % 24
+        
+        # Map hours to sectors (4-hour blocks)
+        sector = int(hours / 4)  # 0-5 (6 sectors)
+        angle = self.clock_positions[sector]
+        
+        return hours, sector, angle
+
     async def move_clock(self):
-        """Move the clock servo in its sequence"""
+        """Move clock servo to position based on time"""
         print("\n=== Moving Clock Servo ===")
         
-        # Load servo config for clock
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'controllers.yaml')
-        try:
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-                servo_config = config.get('servo_config', {})
-                secondary_controller = servo_config.get('controllers', {}).get('secondary', {})
-                clock_servo = secondary_controller.get('servos', {}).get('1', {})
-        except Exception as e:
-            print(f"Warning: Could not load clock servo config: {e}")
-            clock_servo = {}
+        if not self.test_data:
+            print("No time data available")
+            return False
+            
+        # Get time values from test data
+        data = self.test_data['data']
+        t_sin = data['t_sin']
+        t_cos = data['t_cos']
         
-        # Update clock angle
-        old_angle = self.clock_current_angle
-        self.clock_current_angle += 60 * self.clock_direction
+        # Calculate target position
+        hours, sector, target_angle = self.get_time_sector(t_sin, t_cos)
+        print(f"Time reference: {hours:.1f} hours")
+        print(f"Mapped to sector {sector + 1}/6 ({sector * 4}-{(sector + 1) * 4} hours)")
+        print(f"Current angle: {self.clock_current_angle:.1f}°")
+        print(f"Target angle: {target_angle:.1f}°")
         
-        # Get configured limits
-        min_angle = clock_servo.get('min_angle', -150.0)
-        max_angle = clock_servo.get('max_angle', 150.0)
+        # First return to center
+        center_command = {
+            'type': 'servo',
+            'controller': 'secondary',
+            'servo_id': 1,
+            'position': 0,  # 0 degrees is center
+            'time_ms': 1000
+        }
         
-        # Check bounds and reverse direction if needed
-        if abs(self.clock_current_angle) >= max_angle:
-            self.clock_direction *= -1  # Reverse direction
-            self.clock_current_angle = max_angle if self.clock_current_angle > 0 else min_angle
-            print(f"Hit limit ({max_angle}°), reversing direction. New direction: {self.clock_direction}")
+        print("Moving to center position...")
+        response = self.output_node.process_command(center_command)
+        if response['status'] == 'ok':
+            print("✓ Clock centered")
+            self.clock_current_angle = 0
+            await asyncio.sleep(3)  # Wait 3 seconds at center
+        else:
+            print("✗ Failed to center clock servo")
+            return False
         
-        print(f"Moving from {old_angle:.1f}° → {self.clock_current_angle:.1f}°")
-        print(f"Servo limits: {min_angle}° to {max_angle}°")
-        
-        # Send command to clock servo
+        # Move to target position
+        print(f"Moving to sector {sector + 1}...")
         clock_command = {
             'type': 'servo',
             'controller': 'secondary',
             'servo_id': 1,
-            'position': self.clock_current_angle,
+            'position': target_angle,
             'time_ms': 1000
         }
         
         response = self.output_node.process_command(clock_command)
         if response['status'] == 'ok':
-            print(f"✓ Clock moved to {self.clock_current_angle:.1f}°")
+            print(f"✓ Clock moved to sector {sector + 1} ({target_angle:.1f}°)")
+            self.clock_current_angle = target_angle
         else:
             print("✗ Failed to move clock servo")
+            return False
         
         await asyncio.sleep(1.1)
         print("=== Clock Move Complete ===")
