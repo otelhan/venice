@@ -373,8 +373,29 @@ class OutputController:
             print("✗ Failed to center clock servo")
             return False
         
-        # Move to target position
-        print(f"Moving to sector {sector + 1}...")
+        # Perform one full rotation
+        print("\nPerforming full rotation...")
+        rotation_angles = [-150, -90, -30, 30, 90, 150, -150]  # Complete cycle
+        for angle in rotation_angles:
+            rotation_command = {
+                'type': 'servo',
+                'controller': 'secondary',
+                'servo_id': 1,
+                'position': angle,
+                'time_ms': 500  # Faster movement for rotation
+            }
+            
+            response = self.output_node.process_command(rotation_command)
+            if response['status'] == 'ok':
+                print(f"✓ Rotated to {angle}°")
+                self.clock_current_angle = angle
+                await asyncio.sleep(0.6)  # Short delay between positions
+            else:
+                print(f"✗ Failed to rotate to {angle}°")
+                return False
+        
+        # Finally move to target position
+        print(f"\nMoving to final position in sector {sector + 1}...")
         clock_command = {
             'type': 'servo',
             'controller': 'secondary',
