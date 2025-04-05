@@ -26,49 +26,64 @@ else:  # Linux
 
 class VideoInput:
     def __init__(self):
-        """Initialize video input"""
+        self.stream = None
         self.cap = None
-        self.is_running = False
         self.frame_count = 0
         self.last_frame = None
-        self.last_frame_success = time.time()
-        
-        # Initialize buffers for movement values
-        self.movement_buffers = {
-            'roi_1': [],
-            'roi_2': [],
-            'roi_3': [],
-            'roi_4': []
-        }
-        
-        # Load config
+        self.is_running = False
         self.config = self.load_config()
         self.roi_configs = self.config['video_input']['roi_configs']
-        
-        # Stream settings
-        self.max_retries = 3
-        self.retry_delay = 5
-        self.stream_timeout = 10
-        
-        # Display settings
-        self.show_rois = True
-        self.calculating = False
-        
-        # Time zone settings
-        self.venice_tz = pytz.timezone('Europe/Rome')
-        
-        # ROI selection
-        self.cell_size = 40
-        self.selected_cells = []
-        
-        # Frame processing settings
-        self.frame_interval = 0.1  # 100ms between frames
+        self.rois = {}  # Store ROI frames
+        self.movement_buffers = {f'roi_{i+1}': [] for i in range(4)}
         self.last_frame_time = 0
-        self.vector_interval = 1.0  # 1 second between vectors
         self.last_vector_time = 0
-        self.vector_size = 30
+        self.selected_cells = []
+        self.cell_size = 40
+        self.scale_factor = 1.0
+        self.show_rois = True  # Toggle for ROI display
+        self.calculating = False  # Initialize calculation state
+        
+        # Frame buffer for movement calculation
         self.frame_buffer = []
-        self.buffer_size = 2
+        self.buffer_size = 3  # Keep 3 frames for rate of change calculation
+        self.movement_threshold = 5  # Threshold for movement detection
+        
+        # Movement calculation timing
+        self.frame_interval = 1.0  # Capture one frame per second
+        self.vector_interval = 30.0  # Save vectors every 30 seconds
+        
+        # Movement buffers
+        self.vector_size = 30  # Store 30 values per ROI
+        
+        # Create output directories if needed
+        for path in [self.config['video_input']['output']['csv_path'],
+                    self.config['video_input']['output']['plot_path']]:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+        # Add Venice timezone
+        self.venice_tz = pytz.timezone('Europe/Rome')  # Venice uses same timezone as Rome
+
+        # Add reconnection settings
+        self.max_retries = 3
+        self.retry_delay = 5  # seconds
+        self.stream_timeout = 30  # seconds
+        self.last_frame_success = time.time()
+
+        # Add controller connection config
+        self.destination = 'res00'
+        self.first_vector_sent = False
+        self.last_vector_time = time.time()  # Track when we last sent a vector
+        
+        # Print initial connection info
+        dest_config = self.config['controllers'].get(self.destination)
+        if dest_config:
+            print("\nInitial controller connection info:")
+            print(f"Destination: {self.destination}")
+            print(f"IP: {dest_config['ip']}")
+            print(f"Port: {dest_config.get('listen_port', 8765)}")
+            print(f"URI: ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}")
+        else:
+            print(f"\nWarning: No configuration found for {self.destination}")
 
     def load_config(self):
         """Load and initialize config with default ROI settings if needed"""
@@ -435,6 +450,8 @@ class VideoInput:
         finally:
             if self.cap:
                 self.cap.release()
+            if self.show_plots:
+                plt.close('all')
             cv2.destroyAllWindows()
 
     def show_frame(self, frame, window_name="Venice Stream"):
@@ -464,15 +481,17 @@ class VideoInput:
                                   (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 
                                   0.6, (0, 255, 0), 2)
             
-            # Draw recording indicator when calculating
+            # Draw recording indicator and time encoding when calculating
             if self.calculating:
+                # Get current time encoding
+                t_sin, t_cos = self.encode_time(self.get_venice_time())
+                
                 # Draw recording dot
                 radius = 10
                 center = (display_frame.shape[1]-20, 20)
                 cv2.circle(display_frame, center, radius, (0, 0, 255), -1)
                 
                 # Add time encoding values
-                t_sin, t_cos = self.calculate_time_features()
                 cv2.putText(display_frame,
                           f"sin(t): {t_sin:.2f}",
                           (display_frame.shape[1]-150, 15),
