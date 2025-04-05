@@ -86,7 +86,7 @@ class VideoInputWithAck(VideoInput):
             print(f"Error sending to controller: {e}")
             return False
 
-async def test_video_input(fullscreen=False):
+async def test_video_input(fullscreen=False, debug=False):
     """Test video input with a Venice live stream"""
     print("\nTesting video input with Venice live stream...")
     print("\nControls:")
@@ -142,7 +142,9 @@ async def test_video_input(fullscreen=False):
                 try:
                     movements = video.process_frame(return_movements=True)
                     if movements:
-                        print(f"\rFrame {frame_count} | Movements: {movements}", end="", flush=True)
+                        # Only print frame-by-frame data in debug mode
+                        if debug:
+                            print(f"\rFrame {frame_count} | Movements: {movements}", end="", flush=True)
                         
                         # Check and perform save if needed
                         save_performed = await video.check_and_save()
@@ -216,7 +218,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test Video Input with Acknowledgment')
     parser.add_argument('--fullscreen', '-f', action='store_true', 
                         help='Start in fullscreen mode')
+    parser.add_argument('--debug', '-d', action='store_true',
+                        help='Enable debug output with frame-by-frame data')
     args = parser.parse_args()
     
     # Run test with fullscreen option from command line
-    asyncio.run(test_video_input(fullscreen=args.fullscreen)) 
+    asyncio.run(test_video_input(fullscreen=args.fullscreen, debug=args.debug)) 
