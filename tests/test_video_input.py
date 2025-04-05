@@ -84,7 +84,6 @@ def test_video_input():
     print("'s' - Select all ROIs")
     print("'r' - Select single ROI")
     print("'t' - Toggle ROI display")
-    print("'space' - Start/Stop calculation")
     print("'q' - Quit")
     
     # Create video input
@@ -104,15 +103,15 @@ def test_video_input():
     try:
         # Set up full screen window
         window_name = "Venice Stream"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)  # WINDOW_NORMAL allows window resizing
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         
-        print("\nWindow setup complete. Click on the Venice Stream window to give it focus.")
-        print("Press spacebar to start/stop calculations.")
+        print("\nStarting calculations automatically...")
+        video.calculating = True  # Auto-start calculations
         
         frame_count = 0
         last_save_time = time.time()
-        save_interval = 1.0  # Save to CSV every second
+        save_interval = 1.0
         
         while True:
             frame = video.get_frame()
@@ -120,21 +119,19 @@ def test_video_input():
                 frame_count += 1
                 current_time = time.time()
                 
-                # Process frame if calculation is active
-                if video.calculating:
-                    try:
-                        movements = video.process_frame(return_movements=True)
-                        if movements:
-                            print(f"\rFrame {frame_count} | Movements: {movements}", end="", flush=True)
-                    except Exception as e:
-                        print(f"\nError in processing: {e}")
+                # Process frame (always calculating)
+                try:
+                    movements = video.process_frame(return_movements=True)
+                    if movements:
+                        print(f"\rFrame {frame_count} | Movements: {movements}", end="", flush=True)
+                except Exception as e:
+                    print(f"\nError in processing: {e}")
                 
                 # Show frame
                 video.show_frame(frame.copy(), window_name)
                 
-                # Handle keyboard input
+                # Only check for quit and ROI commands
                 key = cv2.waitKey(1) & 0xFF
-                
                 if key == ord('q'):
                     print("\nQuitting...")
                     break
@@ -147,10 +144,6 @@ def test_video_input():
                 elif key == ord('t'):
                     video.show_rois = not video.show_rois
                     print(f"\nROI display: {'On' if video.show_rois else 'Off'}")
-                elif key == ord(' '):  # spacebar
-                    video.calculating = not video.calculating
-                    print(f"\n*** SPACEBAR PRESSED ***")
-                    print(f"Calculation: {'Started' if video.calculating else 'Stopped'}")
                 
     except Exception as e:
         print(f"\nUnexpected error: {e}")
