@@ -22,9 +22,18 @@ class VideoInputWithAck(VideoInput):
         super().__init__()
         self.waiting_for_ack = False
         self.server = None
-        self.listen_port = 8777  # Same as builder's listen port
+        self.listen_port = 8777  # Port to listen for acknowledgments from output controller
         self.last_message = None
         self.message_sent = False
+        self.ack_destination = 'output'  # The controller that will send ACKs
+        
+        # Print ACK info
+        output_config = self.config['controllers'].get(self.ack_destination)
+        if output_config:
+            print(f"\nWill receive acknowledgments from: {self.ack_destination}")
+            print(f"On listen port: {self.listen_port}")
+        else:
+            print(f"\nWarning: No configuration found for ACK source: {self.ack_destination}")
 
     async def start_ack_server(self):
         """Start WebSocket server to receive acknowledgments"""

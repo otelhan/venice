@@ -61,8 +61,8 @@ class VideoInput:
         self.stream_timeout = 30  # seconds
         self.last_frame_success = time.time()
 
-        # Add controller connection config
-        self.destination = 'res00'
+        # Add controller connection config - get from config file
+        self.destination = self.config['video_input'].get('destination', 'res00')
         self.first_vector_sent = False
         self.last_vector_time = time.time()  # Track when we last sent a vector
         
@@ -700,6 +700,24 @@ class VideoInput:
             self.save_needed = False
             return True
         return False
+
+class VideoInputWithAck(VideoInput):
+    def __init__(self):
+        super().__init__()
+        self.waiting_for_ack = False
+        self.server = None
+        self.listen_port = 8777  # Port to listen for acknowledgments
+        self.last_message = None
+        self.message_sent = False
+        self.ack_destination = 'output'  # The controller that will send ACKs
+        
+        # Print ACK info
+        output_config = self.config['controllers'].get(self.ack_destination)
+        if output_config:
+            print(f"\nWill receive acknowledgments from: {self.ack_destination}")
+            print(f"On listen port: {self.listen_port}")
+        else:
+            print(f"\nWarning: No configuration found for ACK source: {self.ack_destination}")
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 

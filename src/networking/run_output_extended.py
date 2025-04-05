@@ -8,6 +8,10 @@ import yaml
 import os
 import math
 from datetime import datetime
+import csv
+import pandas as pd
+from pathlib import Path
+import pytz  # For Venice timezone
 
 class OutputState(Enum):
     IDLE = auto()
@@ -29,6 +33,13 @@ class OutputController:
         # Test data
         self.test_data = None
         self.test_clock_angle = 0
+        
+        # Add Venice timezone
+        self.venice_tz = pytz.timezone('Europe/Rome')  # Venice uses same timezone as Rome
+        
+        # Data storage
+        self.data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+        os.makedirs(self.data_dir, exist_ok=True)
         
         # Map each bin to a single servo
         self.servo_mapping = {
@@ -194,25 +205,25 @@ class OutputController:
             
             # Store the data and time reference
             self.received_data = movements
-            self.test_data = {
-                'type': 'movement_data',
-                'timestamp': timestamp,
-                'data': {
-                    'pot_values': movements,
-                    't_sin': t_sin,
-                    't_cos': t_cos
-                }
-            }
+            
+            # Store the entire message for later acknowledgment
+            self.test_data = message
+            
+            # Save to CSV
+            if self.mode == 'operation':
+                save_success = self.save_to_csv(message)
+                if save_success:
+                    print("Data saved to CSV file")
+                else:
+                    print("Failed to save data to CSV file")
             
             # Process the data through state machine
             await self.transition_to(OutputState.PREDICT)
             
-            # Return acknowledgment with proper format
+            # Return success response (not the final acknowledgment)
             return {
-                "type": "ack",
-                "timestamp": timestamp,
                 "status": "success",
-                "message": "Data processed successfully"
+                "message": "Data received, processing started"
             }
             
         elif msg_type == 'test':
@@ -246,7 +257,20 @@ class OutputController:
                 await self.transition_to(OutputState.SHOW_TIME)
                 
         elif self.current_state == OutputState.SHOW_TIME:
+            timestamp = None
+            if self.test_data and 'timestamp' in self.test_data:
+                timestamp = self.test_data['timestamp']
+            
             await self.move_clock()
+            
+            # Send acknowledgment to video_input after clock movement is complete
+            if self.mode == 'operation' and timestamp:
+                success = await self.send_acknowledgement(timestamp)
+                if success:
+                    print("Acknowledgment sent to video_input")
+                else:
+                    print("Failed to send acknowledgment to video_input")
+            
             await self.transition_to(OutputState.IDLE)
             
         elif self.current_state == OutputState.TEST_MODE:
@@ -446,6 +470,44 @@ class OutputController:
         print("=== Clock Move Complete ===")
         return True
 
+    async def send_acknowledgement(self, timestamp):
+        """Send acknowledgement back to video_input"""
+        try:
+            # Get video_input configuration
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                    'config', 'controllers.yaml')
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            video_input_config = config.get('video_input', {})
+            if not video_input_config:
+                print("No video_input configuration found")
+                return False
+            
+            # Connect to video_input's IP and listen_port
+            video_ip = video_input_config.get('ip', '127.0.0.1')
+            video_listen_port = video_input_config.get('listen_port', 8777)
+            
+            uri = f"ws://{video_ip}:{video_listen_port}"
+            print(f"\nSending acknowledgment to video_input:")
+            print(f"URI: {uri}")
+            
+            async with websockets.connect(uri) as websocket:
+                print("Connected to video_input")
+                ack = {
+                    'type': 'ack',
+                    'timestamp': timestamp,
+                    'status': 'success',
+                    'message': 'Clock movement complete'
+                }
+                await websocket.send(json.dumps(ack))
+                print("Acknowledgement sent to video_input")
+                return True
+            
+        except Exception as e:
+            print(f"Error sending acknowledgement: {e}")
+            return False
+
     def stop(self):
         """Stop and cleanup the controller"""
         print("\nStopping controller...")
@@ -454,6 +516,63 @@ class OutputController:
             print(f"Closing {name} controller...")
             controller.close()
         print("Controller stopped")
+
+    def get_venice_time(self):
+        """Get current time in Venice timezone"""
+        utc_now = datetime.now(pytz.utc)
+        venice_now = utc_now.astimezone(self.venice_tz)
+        return venice_now
+        
+    def get_csv_path(self):
+        """Get CSV path with date-based rotation"""
+        # Get current Venice time and format date string
+        venice_time = self.get_venice_time()
+        date_str = venice_time.strftime('%Y%m%d')
+        
+        # Return full path with date
+        return os.path.join(self.data_dir, f"processed_movement_{date_str}.csv")
+        
+    def save_to_csv(self, data):
+        """Save received data to CSV"""
+        try:
+            # Extract data from the message
+            timestamp = data.get('timestamp')
+            pot_values = data['data']['pot_values']
+            t_sin = data['data']['t_sin']
+            t_cos = data['data']['t_cos']
+            
+            # Create row data dictionary
+            row_data = {
+                'timestamp': timestamp,
+                **{f'pot_value_{i}': val for i, val in enumerate(pot_values)},
+                't_sin': t_sin,
+                't_cos': t_cos
+            }
+            
+            # Convert to DataFrame
+            df = pd.DataFrame([row_data])
+            
+            # Get CSV file path
+            csv_path = self.get_csv_path()
+            print(f"\nSaving data to CSV file: {csv_path}")
+            
+            # Check if file exists to decide whether to write header
+            file_exists = os.path.exists(csv_path)
+            
+            # Save to CSV
+            if file_exists:
+                # Append without header
+                df.to_csv(csv_path, mode='a', header=False, index=False)
+            else:
+                # Create new file with header
+                df.to_csv(csv_path, index=False)
+                
+            print(f"Successfully saved data to {csv_path}")
+            return True
+            
+        except Exception as e:
+            print(f"Error saving to CSV: {e}")
+            return False
 
 async def main():
     # Print welcome message
