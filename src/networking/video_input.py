@@ -38,6 +38,7 @@ class VideoInput:
         self.scale_factor = 1.0
         self.show_rois = True  # Toggle for ROI display
         self.calculating = False  # Initialize calculation state
+        self.save_needed = False  # Flag for when saving is needed
         
         # Frame buffer for movement calculation
         self.frame_buffer = []
@@ -304,7 +305,8 @@ class VideoInput:
                 
                 # Check if it's time to save movement vectors
                 if current_time - self.last_vector_time >= self.vector_interval:
-                    self.save_movement_vector()
+                    # We'll set a flag to indicate saving is needed
+                    self.save_needed = True
                     self.last_vector_time = current_time
             else:
                 # Clear movement buffers when stopping calculation
@@ -327,21 +329,24 @@ class VideoInput:
 
     def get_csv_path(self):
         """Get CSV path with date-based rotation"""
-        # Get project root directory
-        project_root = Path(__file__).parent.parent.parent
-        
-        # Get CSV file directory (data folder)
-        data_dir = project_root / 'data'
+        # Get base directory (supports both development and deployed environments)
+        if os.path.exists('/home/input-column/venice/data'):
+            # We're on the Raspberry Pi deployment
+            base_dir = Path('/home/input-column/venice/data')
+        else:
+            # We're in development environment
+            project_root = Path(__file__).parent.parent.parent
+            base_dir = project_root / 'data'
         
         # Ensure data directory exists
-        data_dir.mkdir(parents=True, exist_ok=True)
+        base_dir.mkdir(parents=True, exist_ok=True)
         
         # Get current Venice time and format date string
         venice_time = self.get_venice_time()
         date_str = venice_time.strftime('%Y%m%d')
         
         # Return full path with date
-        return data_dir / f"movement_vectors_{date_str}.csv"
+        return base_dir / f"movement_vectors_{date_str}.csv"
 
     async def save_movement_vector(self):
         """Save movement vector and send to controller when full"""
@@ -687,6 +692,14 @@ class VideoInput:
         except Exception as e:
             print(f"Error sending to controller: {e}")
             return False
+
+    async def check_and_save(self):
+        """Check if save is needed and perform if so"""
+        if self.save_needed and len(self.movement_buffers['roi_1']) >= 30:
+            await self.save_movement_vector()
+            self.save_needed = False
+            return True
+        return False
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 

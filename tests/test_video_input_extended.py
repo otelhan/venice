@@ -119,17 +119,6 @@ async def test_video_input(fullscreen=False):
         print(f"Directory exists: {csv_path.parent.exists()}")
         print(f"Directory is writable: {os.access(str(csv_path.parent), os.W_OK)}")
         
-        # Try creating an empty test file
-        test_file = csv_path.parent / "test_write.txt"
-        try:
-            with open(test_file, 'w') as f:
-                f.write("Test write access")
-            print(f"Successfully created test file at {test_file}")
-            os.remove(test_file)
-            print("Test file removed")
-        except Exception as e:
-            print(f"Error writing test file: {e}")
-        
         # Set up window
         window_name = "Venice Stream"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -153,6 +142,11 @@ async def test_video_input(fullscreen=False):
                     movements = video.process_frame(return_movements=True)
                     if movements:
                         print(f"\rFrame {frame_count} | Movements: {movements}", end="", flush=True)
+                        
+                        # Check and perform save if needed
+                        save_performed = await video.check_and_save()
+                        if save_performed:
+                            print(f"\nSaved movement vector at {video.get_venice_time()}")
                         
                         # Force a save check every 30 seconds
                         current_time = time.time()

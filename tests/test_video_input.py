@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import yaml
 import argparse  # Add argument parsing
+import asyncio
 
 @pytest.fixture
 def video_input():
@@ -131,7 +132,8 @@ def test_video_input(fullscreen=False):
                         current_time = time.time()
                         if current_time - last_save_time >= 30.0:
                             if len(video.movement_buffers['roi_1']) >= 30:
-                                video.save_movement_vector()
+                                # Use asyncio.create_task to handle the coroutine
+                                asyncio.create_task(video.save_movement_vector())
                                 last_save_time = current_time
                                 print(f"\nSaved movement vector at {video.get_venice_time()}")
                             
