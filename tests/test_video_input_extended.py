@@ -26,6 +26,7 @@ class VideoInputWithAck(VideoInput):
         self.last_message = None
         self.message_sent = False
         self.ack_destination = 'output'  # The controller that will send ACKs
+        self.should_send_next = True  # Flag to send data after receiving ACK
         
         # Print ACK info
         output_config = self.config['controllers'].get(self.ack_destination)
@@ -57,6 +58,7 @@ class VideoInputWithAck(VideoInput):
                     print(json.dumps(data, indent=2))
                     self.waiting_for_ack = False
                     self.message_sent = False
+                    self.should_send_next = True  # Flag to send next data
                     
         except websockets.exceptions.ConnectionClosed:
             print("\nAcknowledgement connection closed")
@@ -89,11 +91,21 @@ class VideoInputWithAck(VideoInput):
                 self.waiting_for_ack = True
                 self.message_sent = True
                 self.last_message = data
+                self.should_send_next = False  # Reset flag after sending
                 return True
 
         except Exception as e:
             print(f"Error sending to controller: {e}")
             return False
+    
+    async def check_and_try_send(self):
+        """Check if we should send data to controller"""
+        if self.should_send_next and not self.waiting_for_ack:
+            if len(self.movement_buffers['roi_1']) >= 30:
+                print("\nSending latest movement data to controller")
+                await self.send_movement_vector()
+                return True
+        return False
 
 async def test_video_input(fullscreen=False, debug=False):
     """Test video input with a Venice live stream"""
@@ -137,10 +149,11 @@ async def test_video_input(fullscreen=False, debug=False):
         
         print("\nStarting calculations automatically...")
         video.calculating = True  # Auto-start calculations
-        video.last_vector_time = 0  # Reset the last vector time to ensure immediate saving
+        video.last_vector_time = 0  # Reset the last vector time to ensure immediate vector calculation
+        video.last_save_time = 0    # Reset the last save time to ensure immediate saving
         
         frame_count = 0
-        last_save_time = time.time()
+        initial_send = True  # Flag to send first data
         
         while True:
             frame = video.get_frame()
@@ -155,28 +168,20 @@ async def test_video_input(fullscreen=False, debug=False):
                         if debug:
                             print(f"\rFrame {frame_count} | Movements: {movements}", end="", flush=True)
                         
-                        # Check and perform save if needed
+                        # Check and save to CSV if needed (based on save_interval)
                         save_performed = await video.check_and_save()
                         if save_performed:
-                            print(f"\nSaved movement vector at {video.get_venice_time()}")
+                            print(f"\nSaved to CSV at {video.get_venice_time()}")
                         
-                        # Force a save check every 30 seconds
-                        current_time = time.time()
-                        if current_time - last_save_time >= 30.0:
-                            # Force creation of CSV file even with empty buffer
-                            print(f"\nForcing CSV file creation at {video.get_venice_time()}")
-                            
-                            # Fill buffer with dummy data if needed
-                            if len(video.movement_buffers['roi_1']) < 30:
-                                missing_values = 30 - len(video.movement_buffers['roi_1'])
-                                print(f"Adding {missing_values} dummy values to buffer")
-                                for i in range(missing_values):
-                                    video.movement_buffers['roi_1'].append(50.0)  # Add medium movement value
-                            
-                            # Now try to save
-                            await video.save_movement_vector()
-                            last_save_time = current_time
-                            
+                        # Initial data send or after receiving ACK
+                        if initial_send and len(video.movement_buffers['roi_1']) >= 30:
+                            print("\nSending initial data")
+                            await video.send_movement_vector()
+                            initial_send = False
+                        else:
+                            # Try to send if acknowledgment received
+                            await video.check_and_try_send()
+                        
                 except Exception as e:
                     print(f"\nError in processing: {e}")
                 

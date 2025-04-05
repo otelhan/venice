@@ -47,7 +47,23 @@ class VideoInput:
         
         # Movement calculation timing
         self.frame_interval = 1.0  # Capture one frame per second
-        self.vector_interval = 30.0  # Save vectors every 30 seconds
+        self.vector_interval = 30.0  # Calculate movement vectors every 30 seconds
+        
+        # Get sampling config if available
+        sampling_config = self.config['video_input'].get('sampling', {})
+        if sampling_config:
+            # Override defaults with config values if present
+            self.frame_interval = float(sampling_config.get('frame_interval', self.frame_interval))
+            self.vector_interval = float(sampling_config.get('vector_interval', self.vector_interval))
+            
+        # Save interval can be different from vector calculation interval
+        self.save_interval = float(sampling_config.get('save_interval', self.vector_interval))
+        print(f"Movement calculation interval: {self.vector_interval} seconds")
+        print(f"CSV save interval: {self.save_interval} seconds")
+        
+        # Add timestamps for tracking intervals
+        self.last_vector_time = time.time()  # Last time vectors were calculated
+        self.last_save_time = time.time()    # Last time data was saved to CSV
         
         # Movement buffers
         self.vector_size = 30  # Store 30 values per ROI
@@ -298,16 +314,17 @@ class VideoInput:
                         movement = self.calculate_movement_rate(roi_config)
                         self.movement_buffers[roi_name].append(movement)
                         movements[roi_name] = movement
-                        
-                        # Keep buffer at vector_size
-                        if len(self.movement_buffers[roi_name]) > self.vector_size:
-                            self.movement_buffers[roi_name].pop(0)
                 
-                # Check if it's time to save movement vectors
+                # Check if it's time to calculate vectors (every vector_interval seconds)
                 if current_time - self.last_vector_time >= self.vector_interval:
-                    # We'll set a flag to indicate saving is needed
-                    self.save_needed = True
+                    # This would be where vector calculation happens if needed
                     self.last_vector_time = current_time
+                
+                # Check if it's time to save to CSV (every save_interval seconds)
+                if current_time - self.last_save_time >= self.save_interval:
+                    # Flag that we need to save to CSV
+                    self.save_needed = True
+                    self.last_save_time = current_time
             else:
                 # Clear movement buffers when stopping calculation
                 if hasattr(self, 'movement_buffers'):
@@ -348,17 +365,70 @@ class VideoInput:
         # Return full path with date
         return base_dir / f"movement_vectors_{date_str}.csv"
 
-    async def save_movement_vector(self):
-        """Save movement vector and send to controller when full"""
-        current_time = time.time()
-        
-        # Only save if we have enough values
+    async def check_and_save(self):
+        """Check if save is needed and save to CSV only (not sending to controller)"""
+        if self.save_needed and len(self.movement_buffers['roi_1']) >= 30:
+            # Save to CSV, but don't send to controller
+            success = await self.save_to_csv_only()
+            self.save_needed = False
+            return success
+        return False
+    
+    async def save_to_csv_only(self):
+        """Save movement vector to CSV only, without sending to controller"""
         if len(self.movement_buffers['roi_1']) >= 30:
-            # Scale values for transmission
+            # Scale values for CSV - use the latest 30 values
             scaled_values = []
+            # If we have more than 30 values, get the latest 30
+            buffer_values = self.movement_buffers['roi_1'][-30:]
+            
             for i in range(30):
-                raw_movement = self.movement_buffers['roi_1'][i]
-                scaled = self.scale_movement_log(raw_movement, 0, 100)  # Adjust min/max as needed
+                raw_movement = buffer_values[i]
+                scaled = self.scale_movement_log(raw_movement, 0, 100)
+                scaled_values.append(scaled)
+            
+            # Get current time in Venice
+            venice_time = self.get_venice_time()
+            t_sin, t_cos = self.encode_time(venice_time)
+            
+            # Get CSV file path and ensure parent directory exists
+            csv_path = self.get_csv_path()
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"\nSaving data to CSV file: {csv_path}")
+            
+            # Write data to CSV
+            try:
+                # Create CSV if it doesn't exist, append if it does
+                file_exists = csv_path.exists()
+                with open(csv_path, mode='a', newline='') as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        # Write header if new file
+                        writer.writerow(['timestamp', 't_sin', 't_cos'] + [f'movement_{i}' for i in range(30)])
+                    
+                    # Write data row
+                    writer.writerow([str(venice_time), t_sin, t_cos] + scaled_values)
+                print(f"Successfully wrote data to {csv_path}")
+                return True
+            except Exception as e:
+                print(f"Error writing to CSV: {e}")
+                return False
+        else:
+            print(f"Not enough values to save: {len(self.movement_buffers['roi_1'])}/30")
+            return False
+    
+    async def send_movement_vector(self):
+        """Send latest movement vector to controller"""
+        # Only send if we're not waiting for an ACK and have enough values
+        if len(self.movement_buffers['roi_1']) >= 30:
+            # Scale values for transmission - always use the latest 30 values
+            scaled_values = []
+            # Get the latest 30 values
+            buffer_values = self.movement_buffers['roi_1'][-30:]
+            
+            for i in range(30):
+                raw_movement = buffer_values[i]
+                scaled = self.scale_movement_log(raw_movement, 0, 100)
                 scaled_values.append(scaled)
             
             # Get current time in Venice
@@ -376,37 +446,20 @@ class VideoInput:
                 }
             }
             
-            # Get CSV path with date-based filename
-            csv_path = self.get_csv_path()
-            print(f"\nSaving data to CSV file: {csv_path}")
-            
-            # Create parent directory if it doesn't exist
-            csv_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write data to CSV
-            try:
-                # Create CSV if it doesn't exist, append if it does
-                file_exists = csv_path.exists()
-                with open(csv_path, mode='a', newline='') as f:
-                    writer = csv.writer(f)
-                    if not file_exists:
-                        # Write header if new file
-                        writer.writerow(['timestamp', 't_sin', 't_cos'] + [f'movement_{i}' for i in range(30)])
-                    
-                    # Write data row
-                    writer.writerow([str(venice_time), t_sin, t_cos] + scaled_values)
-                print(f"Successfully wrote data to {csv_path}")
-            except Exception as e:
-                print(f"Error writing to CSV: {e}")
-            
             # Send to controller
-            await self.send_to_controller(data)
+            success = await self.send_to_controller(data)
             
-            # Clear buffer after sending
-            self.movement_buffers['roi_1'] = []
+            # We don't clear the buffer after sending, so new data will continue to accumulate
+            # The next send will use the latest 30 values from the buffer
             
-            # Update last vector time
-            self.last_vector_time = current_time
+            return success
+        else:
+            print(f"Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
+            return False
+
+    async def save_movement_vector(self):
+        """Legacy method - now just calls save_to_csv_only for backward compatibility"""
+        return await self.save_to_csv_only()
 
     def run(self, stream_url):
         """Main processing loop"""
@@ -692,14 +745,6 @@ class VideoInput:
         except Exception as e:
             print(f"Error sending to controller: {e}")
             return False
-
-    async def check_and_save(self):
-        """Check if save is needed and perform if so"""
-        if self.save_needed and len(self.movement_buffers['roi_1']) >= 30:
-            await self.save_movement_vector()
-            self.save_needed = False
-            return True
-        return False
 
 class VideoInputWithAck(VideoInput):
     def __init__(self):
