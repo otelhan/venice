@@ -3,11 +3,18 @@ import websockets
 import json
 import cv2
 import numpy as np
-from src.networking.video_input import VideoInput
 import time
 import os
 from pathlib import Path
 import yaml
+import sys
+
+# Add project root to path
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+from src.networking.video_input import VideoInput
 
 class VideoInputWithAck(VideoInput):
     def __init__(self):
