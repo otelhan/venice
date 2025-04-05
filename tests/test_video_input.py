@@ -111,22 +111,30 @@ def test_video_input(fullscreen=False):
         
         print("\nStarting calculations automatically...")
         video.calculating = True  # Auto-start calculations
+        video.last_vector_time = 0  # Reset the last vector time to ensure immediate saving
         
         frame_count = 0
         last_save_time = time.time()
-        save_interval = 1.0
         
         while True:
             frame = video.get_frame()
             if frame is not None:
                 frame_count += 1
-                current_time = time.time()
                 
                 # Process frame (always calculating)
                 try:
                     movements = video.process_frame(return_movements=True)
                     if movements:
                         print(f"\rFrame {frame_count} | Movements: {movements}", end="", flush=True)
+                        
+                        # Force a save check every 30 seconds
+                        current_time = time.time()
+                        if current_time - last_save_time >= 30.0:
+                            if len(video.movement_buffers['roi_1']) >= 30:
+                                video.save_movement_vector()
+                                last_save_time = current_time
+                                print(f"\nSaved movement vector at {video.get_venice_time()}")
+                            
                 except Exception as e:
                     print(f"\nError in processing: {e}")
                 
