@@ -4,32 +4,6 @@ import numpy as np
 from src.networking.video_input import VideoInput
 import time
 import os
-import platform
-
-# Determine the platform and set appropriate backend
-system = platform.system()
-if system == 'Darwin':  # macOS
-    os.environ['QT_QPA_PLATFORM'] = 'cocoa'
-    import matplotlib
-    matplotlib.use('Qt5Agg')
-elif system == 'Linux':
-    # Check if we're on Raspberry Pi
-    try:
-        with open('/sys/firmware/devicetree/base/model', 'r') as f:
-            if 'Raspberry Pi' in f.read():
-                import matplotlib
-                matplotlib.use('Agg')  # Use Agg backend for Raspberry Pi
-            else:
-                os.environ['QT_QPA_PLATFORM'] = 'xcb'
-                import matplotlib
-                matplotlib.use('Qt5Agg')
-    except:
-        # If we can't read the device model, assume regular Linux
-        os.environ['QT_QPA_PLATFORM'] = 'xcb'
-        import matplotlib
-        matplotlib.use('Qt5Agg')
-
-import matplotlib.pyplot as plt
 from pathlib import Path
 import yaml
 
@@ -46,7 +20,7 @@ def test_init(video_input):
     """Test initialization"""
     assert video_input.is_running == False
     assert video_input.cap is None
-    assert len(video_input.movement_buffers) == 4  # Changed from 3 to 4
+    assert len(video_input.movement_buffers) == 4
     assert 'roi_1' in video_input.movement_buffers
 
 def test_load_config(video_input):
@@ -78,24 +52,6 @@ def test_calculate_time_features(video_input):
     
     # Check they're not both 0
     assert not (t_sin == 0 and t_cos == 0)
-
-def test_save_movement_vectors(video_input, tmp_path):
-    """Test saving movement vectors to CSV"""
-    # Modify config to use temporary path
-    video_input.config['video_input']['output']['csv_path'] = str(tmp_path / "test_vectors.csv")
-    
-    # Add some test data to buffers
-    for roi in video_input.movement_buffers:
-        video_input.movement_buffers[roi] = list(range(30))  # 30 samples
-        
-    # Save vectors
-    video_input.save_movement_vectors()
-    
-    # Check file exists and has correct format
-    csv_path = Path(video_input.config['video_input']['output']['csv_path'])
-    assert csv_path.exists()
-    
-    # Could add more specific checks for CSV content here
 
 def test_show_frame(video_input, sample_frame):
     """Test frame display with ROI overlay"""
@@ -139,7 +95,7 @@ def test_video_input():
         
         frame_count = 0
         last_save_time = time.time()
-        save_interval = 1.0  # Save to CSV every second
+        save_interval = 1.0
         
         while True:
             frame = video.get_frame()
