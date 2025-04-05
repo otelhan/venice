@@ -113,6 +113,23 @@ async def test_video_input(fullscreen=False):
     assert video.connect_to_stream(url), "Failed to connect to stream"
     
     try:
+        # Test CSV file path and directory access
+        csv_path = video.get_csv_path()
+        print(f"\nCSV file will be saved to: {csv_path}")
+        print(f"Directory exists: {csv_path.parent.exists()}")
+        print(f"Directory is writable: {os.access(str(csv_path.parent), os.W_OK)}")
+        
+        # Try creating an empty test file
+        test_file = csv_path.parent / "test_write.txt"
+        try:
+            with open(test_file, 'w') as f:
+                f.write("Test write access")
+            print(f"Successfully created test file at {test_file}")
+            os.remove(test_file)
+            print("Test file removed")
+        except Exception as e:
+            print(f"Error writing test file: {e}")
+        
         # Set up window
         window_name = "Venice Stream"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -140,10 +157,19 @@ async def test_video_input(fullscreen=False):
                         # Force a save check every 30 seconds
                         current_time = time.time()
                         if current_time - last_save_time >= 30.0:
-                            if len(video.movement_buffers['roi_1']) >= 30:
-                                await video.save_movement_vector()
-                                last_save_time = current_time
-                                print(f"\nSaved movement vector at {video.get_venice_time()}")
+                            # Force creation of CSV file even with empty buffer
+                            print(f"\nForcing CSV file creation at {video.get_venice_time()}")
+                            
+                            # Fill buffer with dummy data if needed
+                            if len(video.movement_buffers['roi_1']) < 30:
+                                missing_values = 30 - len(video.movement_buffers['roi_1'])
+                                print(f"Adding {missing_values} dummy values to buffer")
+                                for i in range(missing_values):
+                                    video.movement_buffers['roi_1'].append(50.0)  # Add medium movement value
+                            
+                            # Now try to save
+                            await video.save_movement_vector()
+                            last_save_time = current_time
                             
                 except Exception as e:
                     print(f"\nError in processing: {e}")

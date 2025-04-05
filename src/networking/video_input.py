@@ -51,11 +51,6 @@ class VideoInput:
         # Movement buffers
         self.vector_size = 30  # Store 30 values per ROI
         
-        # Create output directories if needed
-        for path in [self.config['video_input']['output']['csv_path'],
-                    self.config['video_input']['output']['plot_path']]:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-
         # Add Venice timezone
         self.venice_tz = pytz.timezone('Europe/Rome')  # Venice uses same timezone as Rome
 
@@ -332,10 +327,21 @@ class VideoInput:
 
     def get_csv_path(self):
         """Get CSV path with date-based rotation"""
-        base_path = Path(self.config['video_input']['output']['csv_path'])
-        venice_time = self.get_venice_time()  # Use Venice timezone
+        # Get project root directory
+        project_root = Path(__file__).parent.parent.parent
+        
+        # Get CSV file directory (data folder)
+        data_dir = project_root / 'data'
+        
+        # Ensure data directory exists
+        data_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get current Venice time and format date string
+        venice_time = self.get_venice_time()
         date_str = venice_time.strftime('%Y%m%d')
-        return base_path.parent / f"movement_vectors_{date_str}.csv"
+        
+        # Return full path with date
+        return data_dir / f"movement_vectors_{date_str}.csv"
 
     async def save_movement_vector(self):
         """Save movement vector and send to controller when full"""
@@ -365,9 +371,28 @@ class VideoInput:
                 }
             }
             
-            # Print CSV file path
+            # Get CSV path with date-based filename
             csv_path = self.get_csv_path()
             print(f"\nSaving data to CSV file: {csv_path}")
+            
+            # Create parent directory if it doesn't exist
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write data to CSV
+            try:
+                # Create CSV if it doesn't exist, append if it does
+                file_exists = csv_path.exists()
+                with open(csv_path, mode='a', newline='') as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        # Write header if new file
+                        writer.writerow(['timestamp', 't_sin', 't_cos'] + [f'movement_{i}' for i in range(30)])
+                    
+                    # Write data row
+                    writer.writerow([str(venice_time), t_sin, t_cos] + scaled_values)
+                print(f"Successfully wrote data to {csv_path}")
+            except Exception as e:
+                print(f"Error writing to CSV: {e}")
             
             # Send to controller
             await self.send_to_controller(data)
