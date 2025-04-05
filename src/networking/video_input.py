@@ -333,7 +333,8 @@ class VideoInput:
     def get_csv_path(self):
         """Get CSV path with date-based rotation"""
         base_path = Path(self.config['video_input']['output']['csv_path'])
-        date_str = datetime.now().strftime('%Y%m%d')
+        venice_time = self.get_venice_time()  # Use Venice timezone
+        date_str = venice_time.strftime('%Y%m%d')
         return base_path.parent / f"movement_vectors_{date_str}.csv"
 
     def save_movement_vector(self):
@@ -352,14 +353,18 @@ class VideoInput:
                 max_val = max(roi1_values)
                 scaled_values = [self.scale_movement_log(v, min_val, max_val) for v in roi1_values]
                 
+                # Get current Venice time and encode it
+                venice_time = self.get_venice_time()
+                t_sin, t_cos = self.encode_time(venice_time)
+                
                 # Create data packet like builder
                 data = {
                     'type': 'movement_data',
-                    'timestamp': str(datetime.now()),
+                    'timestamp': str(venice_time),
                     'data': {
                         'pot_values': scaled_values,
-                        't_sin': np.sin(2 * np.pi * current_time / 86400),  # Daily cycle
-                        't_cos': np.cos(2 * np.pi * current_time / 86400)
+                        't_sin': t_sin,  # Using Venice timezone
+                        't_cos': t_cos   # Using Venice timezone
                     }
                 }
                 
