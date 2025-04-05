@@ -19,6 +19,7 @@ class OutputState(Enum):
     ROTATE_CUBES = auto()
     SHOW_TIME = auto()
     TEST_MODE = auto()
+    TEST_CLOCK_SECTOR = auto()  # New state for testing specific clock sectors
 
 class OutputController:
     def __init__(self, mode='operation'):
@@ -29,6 +30,7 @@ class OutputController:
         self.clock_direction = 1  # 1 for increasing angle, -1 for decreasing
         self.clock_current_angle = 0
         self.mode = mode
+        self.test_sector = 0  # For testing specific clock sectors
         
         # Test data
         self.test_data = None
@@ -244,6 +246,10 @@ class OutputController:
         """Handle the current state"""
         if self.current_state == OutputState.IDLE:
             print("Waiting for data...")
+            
+            # In test mode, ask for the next action
+            if self.mode == 'test':
+                await self.handle_test_menu()
 
         elif self.current_state == OutputState.PREDICT:
             print("Predicting (placeholder - waiting 3 seconds)")
@@ -290,6 +296,11 @@ class OutputController:
             else:
                 print("No test data available")
                 await self.transition_to(OutputState.IDLE)
+                
+        elif self.current_state == OutputState.TEST_CLOCK_SECTOR:
+            # Move clock to the specified test sector
+            await self.move_clock_to_sector(self.test_sector)
+            await self.transition_to(OutputState.IDLE)
 
     async def print_servo_positions(self):
         """Print current position of all servos"""
@@ -413,11 +424,11 @@ class OutputController:
             'type': 'servo',
             'controller': 'secondary',
             'servo_id': 1,
-            'position': 0,  # 0 degrees is center
+            'position': 0,  # 0 degrees is center (will be converted to microseconds)
             'time_ms': 1000
         }
         
-        print("Moving to center position...")
+        print("Moving to center position (0°)...")
         response = self.output_node.process_command(center_command)
         if response['status'] == 'ok':
             print("✓ Clock centered")
@@ -435,7 +446,7 @@ class OutputController:
                 'type': 'servo',
                 'controller': 'secondary',
                 'servo_id': 1,
-                'position': angle,
+                'position': angle,  # Angle in degrees (will be converted to microseconds)
                 'time_ms': 500  # Faster movement for rotation
             }
             
@@ -454,7 +465,7 @@ class OutputController:
             'type': 'servo',
             'controller': 'secondary',
             'servo_id': 1,
-            'position': target_angle,
+            'position': target_angle,  # Angle in degrees (will be converted to microseconds)
             'time_ms': 1000
         }
         
@@ -574,6 +585,147 @@ class OutputController:
             print(f"Error saving to CSV: {e}")
             return False
 
+    async def move_clock_to_sector(self, sector):
+        """Move clock directly to a specified sector (0-5)"""
+        print(f"\n=== Moving Clock to Sector {sector + 1}/6 ===")
+        
+        if sector < 0 or sector > 5:
+            print("Error: Sector must be between 0 and 5")
+            return False
+            
+        # Get angle for the requested sector
+        target_angle = self.clock_positions[sector]
+        print(f"Sector {sector + 1}: {sector * 4}-{(sector + 1) * 4} hours")
+        print(f"Current angle: {self.clock_current_angle:.1f}°")
+        print(f"Target angle: {target_angle:.1f}°")
+        
+        # First return to center
+        center_command = {
+            'type': 'servo',
+            'controller': 'secondary',
+            'servo_id': 1,
+            'position': 0,  # 0 degrees is center (will be converted to microseconds)
+            'time_ms': 1000
+        }
+        
+        print("Moving to center position...")
+        response = self.output_node.process_command(center_command)
+        if response['status'] == 'ok':
+            print("✓ Clock centered")
+            self.clock_current_angle = 0
+            await asyncio.sleep(1)  # Wait 1 second at center
+        else:
+            print("✗ Failed to center clock servo")
+            return False
+        
+        # Move directly to target position
+        clock_command = {
+            'type': 'servo',
+            'controller': 'secondary',
+            'servo_id': 1,
+            'position': target_angle,  # Angle in degrees (will be converted to microseconds)
+            'time_ms': 1000
+        }
+        
+        response = self.output_node.process_command(clock_command)
+        if response['status'] == 'ok':
+            print(f"✓ Clock moved to sector {sector + 1} ({target_angle:.1f}°)")
+            self.clock_current_angle = target_angle
+        else:
+            print("✗ Failed to move clock servo")
+            return False
+        
+        await asyncio.sleep(1)
+        print("=== Clock Move Complete ===")
+        return True
+        
+    async def handle_test_menu(self):
+        """Handle test mode menu"""
+        print("\n=== Test Mode Menu ===")
+        print("1. Load sample data and process")
+        print("2. Test clock sector movement")
+        print("3. Reset all servos to center")
+        print("4. Help - Clock sectors explanation")
+        print("5. Exit test mode")
+        
+        choice = input("\nEnter your choice (1-5): ").strip()
+        
+        if choice == '1':
+            # Load test data and process
+            self.load_test_data()
+            await self.transition_to(OutputState.TEST_MODE)
+            
+        elif choice == '2':
+            # Test clock sector movement
+            print("\nSelect clock sector to move to:")
+            print("-------------------------------")
+            print("Sector | Time Range | Angle")
+            print("-------------------------------")
+            print("0      | 00-03 hrs  | -150°")
+            print("1      | 04-07 hrs  | -90°")
+            print("2      | 08-11 hrs  | -30°")
+            print("3      | 12-15 hrs  | +30°")
+            print("4      | 16-19 hrs  | +90°")
+            print("5      | 20-23 hrs  | +150°")
+            print("-------------------------------")
+            
+            sector_choice = input("\nEnter sector (0-5): ").strip()
+            try:
+                sector = int(sector_choice)
+                if 0 <= sector <= 5:
+                    self.test_sector = sector
+                    await self.transition_to(OutputState.TEST_CLOCK_SECTOR)
+                else:
+                    print("Invalid sector number. Please enter a number between 0 and 5.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+                
+        elif choice == '3':
+            # Reset all servos to center
+            await self.center_all_servos()
+            
+        elif choice == '4':
+            # Help
+            self.display_help()
+            
+        elif choice == '5':
+            print("\nExiting test mode...")
+            os._exit(0)
+            
+        else:
+            print("\nInvalid choice. Please try again.")
+            
+    def display_help(self):
+        """Display help information about clock sectors"""
+        print("\n=== Clock Sectors Explanation ===")
+        print("The clock indicates time by pointing to one of 6 sectors around the circle.")
+        print("Each sector represents a 4-hour period of the day:")
+        print()
+        print("Sector 0: 00:00-03:59 (-150° position)")
+        print("         Midnight to early morning")
+        print()
+        print("Sector 1: 04:00-07:59 (-90° position)")
+        print("         Early morning")
+        print()
+        print("Sector 2: 08:00-11:59 (-30° position)")
+        print("         Late morning")
+        print()
+        print("Sector 3: 12:00-15:59 (+30° position)")
+        print("         Early afternoon")
+        print()
+        print("Sector 4: 16:00-19:59 (+90° position)")
+        print("         Late afternoon/early evening")
+        print()
+        print("Sector 5: 20:00-23:59 (+150° position)")
+        print("         Evening/night")
+        print()
+        print("The time is calculated from sine/cosine values that represent")
+        print("the cyclical nature of time throughout the day.")
+        print("These values are converted to an angle between -180° and 180°,")
+        print("which is then mapped to one of the six sectors.")
+        print("\nPress Enter to return to the menu...")
+        input()
+
 async def main():
     # Print welcome message
     print("\n=== Output Controller ===")
@@ -591,6 +743,10 @@ async def main():
     controller = OutputController(mode)
     
     try:
+        # Center all servos at startup
+        await controller.center_all_servos()
+        
+        # Start controller
         await controller.start()
     except KeyboardInterrupt:
         print("\nShutting down...")
