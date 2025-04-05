@@ -204,8 +204,16 @@ class OutputController:
                 }
             }
             
+            # Process the data through state machine
             await self.transition_to(OutputState.PREDICT)
-            return {"status": "ok", "message": "Data accepted"}
+            
+            # Return acknowledgment with proper format
+            return {
+                "type": "ack",
+                "timestamp": timestamp,
+                "status": "success",
+                "message": "Data processed successfully"
+            }
             
         elif msg_type == 'test':
             print("\nReceived test command")

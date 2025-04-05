@@ -40,7 +40,7 @@ tmux split-window -h
 # Configure the first pane (video input)
 tmux select-pane -t 0
 # Add trap to monitor video input exit
-tmux send-keys "source venv/bin/activate && echo 'Starting video input...' && python -m tests.test_video_input --fullscreen; tmux kill-session -t venice" C-m
+tmux send-keys "source venv/bin/activate && echo 'Starting video input...' && python -m tests.test_video_input; tmux kill-session -t venice" C-m
 
 # Configure the second pane (reservoir builder)
 tmux select-pane -t 1
