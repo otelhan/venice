@@ -8,10 +8,6 @@ import os
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
-import matplotlib
-matplotlib.use('Qt5Agg', force=True)
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
-import matplotlib.pyplot as plt
 import csv
 import pytz  # Added for timezone handling
 import websockets  # Add this import at the top
@@ -19,10 +15,10 @@ import json
 import asyncio
 
 # Use cocoa backend for Mac, xcb for Linux
-if os.uname().sysname == 'Darwin':  # macOS
-    os.environ['QT_QPA_PLATFORM'] = 'cocoa'
-else:  # Linux
-    os.environ['QT_QPA_PLATFORM'] = 'xcb'
+# if os.uname().sysname == 'Darwin':  # macOS
+#     os.environ['QT_QPA_PLATFORM'] = 'cocoa'
+# else:  # Linux
+#     os.environ['QT_QPA_PLATFORM'] = 'xcb'
 
 class VideoInput:
     def __init__(self):
@@ -84,6 +80,10 @@ class VideoInput:
             print(f"URI: ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}")
         else:
             print(f"\nWarning: No configuration found for {self.destination}")
+
+        # Remove or set to False
+        self.show_plots = False
+        self.plots_initialized = False
 
     def load_config(self):
         """Load and initialize config with default ROI settings if needed"""
@@ -268,75 +268,12 @@ class VideoInput:
         return np.clip(scaled_score, 20, 127)
 
     def init_plots(self):
-        """Initialize plotting setup"""
-        if self.plots_initialized:
-            return
-            
-        plt.ion()  # Enable interactive mode
-        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(10, 8))
-        self.fig.suptitle('Movement Analysis')
-        
-        # Movement plot (top)
-        self.movement_lines = {}
-        colors = ['r', 'g', 'b']
-        for i, roi in enumerate(['roi_1', 'roi_2', 'roi_3']):
-            self.movement_lines[roi], = self.ax1.plot([], [], colors[i], label=f'ROI {i+1}')
-        self.ax1.set_title('Movement Data')
-        self.ax1.set_ylim(0, 100)
-        self.ax1.legend()
-        
-        # Format x-axis to show timestamps
-        self.ax1.xaxis.set_major_formatter(matplotlib.dates.DateFormatter('%H:%M:%S'))
-        self.ax1.tick_params(axis='x', rotation=45)
-        
-        # Time encoding plot (bottom)
-        self.time_line_sin, = self.ax2.plot([], [], 'b', label='Sin(t)')
-        self.time_line_cos, = self.ax2.plot([], [], 'r', label='Cos(t)')
-        self.ax2.set_title('Time Encoding')
-        self.ax2.set_ylim(-1.1, 1.1)
-        self.ax2.legend()
-        self.ax2.xaxis.set_major_formatter(matplotlib.dates.DateFormatter('%H:%M:%S'))
-        self.ax2.tick_params(axis='x', rotation=45)
-        
-        plt.tight_layout()
-        self.plots_initialized = True
+        """Disabled in headless mode"""
+        pass
 
     def update_plots(self):
-        """Update movement and time encoding plots"""
-        if not self.show_plots:
-            return
-            
-        current_time = datetime.now()
-        self.time_points.append(current_time)
-        
-        # Update time features
-        t_sin, t_cos = self.encode_time(current_time)
-        self.time_features['sin'].append(t_sin)
-        self.time_features['cos'].append(t_cos)
-        
-        # Maintain buffer size
-        if len(self.time_points) > self.plot_buffer_size:
-            self.time_points.pop(0)
-            self.time_features['sin'].pop(0)
-            self.time_features['cos'].pop(0)
-            for roi in self.movement_data:
-                if len(self.movement_data[roi]) > self.plot_buffer_size:
-                    self.movement_data[roi].pop(0)
-        
-        # Update plots with timestamps
-        for roi, line in self.movement_lines.items():
-            line.set_data(self.time_points, self.movement_data[roi])
-        self.ax1.relim()
-        self.ax1.autoscale_view()
-        
-        self.time_line_sin.set_data(self.time_points, self.time_features['sin'])
-        self.time_line_cos.set_data(self.time_points, self.time_features['cos'])
-        self.ax2.relim()
-        self.ax2.autoscale_view()
-        
-        # Draw and flush
-        self.fig.canvas.draw_idle()
-        self.fig.canvas.flush_events()
+        """Disabled in headless mode"""
+        pass
 
     def process_frame(self, return_movements=False):
         """Process a single frame with error handling"""

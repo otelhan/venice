@@ -4,17 +4,6 @@ import numpy as np
 from src.networking.video_input import VideoInput
 import time
 import os
-
-# Use cocoa backend for Mac, xcb for Linux
-if os.uname().sysname == 'Darwin':  # macOS
-    os.environ['QT_QPA_PLATFORM'] = 'cocoa'
-else:  # Linux
-    os.environ['QT_QPA_PLATFORM'] = 'xcb'
-
-import matplotlib
-matplotlib.use('Qt5Agg', force=True)
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
-import matplotlib.pyplot as plt
 from pathlib import Path
 import yaml
 
