@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 import pandas as pd
 import matplotlib
+import platform
 matplotlib.use('Qt5Agg', force=True)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 import matplotlib.pyplot as plt
@@ -18,11 +19,31 @@ import websockets  # Add this import at the top
 import json
 import asyncio
 
-# Use cocoa backend for Mac, xcb for Linux
-if os.uname().sysname == 'Darwin':  # macOS
+# Determine the platform and set appropriate backend
+system = platform.system()
+if system == 'Darwin':  # macOS
     os.environ['QT_QPA_PLATFORM'] = 'cocoa'
-else:  # Linux
-    os.environ['QT_QPA_PLATFORM'] = 'xcb'
+    import matplotlib
+    matplotlib.use('Qt5Agg')
+    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+elif system == 'Linux':
+    # Check if we're on Raspberry Pi
+    try:
+        with open('/sys/firmware/devicetree/base/model', 'r') as f:
+            if 'Raspberry Pi' in f.read():
+                import matplotlib
+                matplotlib.use('Agg')  # Use Agg backend for Raspberry Pi
+            else:
+                os.environ['QT_QPA_PLATFORM'] = 'xcb'
+                import matplotlib
+                matplotlib.use('Qt5Agg')
+                from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+    except:
+        # If we can't read the device model, assume regular Linux
+        os.environ['QT_QPA_PLATFORM'] = 'xcb'
+        import matplotlib
+        matplotlib.use('Qt5Agg')
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 
 class VideoInput:
     def __init__(self):
