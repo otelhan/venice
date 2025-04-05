@@ -337,47 +337,41 @@ class VideoInput:
         date_str = venice_time.strftime('%Y%m%d')
         return base_path.parent / f"movement_vectors_{date_str}.csv"
 
-    def save_movement_vector(self):
+    async def save_movement_vector(self):
         """Save movement vector and send to controller when full"""
         current_time = time.time()
         
-        # Only proceed if enough time has passed
-        if current_time - self.last_vector_time >= self.vector_interval:
-            # Check if ROI 1 has a full vector
-            if len(self.movement_buffers['roi_1']) >= 30:
-                # Get ROI 1 movement values
-                roi1_values = self.movement_buffers['roi_1'][-30:]  # Last 30 values
-                
-                # Scale values
-                min_val = min(roi1_values)
-                max_val = max(roi1_values)
-                scaled_values = [self.scale_movement_log(v, min_val, max_val) for v in roi1_values]
-                
-                # Get current Venice time and encode it
-                venice_time = self.get_venice_time()
-                t_sin, t_cos = self.encode_time(venice_time)
-                
-                # Create data packet like builder
-                data = {
-                    'type': 'movement_data',
-                    'timestamp': str(venice_time),
-                    'data': {
-                        'pot_values': scaled_values,
-                        't_sin': t_sin,  # Using Venice timezone
-                        't_cos': t_cos   # Using Venice timezone
-                    }
+        # Only save if we have enough values
+        if len(self.movement_buffers['roi_1']) >= 30:
+            # Scale values for transmission
+            scaled_values = []
+            for i in range(30):
+                raw_movement = self.movement_buffers['roi_1'][i]
+                scaled = self.scale_movement_log(raw_movement, 0, 100)  # Adjust min/max as needed
+                scaled_values.append(scaled)
+            
+            # Get current time in Venice
+            venice_time = self.get_venice_time()
+            t_sin, t_cos = self.encode_time(venice_time)
+            
+            # Create data packet
+            data = {
+                'type': 'movement_data',
+                'timestamp': str(venice_time),
+                'data': {
+                    'pot_values': scaled_values,
+                    't_sin': t_sin,
+                    't_cos': t_cos
                 }
-                
-                # Create new event loop for sending data
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(self.send_to_controller(data))
-                    loop.close()
-                    print("\nMovement vector sent to controller")
-                except Exception as e:
-                    print(f"\nError sending to controller: {e}")
-
+            }
+            
+            # Send to controller
+            await self.send_to_controller(data)
+            
+            # Clear buffer after sending
+            self.movement_buffers['roi_1'] = []
+            
+            # Update last vector time
             self.last_vector_time = current_time
 
     def run(self, stream_url):
