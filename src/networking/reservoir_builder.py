@@ -66,10 +66,10 @@ class ReservoirModelBuilder:
             print(f"\nProcessing {file_path.name}")
             self.current_file = file_path
             
-            # Read first row
+            # Read file and check if we have enough data points (4 * 30 seconds = 2 minutes)
             df = pd.read_csv(file_path)
-            if df.empty:
-                print("File is empty")
+            if len(df) < 4:
+                print(f"Not enough data points yet (have {len(df)}, need at least 4)")
                 return False
                 
             # Send first row to destination
@@ -87,6 +87,9 @@ class ReservoirModelBuilder:
                     't_cos': float(first_row['t_cos'])
                 }
             }
+            
+            # Store the timestamp we're processing to avoid duplicates
+            self.last_processed_timestamp = first_row['timestamp'] if 'timestamp' in first_row else None
             
             # Send to destination
             success = await self.send_to_destination(data)
@@ -192,15 +195,19 @@ class ReservoirModelBuilder:
                 print("No file being processed")
                 return False
 
-            # Read current file
+            # Re-read the file to get any new rows
             df = pd.read_csv(self.current_file)
             
-            # Get current row index from state
-            current_index = getattr(self, 'current_row_index', 0)
-            next_index = current_index + 1
+            # Find the next unprocessed row
+            if hasattr(self, 'last_processed_timestamp') and self.last_processed_timestamp:
+                # Find the index of the last processed row
+                processed_idx = df[df['timestamp'] == self.last_processed_timestamp].index[0]
+                next_index = processed_idx + 1
+            else:
+                next_index = 0
 
             if next_index >= len(df):
-                print("Reached end of file")
+                print("Reached end of current data, waiting for more...")
                 return False
 
             # Get next row
@@ -231,7 +238,8 @@ class ReservoirModelBuilder:
             
             if success:
                 print(f"Sent row {next_index} of {len(df)-1}")
-                self.current_row_index = next_index  # Update index after successful send
+                # Update the last processed timestamp
+                self.last_processed_timestamp = row['timestamp'] if 'timestamp' in row else None
                 return True
             else:
                 print("Failed to send next row")
@@ -245,9 +253,14 @@ class ReservoirModelBuilder:
     async def start(self):
         """Start by sending first row to destination, then listen for trainer"""
         try:
-            # Get data file from config
-            data_file = "movement_vectors_20250316.csv"
-            self.current_file = os.path.join("data", data_file)
+            # Get latest CSV file
+            csv_files = self.list_available_data()
+            if not csv_files:
+                print("No data files found")
+                return
+
+            # Use the most recent file
+            self.current_file = max(csv_files, key=lambda p: p.stat().st_mtime)
             print(f"\nUsing data file: {self.current_file}")
 
             # First send data to destination
@@ -271,14 +284,17 @@ class ReservoirModelBuilder:
                 print(f"Current state: {self.current_state.name}")
                 print("Waiting for acknowledgement before sending next row...")
 
-                # Keep the server running until all data is sent
+                # Keep the server running and check for new data
                 while True:
                     if self.current_state == BuilderState.IDLE:
-                        if hasattr(self, 'current_row_index'):
-                            df = pd.read_csv(self.current_file)
-                            if self.current_row_index >= len(df) - 1:
-                                print("All data sent, stopping server")
-                                break
+                        # Re-read the file to check for new rows
+                        df = pd.read_csv(self.current_file)
+                        if hasattr(self, 'last_processed_timestamp'):
+                            processed_idx = df[df['timestamp'] == self.last_processed_timestamp].index[0]
+                            if processed_idx >= len(df) - 1:
+                                # We've processed all rows, wait for more data
+                                await asyncio.sleep(5)  # Wait 5 seconds before checking again
+                                continue
                     await asyncio.sleep(0.1)
 
         except Exception as e:

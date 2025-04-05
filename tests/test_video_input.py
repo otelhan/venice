@@ -6,6 +6,7 @@ import time
 import os
 from pathlib import Path
 import yaml
+import argparse  # Add argument parsing
 
 @pytest.fixture
 def video_input():
@@ -77,13 +78,14 @@ def test_show_frame(video_input, sample_frame):
     assert result == True
     cv2.destroyAllWindows()
 
-def test_video_input():
+def test_video_input(fullscreen=False):
     """Test video input with a Venice live stream"""
     print("\nTesting video input with Venice live stream...")
     print("\nControls:")
     print("'s' - Select all ROIs")
     print("'r' - Select single ROI")
     print("'t' - Toggle ROI display")
+    print("'f' - Toggle fullscreen")
     print("'q' - Quit")
     
     # Create video input
@@ -101,10 +103,11 @@ def test_video_input():
     assert video.connect_to_stream(url), "Failed to connect to stream"
     
     try:
-        # Set up full screen window
+        # Set up window
         window_name = "Venice Stream"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        if fullscreen:
+            cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         
         print("\nStarting calculations automatically...")
         video.calculating = True  # Auto-start calculations
@@ -130,7 +133,7 @@ def test_video_input():
                 # Show frame
                 video.show_frame(frame.copy(), window_name)
                 
-                # Only check for quit and ROI commands
+                # Check for commands
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     print("\nQuitting...")
@@ -144,6 +147,13 @@ def test_video_input():
                 elif key == ord('t'):
                     video.show_rois = not video.show_rois
                     print(f"\nROI display: {'On' if video.show_rois else 'Off'}")
+                elif key == ord('f'):  # Add fullscreen toggle
+                    fullscreen = not fullscreen
+                    if fullscreen:
+                        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    else:
+                        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                    print(f"\nFullscreen: {'On' if fullscreen else 'Off'}")
                 
     except Exception as e:
         print(f"\nUnexpected error: {e}")
@@ -151,4 +161,8 @@ def test_video_input():
         video.close()
 
 if __name__ == "__main__":
-    test_video_input() 
+    parser = argparse.ArgumentParser(description='Video Input Test')
+    parser.add_argument('--fullscreen', action='store_true', help='Start in fullscreen mode')
+    args = parser.parse_args()
+    
+    test_video_input(fullscreen=args.fullscreen) 
