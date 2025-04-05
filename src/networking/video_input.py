@@ -314,6 +314,12 @@ class VideoInput:
                         movement = self.calculate_movement_rate(roi_config)
                         self.movement_buffers[roi_name].append(movement)
                         movements[roi_name] = movement
+                        
+                        # Limit buffer size to prevent unbounded growth
+                        max_buffer_size = 100  # Keep last 100 values maximum
+                        if len(self.movement_buffers[roi_name]) > max_buffer_size:
+                            # Remove oldest values, keeping the most recent
+                            self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-max_buffer_size:]
                 
                 # Check if it's time to calculate vectors (every vector_interval seconds)
                 if current_time - self.last_vector_time >= self.vector_interval:
@@ -338,7 +344,7 @@ class VideoInput:
             return movements if return_movements else None
             
         except Exception as e:
-            print(f"\nError in frame processing: {e}")
+            print(f"\n[ERROR] Error in frame processing: {e}")
             movements = {}
             self.reconnect()
             
@@ -454,12 +460,16 @@ class VideoInput:
             # Send to controller
             success = await self.send_to_controller(data)
             
-            # We don't clear the buffer after sending, so new data will continue to accumulate
-            # The next send will use the latest 30 values from the buffer
+            # We don't clear the buffer after sending for several reasons:
+            # 1. To maintain continuity in the data - allowing overlap between sent packets
+            # 2. To ensure we always have the most recent movement data to send
+            # 3. To avoid gaps in data if acknowledgments are delayed
+            # Instead, we limit the buffer to a maximum size in the process_frame method
+            # This way, we continuously record movement but prevent memory issues
             
             return success
         else:
-            print(f"Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
+            print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
             return False
 
     async def save_movement_vector(self):
