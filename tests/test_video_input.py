@@ -102,11 +102,10 @@ def test_video_input():
     assert video.connect_to_stream(url), "Failed to connect to stream"
     
     try:
-        # Set up single window
+        # Set up full screen window
         window_name = "Venice Stream"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-        cv2.moveWindow(window_name, 0, 0)
-        cv2.resizeWindow(window_name, 1280, 720)
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)  # WINDOW_NORMAL allows window resizing
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         
         print("\nWindow setup complete. Click on the Venice Stream window to give it focus.")
         print("Press spacebar to start/stop calculations.")
