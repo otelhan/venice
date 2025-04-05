@@ -233,9 +233,11 @@ async def test_video_input(fullscreen=False, debug=False):
                 
                 # Display all status messages
                 for i, msg in enumerate(status_messages):
-                    # Use dark yellow (0, 180, 180) for ACK and buffer status
-                    color = (0, 180, 180) if "WAITING" in msg or "BUFFER" in msg else (0, 255, 0)
-                    # Position 80 pixels from top and 40 pixels apart (instead of 30)
+                    # Convert RGB (246,190,0) to BGR format (0,190,246)
+                    # Yellow color specifically requested by user
+                    yellow_color = (0, 190, 246)
+                    color = yellow_color if "WAITING" in msg or "BUFFER" in msg else (0, 255, 0)
+                    # Position 80 pixels from top and 40 pixels apart
                     cv2.putText(frame_copy, msg, (10, 80 + i*40), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                 
