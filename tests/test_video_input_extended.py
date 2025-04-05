@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import yaml
 import sys
+import argparse
 
 # Add project root to path
 project_root = str(Path(__file__).parent.parent)
@@ -211,4 +212,11 @@ async def test_video_input(fullscreen=False):
             pass
 
 if __name__ == "__main__":
-    asyncio.run(test_video_input()) 
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Test Video Input with Acknowledgment')
+    parser.add_argument('--fullscreen', '-f', action='store_true', 
+                        help='Start in fullscreen mode')
+    args = parser.parse_args()
+    
+    # Run test with fullscreen option from command line
+    asyncio.run(test_video_input(fullscreen=args.fullscreen)) 
