@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Activate Python environment if needed
-# source /path/to/your/venv/bin/activate
+# Source the virtual environment
+source venv/bin/activate
 
 # Change to the project root directory
 cd "$(dirname "$0")/.."
 
 # Run the test video input script
-python -m tests/test_video_input_extended
+python3 tests/test_video_input_extended.py
