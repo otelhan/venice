@@ -227,16 +227,22 @@ async def test_video_input(fullscreen=False, debug=False):
                     else:
                         status_messages.append("PROCESSING DATA...")
                 
-                # Add buffer status
-                buffer_status = f"BUFFER: {len(video.movement_buffers['roi_1'])} values"
-                status_messages.append(buffer_status)
+                # Add time info instead of buffer count
+                venice_time = video.get_venice_time().strftime("%H:%M:%S")
+                time_status = f"VENICE TIME: {venice_time}"
+                status_messages.append(time_status)
+                
+                # Add save interval info
+                next_save = max(0, int(video.save_interval - (time.time() - video.last_save_time)))
+                save_status = f"NEXT SAVE: {next_save}s"
+                status_messages.append(save_status)
                 
                 # Display all status messages
                 for i, msg in enumerate(status_messages):
                     # Convert RGB (246,190,0) to BGR format (0,190,246)
                     # Yellow color specifically requested by user
                     yellow_color = (0, 190, 246)
-                    color = yellow_color if "WAITING" in msg or "BUFFER" in msg else (0, 255, 0)
+                    color = yellow_color if "WAITING" in msg else (0, 255, 0)
                     # Position 80 pixels from top and 40 pixels apart
                     cv2.putText(frame_copy, msg, (10, 80 + i*40), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
