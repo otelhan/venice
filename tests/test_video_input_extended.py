@@ -54,57 +54,76 @@ class VideoInputWithAck(VideoInput):
             async for message in websocket:
                 data = json.loads(message)
                 if data.get('type') == 'ack':
-                    print("\nReceived acknowledgement")
+                    print("\n[ACK RECEIVED] Acknowledgment from output controller:")
                     print(json.dumps(data, indent=2))
                     self.waiting_for_ack = False
                     self.message_sent = False
                     self.should_send_next = True  # Flag to send next data
+                    print(f"[STATUS] Ready to send next data packet")
                     
         except websockets.exceptions.ConnectionClosed:
-            print("\nAcknowledgement connection closed")
+            print("\n[ERROR] Acknowledgement connection closed")
         except Exception as e:
-            print(f"Error handling acknowledgement: {e}")
+            print(f"\n[ERROR] Error handling acknowledgement: {e}")
 
     async def send_to_controller(self, data):
         """Override send_to_controller to wait for acknowledgment"""
         if self.waiting_for_ack:
-            print("\nWaiting for acknowledgment before sending next data...")
+            print("\n[STATUS] Already waiting for acknowledgment, cannot send new data")
             return False
 
         try:
             # Get controller config
             dest_config = self.config['controllers'].get(self.destination)
             if not dest_config:
-                print(f"No configuration found for destination: {self.destination}")
+                print(f"\n[ERROR] No configuration found for destination: {self.destination}")
                 return False
 
             # Connect to controller
             uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            print(f"\nConnecting to {self.destination}:")
+            print(f"\n[STATUS] Connecting to {self.destination}:")
             print(f"URI: {uri}")
             
             async with websockets.connect(uri) as websocket:
-                print(f"Connected to {self.destination}")
+                print(f"[SUCCESS] Connected to {self.destination}")
                 await websocket.send(json.dumps(data))
-                print(f"Data sent to {self.destination}:")
-                print(json.dumps(data, indent=2))
+                print(f"[SUCCESS] Data sent to {self.destination}")
+                if len(data.get('data', {}).get('pot_values', [])) > 0:
+                    timestamp = data.get('timestamp', 'unknown')
+                    pot_count = len(data.get('data', {}).get('pot_values', []))
+                    print(f"[DATA] Timestamp: {timestamp}")
+                    print(f"[DATA] Sent {pot_count} movement values")
+                
                 self.waiting_for_ack = True
                 self.message_sent = True
                 self.last_message = data
                 self.should_send_next = False  # Reset flag after sending
+                print(f"[STATUS] Now waiting for acknowledgment from {self.ack_destination}")
                 return True
 
         except Exception as e:
-            print(f"Error sending to controller: {e}")
+            print(f"\n[ERROR] Failed to send to controller: {e}")
             return False
     
     async def check_and_try_send(self):
         """Check if we should send data to controller"""
         if self.should_send_next and not self.waiting_for_ack:
             if len(self.movement_buffers['roi_1']) >= 30:
-                print("\nSending latest movement data to controller")
+                print("\n[STATUS] Sending latest movement data to controller...")
                 await self.send_movement_vector()
                 return True
+            else:
+                print(f"\n[STATUS] Not enough data to send: {len(self.movement_buffers['roi_1'])}/30 values")
+                return False
+        elif self.waiting_for_ack:
+            # Print status message every 10 calls (to avoid flooding terminal)
+            if hasattr(self, 'ack_wait_count'):
+                self.ack_wait_count += 1
+                if self.ack_wait_count % 10 == 0:
+                    print(f"\n[STATUS] Still waiting for acknowledgment from {self.ack_destination}...")
+            else:
+                self.ack_wait_count = 1
+                print(f"\n[STATUS] Waiting for acknowledgment from {self.ack_destination}...")
         return False
 
 async def test_video_input(fullscreen=False, debug=False):
@@ -175,21 +194,48 @@ async def test_video_input(fullscreen=False, debug=False):
                         
                         # Initial data send or after receiving ACK
                         if initial_send and len(video.movement_buffers['roi_1']) >= 30:
-                            print("\nSending initial data")
+                            print("\n[INIT] Sending initial data packet...")
                             await video.send_movement_vector()
                             initial_send = False
                         else:
                             # Try to send if acknowledgment received
-                            await video.check_and_try_send()
+                            send_attempted = await video.check_and_try_send()
+                            if send_attempted:
+                                print(f"[STATUS] Successfully attempted to send new data after ACK")
                         
                 except Exception as e:
                     print(f"\nError in processing: {e}")
                 
                 # Show frame with status message
                 frame_copy = frame.copy()
+                
+                # Add status messages
+                status_messages = []
+                
+                # Connection status
                 if video.message_sent:
-                    status = "Data sent to reservoir, waiting..." if video.waiting_for_ack else "Processing data..."
-                    cv2.putText(frame_copy, status, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    if video.waiting_for_ack:
+                        status_messages.append("WAITING FOR ACK FROM OUTPUT")
+                    else:
+                        status_messages.append("READY TO SEND NEXT DATA")
+                else:
+                    if initial_send:
+                        if len(video.movement_buffers['roi_1']) >= 30:
+                            status_messages.append("READY FOR INITIAL SEND")
+                        else:
+                            status_messages.append(f"COLLECTING DATA: {len(video.movement_buffers['roi_1'])}/30")
+                    else:
+                        status_messages.append("PROCESSING DATA...")
+                
+                # Add buffer status
+                buffer_status = f"BUFFER: {len(video.movement_buffers['roi_1'])} values"
+                status_messages.append(buffer_status)
+                
+                # Display all status messages
+                for i, msg in enumerate(status_messages):
+                    cv2.putText(frame_copy, msg, (10, 60 + i*30), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
                 video.show_frame(frame_copy, window_name)
                 
                 # Check for commands

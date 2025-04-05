@@ -369,9 +369,14 @@ class VideoInput:
         """Check if save is needed and save to CSV only (not sending to controller)"""
         if self.save_needed and len(self.movement_buffers['roi_1']) >= 30:
             # Save to CSV, but don't send to controller
+            print(f"\n[STATUS] Save interval reached, saving data to CSV...")
             success = await self.save_to_csv_only()
             self.save_needed = False
             return success
+        elif self.save_needed:
+            print(f"[WARNING] Save interval reached but not enough data ({len(self.movement_buffers['roi_1'])}/30)")
+            # Reset the flag anyway to avoid repeated warnings
+            self.save_needed = False
         return False
     
     async def save_to_csv_only(self):
@@ -394,7 +399,7 @@ class VideoInput:
             # Get CSV file path and ensure parent directory exists
             csv_path = self.get_csv_path()
             csv_path.parent.mkdir(parents=True, exist_ok=True)
-            print(f"\nSaving data to CSV file: {csv_path}")
+            print(f"\n[CSV] Saving data to file: {csv_path}")
             
             # Write data to CSV
             try:
@@ -408,13 +413,13 @@ class VideoInput:
                     
                     # Write data row
                     writer.writerow([str(venice_time), t_sin, t_cos] + scaled_values)
-                print(f"Successfully wrote data to {csv_path}")
+                print(f"[CSV] Successfully wrote data to {csv_path}")
                 return True
             except Exception as e:
-                print(f"Error writing to CSV: {e}")
+                print(f"[ERROR] Failed to write to CSV: {e}")
                 return False
         else:
-            print(f"Not enough values to save: {len(self.movement_buffers['roi_1'])}/30")
+            print(f"[WARNING] Not enough values to save to CSV: {len(self.movement_buffers['roi_1'])}/30")
             return False
     
     async def send_movement_vector(self):
