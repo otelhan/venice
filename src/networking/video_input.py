@@ -365,6 +365,10 @@ class VideoInput:
                 }
             }
             
+            # Print CSV file path
+            csv_path = self.get_csv_path()
+            print(f"\nSaving data to CSV file: {csv_path}")
+            
             # Send to controller
             await self.send_to_controller(data)
             
