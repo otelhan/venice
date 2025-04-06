@@ -265,6 +265,9 @@ class OutputController:
 
         elif self.current_state == OutputState.PREDICT:
             print("Predicting (placeholder - waiting 3 seconds)")
+            # In operation mode, center all servos first
+            if self.mode == 'operation':
+                await self.center_all_servos_for_operation()
             await asyncio.sleep(3)
             await self.transition_to(OutputState.ROTATE_CUBES)
 
@@ -431,47 +434,64 @@ class OutputController:
         print(f"Current angle: {self.clock_current_angle:.1f}°")
         print(f"Target angle: {target_angle:.1f}°")
         
-        # First return to center
-        center_command = {
-            'type': 'servo',
-            'controller': 'secondary',
-            'servo_id': 1,
-            'position': 0,  # 0 degrees is center (will be converted to microseconds)
-            'time_ms': 1000
-        }
-        
-        print("Moving to center position (0°)...")
-        response = self.output_node.process_command(center_command)
-        if response['status'] == 'ok':
-            print("✓ Clock centered")
-            self.clock_current_angle = 0
-            await asyncio.sleep(3)  # Wait 3 seconds at center
-        else:
-            print("✗ Failed to center clock servo")
-            return False
-        
-        # Perform one full rotation
-        print("\nPerforming full rotation...")
-        rotation_angles = [-150, -90, -30, 30, 90, 150, -150]  # Complete cycle
-        for angle in rotation_angles:
-            rotation_command = {
+        if self.mode == 'operation':
+            # In operation mode, always center at sector 5 (150 degrees) first
+            center_command = {
                 'type': 'servo',
                 'controller': 'secondary',
                 'servo_id': 1,
-                'position': angle,  # Angle in degrees (will be converted to microseconds)
-                'time_ms': 500  # Faster movement for rotation
+                'position': 150,  # Sector 5 (150 degrees)
+                'time_ms': 1000
             }
-            
-            response = self.output_node.process_command(rotation_command)
-            if response['status'] == 'ok':
-                print(f"✓ Rotated to {angle}°")
-                self.clock_current_angle = angle
-                await asyncio.sleep(0.6)  # Short delay between positions
-            else:
-                print(f"✗ Failed to rotate to {angle}°")
-                return False
+            print("Moving to position 5 (150°)...")
+        else:
+            # In test mode, center at 0 degrees
+            center_command = {
+                'type': 'servo',
+                'controller': 'secondary',
+                'servo_id': 1,
+                'position': 0,  # 0 degrees is center (will be converted to microseconds)
+                'time_ms': 1000
+            }
+            print("Moving to center position (0°)...")
         
-        # Finally move to target position
+        response = self.output_node.process_command(center_command)
+        if response['status'] == 'ok':
+            if self.mode == 'operation':
+                print("✓ Clock positioned at sector 5 (150°)")
+                self.clock_current_angle = 150
+            else:
+                print("✓ Clock centered")
+                self.clock_current_angle = 0
+            await asyncio.sleep(3)  # Wait 3 seconds at center/position
+        else:
+            print("✗ Failed to position clock servo")
+            return False
+        
+        # In test mode, perform full rotation; in operation mode, go directly to target
+        if self.mode == 'test':
+            # Perform one full rotation
+            print("\nPerforming full rotation...")
+            rotation_angles = [-150, -90, -30, 30, 90, 150, -150]  # Complete cycle
+            for angle in rotation_angles:
+                rotation_command = {
+                    'type': 'servo',
+                    'controller': 'secondary',
+                    'servo_id': 1,
+                    'position': angle,  # Angle in degrees (will be converted to microseconds)
+                    'time_ms': 500  # Faster movement for rotation
+                }
+                
+                response = self.output_node.process_command(rotation_command)
+                if response['status'] == 'ok':
+                    print(f"✓ Rotated to {angle}°")
+                    self.clock_current_angle = angle
+                    await asyncio.sleep(0.6)  # Short delay between positions
+                else:
+                    print(f"✗ Failed to rotate to {angle}°")
+                    return False
+        
+        # Move to target position
         print(f"\nMoving to final position in sector {sector + 1}...")
         clock_command = {
             'type': 'servo',
@@ -803,6 +823,47 @@ class OutputController:
         print("which is then mapped to one of the six sectors.")
         print("\nPress Enter to return to the menu...")
         input()
+
+    async def center_all_servos_for_operation(self):
+        """Center all servos before operation, with clock at position 5 (150 degrees)"""
+        print("\n=== Centering All Servos Before Operation ===")
+        
+        # Center cube servos (main controller)
+        for servo_id in range(1, 6):
+            command = {
+                'type': 'servo',
+                'controller': 'main',
+                'servo_id': servo_id,
+                'position': 0,  # 0 degrees is center
+                'time_ms': 1000
+            }
+            response = self.output_node.process_command(command)
+            if response['status'] == 'ok':
+                print(f"✓ Centered cube servo {servo_id}")
+                self.servo_positions[servo_id] = 0  # Track in degrees
+            else:
+                print(f"✗ Failed to center cube servo {servo_id}")
+            await asyncio.sleep(0.1)
+        
+        # Position clock servo at sector 5 (150 degrees) for operation mode
+        clock_command = {
+            'type': 'servo',
+            'controller': 'secondary',
+            'servo_id': 1,
+            'position': 150,  # 150 degrees (sector 5)
+            'time_ms': 1000
+        }
+        response = self.output_node.process_command(clock_command)
+        if response['status'] == 'ok':
+            print(f"✓ Clock set to position 5 (150°)")
+            self.clock_current_angle = 150  # Track in degrees
+        else:
+            print(f"✗ Failed to set clock servo")
+        
+        print("=== All Servos Positioned ===")
+        print("\nWaiting 2 seconds...")
+        await asyncio.sleep(2)  # Wait 2 seconds after positioning
+        print("Wait complete, proceeding...")
 
 async def main():
     # Print welcome message
