@@ -474,9 +474,30 @@ class VideoInput:
             print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
             return False
 
-    async def save_movement_vector(self):
-        """Legacy method - now just calls save_to_csv_only for backward compatibility"""
-        return await self.save_to_csv_only()
+    async def send_to_controller(self, data):
+        """Send data to res00 controller"""
+        try:
+            # Get controller config
+            dest_config = self.config['controllers'].get(self.destination)
+            if not dest_config:
+                print(f"No configuration found for destination: {self.destination}")
+                return False
+
+            # Connect to controller
+            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
+            print(f"\nConnecting to {self.destination}:")
+            print(f"URI: {uri}")
+            
+            async with websockets.connect(uri) as websocket:
+                print(f"Connected to {self.destination}")
+                await websocket.send(json.dumps(data))
+                print(f"Data sent to {self.destination}:")
+                print(json.dumps(data, indent=2))
+                return True
+
+        except Exception as e:
+            print(f"Error sending to controller: {e}")
+            return False
 
     def run(self, stream_url):
         """Main processing loop"""
@@ -738,65 +759,167 @@ class VideoInput:
             print(f"Error scaling movement value: {e}")
             return 20
 
-    async def send_to_controller(self, data):
-        """Send data to res00 controller"""
+    def setup_csv_saving(self):
+        """Set up CSV file for saving data"""
         try:
-            # Get controller config
-            dest_config = self.config['controllers'].get(self.destination)
-            if not dest_config:
-                print(f"No configuration found for destination: {self.destination}")
-                return False
-
-            # Connect to controller
-            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            print(f"\nConnecting to {self.destination}:")
-            print(f"URI: {uri}")
+            # Get CSV file path and ensure parent directory exists
+            csv_path = self.get_csv_path()
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
             
-            async with websockets.connect(uri) as websocket:
-                print(f"Connected to {self.destination}")
-                await websocket.send(json.dumps(data))
-                print(f"Data sent to {self.destination}:")
-                print(json.dumps(data, indent=2))
-                return True
-
+            print(f"\nCSV file will be saved to: {csv_path}")
+            print(f"Directory exists: {csv_path.parent.exists()}")
+            print(f"Directory is writable: {os.access(str(csv_path.parent), os.W_OK)}")
+            
+            return True
         except Exception as e:
-            print(f"Error sending to controller: {e}")
+            print(f"[ERROR] Failed to set up CSV saving: {e}")
             return False
+            
+    def save_to_csv(self):
+        """Non-async version to save data to CSV"""
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            success = loop.run_until_complete(self.save_to_csv_only())
+            return success
+        finally:
+            loop.close()
+            
+    def cleanup(self):
+        """Clean up resources before exit"""
+        # Stop video capture
+        self.is_running = False
+        if self.cap:
+            self.cap.release()
+            
+        # Close any open windows
+        cv2.destroyAllWindows()
+
+    def update_rois(self, frame):
+        """Update ROIs based on the frame"""
+        if frame is None or not self.roi_configs:
+            return
+            
+        # Copy regions from the frame to rois dictionary
+        for roi_name, roi_config in self.roi_configs.items():
+            x = int(roi_config['x'])
+            y = int(roi_config['y'])
+            w = int(roi_config['width'])
+            h = int(roi_config['height'])
+            
+            # Make sure coordinates are valid
+            frame_h, frame_w = frame.shape[:2]
+            x = max(0, min(x, frame_w - 1))
+            y = max(0, min(y, frame_h - 1))
+            w = max(1, min(w, frame_w - x))
+            h = max(1, min(h, frame_h - y))
+            
+            # Extract ROI
+            roi = frame[y:y+h, x:x+w]
+            if roi.size > 0:  # Check if ROI is valid
+                self.rois[roi_name] = roi.copy()
+                
+    def check_for_movement(self):
+        """Calculate movement for each ROI"""
+        if not self.calculating or len(self.frame_buffer) < self.buffer_size:
+            return {}
+            
+        movements = {}
+        for roi_name, roi_config in self.roi_configs.items():
+            try:
+                movement = self.calculate_movement_rate(roi_config)
+                self.movement_buffers[roi_name].append(movement)
+                movements[roi_name] = movement
+                
+                # Limit buffer size to prevent unbounded growth
+                max_buffer_size = 100  # Keep last 100 values maximum
+                if len(self.movement_buffers[roi_name]) > max_buffer_size:
+                    # Remove oldest values, keeping the most recent
+                    self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-max_buffer_size:]
+            except Exception as e:
+                print(f"[ERROR] Error calculating movement for {roi_name}: {e}")
+                
+        self.current_movements = movements  # Store for display
+        return movements
 
 class VideoInputWithAck(VideoInput):
     """VideoInput with acknowledgment handling in separate threads."""
     
-    def __init__(self):
+    def __init__(self, ack_destination='output'):
         super().__init__()
-        self.waiting_for_ack = False
-        self.listen_port = 8777  # Port to listen for acknowledgments from output controller
-        self.last_message = None
-        self.message_sent = False
-        self.ack_destination = 'output'  # The controller that will send ACKs
-        self.should_send_next = True  # Flag to send data after receiving ACK
+        # Set up acknowledgment config
+        self.ack_destination = ack_destination
         
-        # Thread-related attributes
-        self.ack_server_thread = None
-        self.message_queue = queue.Queue()
-        self.server_running = False
-        self.ack_received_event = threading.Event()
-        self.sender_thread = None
-        
-        # Print ACK info
-        output_config = self.config['controllers'].get(self.ack_destination)
-        if output_config:
-            print("\nWill receive acknowledgments from:", self.ack_destination)
-            print("On listen port:", self.listen_port)
+        # Get ack destination config
+        self.ack_config = self.config['controllers'].get(self.ack_destination, {})
+        if not self.ack_config:
+            print(f"Warning: No configuration found for {self.ack_destination}")
+            self.listen_port = 8777  # Default port
         else:
-            print("\nWarning: No configuration found for ACK source:", self.ack_destination)
+            self.listen_port = self.ack_config.get('ack_port', 8777)
         
-        # Start threads automatically
+        print(f"\nWill receive acknowledgments from: {self.ack_destination}")
+        print(f"On listen port: {self.listen_port}")
+        
+        # Set up state variables
+        self.waiting_for_ack = False
+        self.message_sent = False
+        self.last_message = None
+        self.should_send_next = True  # Start with sending enabled
+        
+        # Threading setup
+        self.server_running = False
+        self.ack_server_thread = None
+        self.ack_received_event = threading.Event()
+        self.message_queue = queue.Queue()
+        self.sender_thread = None
+        self.ack_wait_count = 0
+        
+        # Start the acknowledgment server thread
         self.start_ack_server_thread()
+        
+        # Start the sender thread
         self.start_sender_thread()
-    
+
+    def check_and_try_send(self):
+        """Non-async version to check and send data to controller"""
+        if self.should_send_next and not self.waiting_for_ack:
+            if len(self.movement_buffers['roi_1']) >= 30:
+                print("\n[STATUS] Sending latest movement data to controller...")
+                # Use run_until_complete to call the async method from sync code
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self.send_movement_vector())
+                    return True
+                finally:
+                    loop.close()
+            else:
+                print(f"\n[STATUS] Not enough data to send: {len(self.movement_buffers['roi_1'])}/30 values")
+                return False
+        elif self.waiting_for_ack:
+            # Print status message every 30 calls (to avoid flooding terminal)
+            if hasattr(self, 'ack_wait_count'):
+                self.ack_wait_count += 1
+                if self.ack_wait_count % 30 == 0:
+                    print(f"\n[STATUS] Still waiting for acknowledgment from {self.ack_destination}...")
+                    # Check if it's been too long since we sent the message
+                    if hasattr(self, 'last_ack_request_time'):
+                        elapsed = time.time() - self.last_ack_request_time
+                        if elapsed > 60:  # More than 60 seconds
+                            print(f"\n[STATUS] Acknowledgment timeout (waited {elapsed:.1f}s). Resetting state...")
+                            self.waiting_for_ack = False
+                            self.should_send_next = True
+            else:
+                self.ack_wait_count = 1
+                self.last_ack_request_time = time.time()
+                print(f"\n[STATUS] Waiting for acknowledgment from {self.ack_destination}...")
+        return False
+
     def start_ack_server_thread(self):
         """Start the acknowledgment server in a separate thread"""
-        if self.ack_server_thread is None or not self.ack_server_thread.is_alive():
+        if not self.server_running:
             self.server_running = True
             self.ack_server_thread = threading.Thread(
                 target=self._run_ack_server,
@@ -824,19 +947,22 @@ class VideoInputWithAck(VideoInput):
             loop.run_until_complete(server)
             loop.run_forever()
         except Exception as e:
-            print("\nError in acknowledgment server thread:", e)
+            print("\n[ERROR] Error in acknowledgment server thread:", e)
             import traceback
             traceback.print_exc()
             self.server_running = False
-    
+
     async def _handle_connection_async(self, websocket):
         """Handle incoming WebSocket connections (runs in the server thread)"""
         try:
+            client_info = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+            print(f"\n[ACK] New connection from {client_info}")
+            
             async for message in websocket:
                 try:
                     data = json.loads(message)
                     if data.get('type') == 'ack':
-                        print("\nAcknowledgment received from output controller:")
+                        print(f"\n[ACK] Acknowledgment received from {self.ack_destination}:")
                         print(json.dumps(data, indent=2))
                         
                         # Update state variables
@@ -847,20 +973,21 @@ class VideoInputWithAck(VideoInput):
                         # Signal to the main thread that an ack was received
                         self.ack_received_event.set()
                         
-                        print("Ready to send next data packet")
+                        print("[ACK] Ready to send next data packet")
                 except json.JSONDecodeError:
-                    print("\nInvalid JSON received:", message)
+                    print("\n[ERROR] Invalid JSON received:", message)
                         
         except websockets.exceptions.ConnectionClosed:
-            print("\nAcknowledgement connection closed")
+            print(f"\n[ACK] Connection from {client_info} closed")
         except Exception as e:
-            print("\nError handling acknowledgement:", e)
+            print("\n[ERROR] Error handling acknowledgement:", e)
             import traceback
             traceback.print_exc()
     
     def _enqueue_message(self, data):
         """Add a message to the queue for sending in the sender thread"""
         self.message_queue.put(data)
+        print(f"\n[SEND] Added message to send queue (queue size: {self.message_queue.qsize()})")
         
     def start_sender_thread(self):
         """Start a thread for sending messages to the controller"""
@@ -875,6 +1002,7 @@ class VideoInputWithAck(VideoInput):
     def _run_sender_loop(self):
         """Run the sender loop in a thread"""
         try:
+            print("\n[SEND] Sender thread started")
             # Create a new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -884,6 +1012,7 @@ class VideoInputWithAck(VideoInput):
                     # Get the next message from the queue, with a timeout
                     try:
                         data = self.message_queue.get(timeout=0.5)
+                        print("\n[SEND] Got message from queue, sending...")
                     except queue.Empty:
                         # No message to send, just continue the loop
                         continue
@@ -894,19 +1023,21 @@ class VideoInputWithAck(VideoInput):
                     if success:
                         # Mark the task as done
                         self.message_queue.task_done()
+                        print("\n[SEND] Message sent successfully")
                     else:
                         # Put the message back in the queue to retry later
                         self.message_queue.put(data)
+                        print("\n[SEND] Failed to send message, will retry later")
                         time.sleep(2)  # Wait before retrying
                         
                 except Exception as e:
-                    print("\nError in sender thread:", e)
+                    print("\n[ERROR] Error in sender thread:", e)
                     import traceback
                     traceback.print_exc()
                     time.sleep(1)  # Avoid tight loop in case of error
                     
         except Exception as e:
-            print("\nSender thread crashed:", e)
+            print("\n[ERROR] Sender thread crashed:", e)
             import traceback
             traceback.print_exc()
     
@@ -916,22 +1047,22 @@ class VideoInputWithAck(VideoInput):
             # Get controller config
             dest_config = self.config['controllers'].get(self.destination)
             if not dest_config:
-                print("\nNo configuration found for destination:", self.destination)
+                print("\n[ERROR] No configuration found for destination:", self.destination)
                 return False
 
             # Connect to controller
             uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            print(f"\nConnecting to {self.destination}: {uri}")
+            print(f"\n[SEND] Connecting to {self.destination}: {uri}")
             
             async with websockets.connect(uri) as websocket:
-                print(f"Connected to {self.destination}")
+                print(f"[SEND] Connected to {self.destination}")
                 await websocket.send(json.dumps(data))
-                print(f"Data sent to {self.destination}")
+                print(f"[SEND] Data sent to {self.destination}")
                 if len(data.get('data', {}).get('pot_values', [])) > 0:
                     timestamp = data.get('timestamp', 'unknown')
                     pot_count = len(data.get('data', {}).get('pot_values', []))
-                    print(f"Timestamp: {timestamp}")
-                    print(f"Sent {pot_count} movement values")
+                    print(f"[SEND] Timestamp: {timestamp}")
+                    print(f"[SEND] Sent {pot_count} movement values")
                 
                 # Update state after successful send
                 self.waiting_for_ack = True
@@ -942,57 +1073,36 @@ class VideoInputWithAck(VideoInput):
                 # Reset the acknowledgment event
                 self.ack_received_event.clear()
                 
-                print(f"Now waiting for acknowledgment from {self.ack_destination}")
+                print(f"[SEND] Now waiting for acknowledgment from {self.ack_destination}")
+                # Store the time for timeout tracking
+                self.last_ack_request_time = time.time()
                 return True
 
         except Exception as e:
-            print("\nFailed to send to controller:", e)
+            print(f"\n[ERROR] Failed to send to controller: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
     
-    async def send_to_controller(self, data):
-        """Override send_to_controller to use the thread-based approach"""
+    def send_to_controller(self, data):
+        """Non-async version to use the thread-based approach"""
         if self.waiting_for_ack:
-            print("\nAlready waiting for acknowledgment, cannot send new data")
+            print("\n[STATUS] Already waiting for acknowledgment, cannot send new data")
             return False
 
         # Start the ack server thread if it's not already running
         if not self.server_running:
             self.start_ack_server_thread()
             
+        # Start the sender thread if it's not already running
+        if self.sender_thread is None or not self.sender_thread.is_alive():
+            self.start_sender_thread()
+            
         # Enqueue the message for sending
         self._enqueue_message(data)
         
         # The actual sending will be handled by the sender thread
         return True
-    
-    async def check_and_try_send(self):
-        """Check if we should send data to controller"""
-        if self.should_send_next and not self.waiting_for_ack:
-            if len(self.movement_buffers['roi_1']) >= 30:
-                print("\nSending latest movement data to controller...")
-                await self.send_movement_vector()
-                return True
-            else:
-                print(f"\nNot enough data to send: {len(self.movement_buffers['roi_1'])}/30 values")
-                return False
-        elif self.waiting_for_ack:
-            # Print status message every 30 calls (to avoid flooding terminal)
-            if hasattr(self, 'ack_wait_count'):
-                self.ack_wait_count += 1
-                if self.ack_wait_count % 30 == 0:
-                    print(f"\nStill waiting for acknowledgment from {self.ack_destination}...")
-                    # Check if it's been too long since we sent the message
-                    if hasattr(self, 'last_ack_request_time'):
-                        elapsed = time.time() - self.last_ack_request_time
-                        if elapsed > 60:  # More than 60 seconds
-                            print(f"\nAcknowledgment timeout (waited {elapsed:.1f}s). Resetting state...")
-                            self.waiting_for_ack = False
-                            self.should_send_next = True
-            else:
-                self.ack_wait_count = 1
-                self.last_ack_request_time = time.time()
-                print(f"\nWaiting for acknowledgment from {self.ack_destination}...")
-        return False
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 
