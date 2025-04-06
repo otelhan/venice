@@ -20,6 +20,7 @@ class OutputState(Enum):
     SHOW_TIME = auto()
     TEST_MODE = auto()
     TEST_CLOCK_SECTOR = auto()  # New state for testing specific clock sectors
+    START_POSITION = auto()  # New state for initial startup position
 
 class OutputController:
     def __init__(self, mode='operation'):
@@ -58,10 +59,10 @@ class OutputController:
         # Add clock position mapping (6 positions)
         self.clock_positions = {
             0: -150,  # 0-3 hours
-            1: -120,  # 4-7 hours
-            2: -60,   # 8-11 hours
-            3: 60,    # 12-15 hours
-            4: 120,   # 16-19 hours
+            1: -90,   # 4-7 hours
+            2: -30,   # 8-11 hours
+            3: 30,    # 12-15 hours
+            4: 90,    # 16-19 hours
             5: 150    # 20-23 hours
         }
         
@@ -150,19 +151,8 @@ class OutputController:
         # Center all servos at startup
         await self.center_all_servos()
         
-        # If in test mode, transition to test mode immediately
-        if self.mode == 'test':
-            await self.transition_to(OutputState.TEST_MODE)
-            return
-        
-        # Otherwise start websocket server for operation mode
-        async with websockets.serve(
-            self._handle_connection, 
-            "0.0.0.0", 
-            self.port,
-            max_size=None
-        ) as server:
-            await asyncio.Future()  # run forever
+        # Start in START_POSITION state
+        await self.transition_to(OutputState.START_POSITION)
 
     async def _handle_connection(self, websocket):
         """Handle incoming websocket connections"""
@@ -244,7 +234,29 @@ class OutputController:
 
     async def handle_current_state(self):
         """Handle the current state"""
-        if self.current_state == OutputState.IDLE:
+        if self.current_state == OutputState.START_POSITION:
+            print("\n=== Starting Position ===")
+            print("The clock is centered at 0 degrees")
+            print("Press Enter to continue to menu...")
+            input()
+            
+            # After user confirmation, transition to appropriate mode
+            if self.mode == 'test':
+                await self.transition_to(OutputState.IDLE)
+            else:
+                # For operation mode, start websocket server
+                try:
+                    async with websockets.serve(
+                        self._handle_connection, 
+                        "0.0.0.0", 
+                        self.port,
+                        max_size=None
+                    ) as server:
+                        await asyncio.Future()  # run forever
+                except Exception as e:
+                    print(f"Error starting websocket server: {e}")
+            
+        elif self.current_state == OutputState.IDLE:
             print("Waiting for data...")
             
             # In test mode, ask for the next action
@@ -440,7 +452,7 @@ class OutputController:
         
         # Perform one full rotation
         print("\nPerforming full rotation...")
-        rotation_angles = [-150, -120, -60, 0, 60, 120, 150, -150]  # Complete cycle
+        rotation_angles = [-150, -90, -30, 30, 90, 150, -150]  # Complete cycle
         for angle in rotation_angles:
             rotation_command = {
                 'type': 'servo',
@@ -638,6 +650,57 @@ class OutputController:
         await asyncio.sleep(1)
         print("=== Clock Move Complete ===")
         return True
+
+    async def move_clock_to_angle(self, angle):
+        """Move clock directly to a specified angle between -150 and 150 degrees"""
+        print(f"\n=== Moving Clock to {angle:.1f}° ===")
+        
+        if angle < -150 or angle > 150:
+            print("Error: Angle must be between -150 and 150 degrees")
+            return False
+            
+        print(f"Current angle: {self.clock_current_angle:.1f}°")
+        print(f"Target angle: {angle:.1f}°")
+        
+        # First return to center
+        center_command = {
+            'type': 'servo',
+            'controller': 'secondary',
+            'servo_id': 1,
+            'position': 0,  # 0 degrees is center (will be converted to microseconds)
+            'time_ms': 1000
+        }
+        
+        print("Moving to center position...")
+        response = self.output_node.process_command(center_command)
+        if response['status'] == 'ok':
+            print("✓ Clock centered")
+            self.clock_current_angle = 0
+            await asyncio.sleep(1)  # Wait 1 second at center
+        else:
+            print("✗ Failed to center clock servo")
+            return False
+        
+        # Move directly to target angle
+        clock_command = {
+            'type': 'servo',
+            'controller': 'secondary',
+            'servo_id': 1,
+            'position': angle,  # Angle in degrees (will be converted to microseconds)
+            'time_ms': 1000
+        }
+        
+        response = self.output_node.process_command(clock_command)
+        if response['status'] == 'ok':
+            print(f"✓ Clock moved to {angle:.1f}°")
+            self.clock_current_angle = angle
+        else:
+            print("✗ Failed to move clock servo")
+            return False
+        
+        await asyncio.sleep(1)
+        print("=== Clock Move Complete ===")
+        return True
         
     async def handle_test_menu(self):
         """Handle test mode menu"""
@@ -645,10 +708,11 @@ class OutputController:
         print("1. Load sample data and process")
         print("2. Test clock sector movement")
         print("3. Reset all servos to center")
-        print("4. Help - Clock sectors explanation")
-        print("5. Exit test mode")
+        print("4. Set clock to custom position")
+        print("5. Help - Clock sectors explanation")
+        print("6. Exit test mode")
         
-        choice = input("\nEnter your choice (1-5): ").strip()
+        choice = input("\nEnter your choice (1-6): ").strip()
         
         if choice == '1':
             # Load test data and process
@@ -662,10 +726,10 @@ class OutputController:
             print("Sector | Time Range | Angle")
             print("-------------------------------")
             print("0      | 00-03 hrs  | -150°")
-            print("1      | 04-07 hrs  | -120°")
-            print("2      | 08-11 hrs  | -60°")
-            print("3      | 12-15 hrs  | +60°")
-            print("4      | 16-19 hrs  | +120°")
+            print("1      | 04-07 hrs  | -90°")
+            print("2      | 08-11 hrs  | -30°")
+            print("3      | 12-15 hrs  | +30°")
+            print("4      | 16-19 hrs  | +90°")
             print("5      | 20-23 hrs  | +150°")
             print("-------------------------------")
             
@@ -685,10 +749,24 @@ class OutputController:
             await self.center_all_servos()
             
         elif choice == '4':
+            # Set clock to custom position
+            print("\nSet clock to custom position")
+            print("Enter an angle between -150 and 150 degrees")
+            angle_choice = input("\nEnter angle: ").strip()
+            try:
+                angle = float(angle_choice)
+                if -150 <= angle <= 150:
+                    await self.move_clock_to_angle(angle)
+                else:
+                    print("Invalid angle. Please enter a value between -150 and 150.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+            
+        elif choice == '5':
             # Help
             self.display_help()
             
-        elif choice == '5':
+        elif choice == '6':
             print("\nExiting test mode...")
             os._exit(0)
             
@@ -704,16 +782,16 @@ class OutputController:
         print("Sector 0: 00:00-03:59 (-150° position)")
         print("         Midnight to early morning")
         print()
-        print("Sector 1: 04:00-07:59 (-120° position)")
+        print("Sector 1: 04:00-07:59 (-90° position)")
         print("         Early morning")
         print()
-        print("Sector 2: 08:00-11:59 (-60° position)")
+        print("Sector 2: 08:00-11:59 (-30° position)")
         print("         Late morning")
         print()
-        print("Sector 3: 12:00-15:59 (+60° position)")
+        print("Sector 3: 12:00-15:59 (+30° position)")
         print("         Early afternoon")
         print()
-        print("Sector 4: 16:00-19:59 (+120° position)")
+        print("Sector 4: 16:00-19:59 (+90° position)")
         print("         Late afternoon/early evening")
         print()
         print("Sector 5: 20:00-23:59 (+150° position)")
