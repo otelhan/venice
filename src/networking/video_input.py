@@ -884,6 +884,12 @@ class VideoInputWithAck(VideoInput):
 
     def check_and_try_send(self):
         """Non-async version to check and send data to controller"""
+        # Initialize count attributes if they don't exist
+        if not hasattr(self, 'not_enough_data_count'):
+            self.not_enough_data_count = 0
+        if not hasattr(self, 'ack_wait_count'):
+            self.ack_wait_count = 0
+            
         if self.should_send_next and not self.waiting_for_ack:
             if len(self.movement_buffers['roi_1']) >= 30:
                 print("\n[STATUS] Sending latest movement data to controller...")
@@ -896,7 +902,10 @@ class VideoInputWithAck(VideoInput):
                 finally:
                     loop.close()
             else:
-                print(f"\n[STATUS] Not enough data to send: {len(self.movement_buffers['roi_1'])}/30 values")
+                # Only print status every 300 calls to avoid flooding
+                self.not_enough_data_count += 1
+                if self.not_enough_data_count % 300 == 0:
+                    print(f"\n[STATUS] Not enough data to send: {len(self.movement_buffers['roi_1'])}/30 values")
                 return False
         elif self.waiting_for_ack:
             # Print status message every 30 calls (to avoid flooding terminal)

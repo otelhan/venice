@@ -90,8 +90,9 @@ async def test_video_input(fullscreen=False, debug=False):
                     print("\n[STATUS] Save interval reached, saving data to CSV...")
                     video_input.save_to_csv()
                 
-                # Check if we should send data to controller
-                video_input.check_and_try_send()
+                # Check if we should send data to controller - but only every 10 frames
+                if frame_count % 10 == 0:
+                    video_input.check_and_try_send()
                 
                 # Process key presses for UI
                 key = cv2.waitKey(1) & 0xFF
