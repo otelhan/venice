@@ -509,8 +509,34 @@ class OutputController:
             print("✗ Failed to move clock servo")
             return False
         
-        await asyncio.sleep(1.1)
-        print("=== Clock Move Complete ===")
+        # Wait at target position
+        wait_time = 7  # seconds to wait at target position
+        print(f"\nWaiting at sector {sector + 1} for {wait_time} seconds...")
+        await asyncio.sleep(wait_time)
+        
+        # In operation mode, return to sector 5 after waiting
+        if self.mode == 'operation':
+            print("\nReturning to sector 5 (150°)...")
+            return_command = {
+                'type': 'servo',
+                'controller': 'secondary',
+                'servo_id': 1,
+                'position': 150,  # Return to sector 5
+                'time_ms': 1000
+            }
+            
+            response = self.output_node.process_command(return_command)
+            if response['status'] == 'ok':
+                print("✓ Clock returned to sector 5 (150°)")
+                self.clock_current_angle = 150
+            else:
+                print("✗ Failed to return clock to sector 5")
+                return False
+            
+            # Brief wait after returning
+            await asyncio.sleep(1.1)
+        
+        print("=== Clock Movement Sequence Complete ===")
         return True
 
     async def send_acknowledgement(self, timestamp):
