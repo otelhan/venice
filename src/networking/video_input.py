@@ -243,44 +243,45 @@ class VideoInput:
         return t_sin, t_cos
 
     def calculate_movement_rate(self, roi_config):
-        """Compute movement using Rate of Change Filtering"""
-        if len(self.frame_buffer) < 3:
-            return 0.0
+        """Calculate rate of movement for a specific ROI using consecutive frames"""
+        try:
+            if len(self.frame_buffer) < self.buffer_size:
+                print(f"[DEBUG] Not enough frames for movement calculation: {len(self.frame_buffer)}/{self.buffer_size}")
+                return 0
             
-        # Get ROI coordinates
-        x = int(roi_config['x'])
-        y = int(roi_config['y'])
-        w = int(roi_config['width'])
-        h = int(roi_config['height'])
-        roi = (x, y, x+w, y+h)
-        
-        # Get frames from buffer
-        frame1, frame2, frame3 = self.frame_buffer[-3:]
-        
-        # Convert to grayscale
-        gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-        gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
-        gray3 = cv2.cvtColor(frame3, cv2.COLOR_BGR2GRAY)
-        
-        # Compute absolute differences
-        diff1 = cv2.absdiff(gray1, gray2)
-        diff2 = cv2.absdiff(gray2, gray3)
-        
-        # Compute rate of change
-        rate_of_change = np.abs(diff2.astype(np.int16) - diff1.astype(np.int16))
-        
-        # Threshold: Ignore small intensity shifts
-        rate_of_change[rate_of_change < self.movement_threshold] = 0
-        
-        # Focus on ROI
-        roi_change = rate_of_change[y:y+h, x:x+w]
-        
-        # Compute movement score (percentage of significant changes)
-        movement_score = np.sum(roi_change > 0) / (roi_change.shape[0] * roi_change.shape[1])
-        
-        # Scale to [20, 127] range
-        scaled_score = 20 + (movement_score * (127 - 20))
-        return np.clip(scaled_score, 20, 127)
+            # Get the ROI from the most recent and previous frames
+            x = int(roi_config['x'])
+            y = int(roi_config['y'])
+            w = int(roi_config['width'])
+            h = int(roi_config['height'])
+            
+            # Extract the same ROI from multiple frames
+            current_roi = self.frame_buffer[-1][y:y+h, x:x+w]
+            prev_roi = self.frame_buffer[-2][y:y+h, x:x+w]
+            
+            # Convert to grayscale
+            current_gray = cv2.cvtColor(current_roi, cv2.COLOR_BGR2GRAY)
+            prev_gray = cv2.cvtColor(prev_roi, cv2.COLOR_BGR2GRAY)
+            
+            # Calculate absolute difference
+            diff = cv2.absdiff(current_gray, prev_gray)
+            
+            # Apply threshold to isolate areas of significant change
+            _, threshold = cv2.threshold(diff, self.movement_threshold, 255, cv2.THRESH_BINARY)
+            
+            # Calculate percentage of pixels that changed
+            changed_pixels = np.count_nonzero(threshold)
+            total_pixels = threshold.size
+            change_percent = (changed_pixels / total_pixels) * 100
+            
+            print(f"[DEBUG] Movement calculation: changed={changed_pixels}, total={total_pixels}, percent={change_percent:.2f}%")
+            
+            return change_percent
+        except Exception as e:
+            print(f"[ERROR] Movement calculation error: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0
 
     def init_plots(self):
         """Disabled in headless mode"""
@@ -799,14 +800,19 @@ class VideoInput:
     def update_rois(self, frame):
         """Update ROIs based on the frame"""
         if frame is None or not self.roi_configs:
+            print("[DEBUG] Cannot update ROIs - frame is None or no ROI configs")
             return
             
+        print("[DEBUG] Updating ROIs from frame...")
+        
         # Copy regions from the frame to rois dictionary
         for roi_name, roi_config in self.roi_configs.items():
             x = int(roi_config['x'])
             y = int(roi_config['y'])
             w = int(roi_config['width'])
             h = int(roi_config['height'])
+            
+            print(f"[DEBUG] ROI {roi_name}: x={x}, y={y}, w={w}, h={h}")
             
             # Make sure coordinates are valid
             frame_h, frame_w = frame.shape[:2]
@@ -819,18 +825,26 @@ class VideoInput:
             roi = frame[y:y+h, x:x+w]
             if roi.size > 0:  # Check if ROI is valid
                 self.rois[roi_name] = roi.copy()
-                
+                print(f"[DEBUG] Extracted {roi_name} with size {roi.shape}")
+            else:
+                print(f"[WARNING] ROI {roi_name} has invalid size")
+
     def check_for_movement(self):
         """Calculate movement for each ROI"""
         if not self.calculating or len(self.frame_buffer) < self.buffer_size:
+            print("[DEBUG] Skipping movement calculation - calculating:", self.calculating, "buffer size:", len(self.frame_buffer))
             return {}
             
+        print("[DEBUG] Calculating movement for ROIs...")
+        
         movements = {}
         for roi_name, roi_config in self.roi_configs.items():
             try:
+                print(f"[DEBUG] Calculating movement for {roi_name}")
                 movement = self.calculate_movement_rate(roi_config)
                 self.movement_buffers[roi_name].append(movement)
                 movements[roi_name] = movement
+                print(f"[DEBUG] {roi_name} movement: {movement:.2f}")
                 
                 # Limit buffer size to prevent unbounded growth
                 max_buffer_size = 100  # Keep last 100 values maximum
@@ -839,8 +853,11 @@ class VideoInput:
                     self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-max_buffer_size:]
             except Exception as e:
                 print(f"[ERROR] Error calculating movement for {roi_name}: {e}")
+                import traceback
+                traceback.print_exc()
                 
         self.current_movements = movements  # Store for display
+        print(f"[DEBUG] Movement calculation complete: {movements}")
         return movements
 
 class VideoInputWithAck(VideoInput):

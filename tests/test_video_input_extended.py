@@ -84,11 +84,22 @@ async def test_video_input(fullscreen=False, debug=False):
                 
             # Process the frame
             try:
+                # Add frame to buffer
+                if len(video_input.frame_buffer) < video_input.buffer_size:
+                    print(f"[DEBUG] Adding frame to buffer ({len(video_input.frame_buffer)+1}/{video_input.buffer_size})")
+                    video_input.frame_buffer.append(frame.copy())
+                else:
+                    # Shift buffer and add new frame
+                    video_input.frame_buffer.pop(0)
+                    video_input.frame_buffer.append(frame.copy())
+                    print(f"[DEBUG] Updated frame buffer with new frame (rotating buffer)")
+                
                 # Update ROIs
                 video_input.update_rois(frame)
                 
-                # Check for movement in ROIs
-                video_input.check_for_movement()
+                # Check for movement in ROIs if we have enough frames
+                if len(video_input.frame_buffer) >= video_input.buffer_size:
+                    video_input.check_for_movement()
                 
                 # Check if we need to save data
                 if time.time() - video_input.last_save_time >= video_input.save_interval:
@@ -120,6 +131,32 @@ async def test_video_input(fullscreen=False, debug=False):
                 
                 # Create a copy of the frame for drawing status
                 display_frame = frame.copy()
+                
+                # Ensure show_rois is enabled
+                video_input.show_rois = True
+                
+                # Debug ROI information
+                print(f"[DEBUG] ROI configs: {video_input.roi_configs}")
+                print(f"[DEBUG] show_rois flag: {video_input.show_rois}")
+                print(f"[DEBUG] Frame buffer size: {len(video_input.frame_buffer)}")
+                print(f"[DEBUG] calculating flag: {video_input.calculating}")
+                
+                # Draw ROIs on the display frame
+                if video_input.show_rois and video_input.roi_configs:
+                    for roi_name, roi_config in video_input.roi_configs.items():
+                        x = int(roi_config['x'])
+                        y = int(roi_config['y'])
+                        w = int(roi_config['width'])
+                        h = int(roi_config['height'])
+                        cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                        
+                        # Add ROI label and movement value if available
+                        if hasattr(video_input, 'current_movements'):
+                            movement_val = video_input.current_movements.get(roi_name, 0)
+                            cv2.putText(display_frame, 
+                                      f"{roi_name}: {movement_val:.2f}", 
+                                      (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 
+                                      0.6, (0, 255, 0), 2)
                 
                 # Add frame count and Venice time
                 frame_count += 1
