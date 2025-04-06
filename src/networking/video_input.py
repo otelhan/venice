@@ -776,15 +776,19 @@ class VideoInput:
             return False
             
     def save_to_csv(self):
-        """Non-async version to save data to CSV"""
-        # Create a new event loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        """Non-async version to save data to CSV using a shared event loop"""
+        # We'll reuse a single event loop for all synchronous operations
+        if not hasattr(self, '_sync_loop') or self._sync_loop.is_closed():
+            self._sync_loop = asyncio.new_event_loop()
+            
         try:
-            success = loop.run_until_complete(self.save_to_csv_only())
-            return success
-        finally:
-            loop.close()
+            asyncio.set_event_loop(self._sync_loop)
+            return self._sync_loop.run_until_complete(self.save_to_csv_only())
+        except Exception as e:
+            print(f"\n[ERROR] Error saving to CSV: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
             
     def cleanup(self):
         """Clean up resources before exit"""
@@ -893,14 +897,8 @@ class VideoInputWithAck(VideoInput):
         if self.should_send_next and not self.waiting_for_ack:
             if len(self.movement_buffers['roi_1']) >= 30:
                 print("\n[STATUS] Sending latest movement data to controller...")
-                # Use run_until_complete to call the async method from sync code
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(self.send_movement_vector())
-                    return True
-                finally:
-                    loop.close()
+                # Use a separate function that doesn't create a new event loop for each call
+                return self._sync_send_movement_vector()
             else:
                 # Only print status every 300 calls to avoid flooding
                 self.not_enough_data_count += 1
@@ -925,6 +923,21 @@ class VideoInputWithAck(VideoInput):
                 self.last_ack_request_time = time.time()
                 print(f"\n[STATUS] Waiting for acknowledgment from {self.ack_destination}...")
         return False
+        
+    def _sync_send_movement_vector(self):
+        """Send movement vector using a shared event loop to avoid resource leaks"""
+        # We'll reuse a single event loop for all synchronous operations
+        if not hasattr(self, '_sync_loop') or self._sync_loop.is_closed():
+            self._sync_loop = asyncio.new_event_loop()
+            
+        try:
+            asyncio.set_event_loop(self._sync_loop)
+            return self._sync_loop.run_until_complete(self.send_movement_vector())
+        except Exception as e:
+            print(f"\n[ERROR] Error sending movement vector: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     def start_ack_server_thread(self):
         """Start the acknowledgment server in a separate thread"""
@@ -945,16 +958,25 @@ class VideoInputWithAck(VideoInput):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # Run the server
-            server = websockets.serve(
+            # Create the server
+            server_coroutine = websockets.serve(
                 self._handle_connection_async,
                 "0.0.0.0",  # Listen on all interfaces
                 self.listen_port,
                 ping_interval=None
             )
             
-            loop.run_until_complete(server)
-            loop.run_forever()
+            # Start the server
+            server = loop.run_until_complete(server_coroutine)
+            
+            # Run the event loop
+            try:
+                loop.run_forever()
+            finally:
+                server.close()
+                loop.run_until_complete(server.wait_closed())
+                loop.close()
+                
         except Exception as e:
             print("\n[ERROR] Error in acknowledgment server thread:", e)
             import traceback
@@ -1027,7 +1049,8 @@ class VideoInputWithAck(VideoInput):
                         continue
                     
                     # Send the message
-                    success = loop.run_until_complete(self._send_to_controller_async(data))
+                    coroutine = self._send_to_controller_async(data)
+                    success = loop.run_until_complete(coroutine)
                     
                     if success:
                         # Mark the task as done
@@ -1049,6 +1072,8 @@ class VideoInputWithAck(VideoInput):
             print("\n[ERROR] Sender thread crashed:", e)
             import traceback
             traceback.print_exc()
+        finally:
+            loop.close()
     
     async def _send_to_controller_async(self, data):
         """Send data to controller (runs in the sender thread)"""
