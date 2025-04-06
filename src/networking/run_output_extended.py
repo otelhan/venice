@@ -58,10 +58,10 @@ class OutputController:
         # Add clock position mapping (6 positions)
         self.clock_positions = {
             0: -150,  # 0-3 hours
-            1: -90,   # 4-7 hours
-            2: -30,   # 8-11 hours
-            3: 30,    # 12-15 hours
-            4: 90,    # 16-19 hours
+            1: -120,  # 4-7 hours
+            2: -60,   # 8-11 hours
+            3: 60,    # 12-15 hours
+            4: 120,   # 16-19 hours
             5: 150    # 20-23 hours
         }
         
@@ -440,7 +440,7 @@ class OutputController:
         
         # Perform one full rotation
         print("\nPerforming full rotation...")
-        rotation_angles = [-150, -90, -30, 30, 90, 150, -150]  # Complete cycle
+        rotation_angles = [-150, -120, -60, 0, 60, 120, 150, -150]  # Complete cycle
         for angle in rotation_angles:
             rotation_command = {
                 'type': 'servo',
@@ -662,10 +662,10 @@ class OutputController:
             print("Sector | Time Range | Angle")
             print("-------------------------------")
             print("0      | 00-03 hrs  | -150°")
-            print("1      | 04-07 hrs  | -90°")
-            print("2      | 08-11 hrs  | -30°")
-            print("3      | 12-15 hrs  | +30°")
-            print("4      | 16-19 hrs  | +90°")
+            print("1      | 04-07 hrs  | -120°")
+            print("2      | 08-11 hrs  | -60°")
+            print("3      | 12-15 hrs  | +60°")
+            print("4      | 16-19 hrs  | +120°")
             print("5      | 20-23 hrs  | +150°")
             print("-------------------------------")
             
@@ -704,16 +704,16 @@ class OutputController:
         print("Sector 0: 00:00-03:59 (-150° position)")
         print("         Midnight to early morning")
         print()
-        print("Sector 1: 04:00-07:59 (-90° position)")
+        print("Sector 1: 04:00-07:59 (-120° position)")
         print("         Early morning")
         print()
-        print("Sector 2: 08:00-11:59 (-30° position)")
+        print("Sector 2: 08:00-11:59 (-60° position)")
         print("         Late morning")
         print()
-        print("Sector 3: 12:00-15:59 (+30° position)")
+        print("Sector 3: 12:00-15:59 (+60° position)")
         print("         Early afternoon")
         print()
-        print("Sector 4: 16:00-19:59 (+90° position)")
+        print("Sector 4: 16:00-19:59 (+120° position)")
         print("         Late afternoon/early evening")
         print()
         print("Sector 5: 20:00-23:59 (+150° position)")
