@@ -161,15 +161,9 @@ video_input:
     show_plots: true
   ip: 192.168.1.133
   listen_port: 8777
-  send_port: 8765
   output:
     csv_path: data/movement_vectors.csv
     plot_path: data/plots
-  sampling:
-    frame_interval: 1
-    vector_interval: 30    # Movement calculation every 30 seconds
-    save_interval: 60      # Save to CSV every 60 seconds (configurable)
-    vector_size: 30
   roi_configs:
     roi_1:
       description: ROI 1
@@ -255,3 +249,9 @@ video_input:
       width: 80
       x: 640
       y: 480
+  sampling:
+    frame_interval: 1
+    save_interval: 60
+    vector_interval: 30
+    vector_size: 30
+  send_port: 8765
