@@ -821,10 +821,7 @@ async def main():
     controller = OutputController(mode)
     
     try:
-        # Center all servos at startup
-        await controller.center_all_servos()
-        
-        # Start controller
+        # Start controller (this will center servos after connection is established)
         await controller.start()
     except KeyboardInterrupt:
         print("\nShutting down...")
