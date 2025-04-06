@@ -15,6 +15,7 @@ import json
 import asyncio
 import threading
 import queue
+import socket  # For simple socket server
 
 # Use cocoa backend for Mac, xcb for Linux
 # if os.uname().sysname == 'Darwin':  # macOS
@@ -474,30 +475,25 @@ class VideoInput:
             print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
             return False
 
-    async def send_to_controller(self, data):
-        """Send data to res00 controller"""
-        try:
-            # Get controller config
-            dest_config = self.config['controllers'].get(self.destination)
-            if not dest_config:
-                print(f"No configuration found for destination: {self.destination}")
-                return False
-
-            # Connect to controller
-            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            print(f"\nConnecting to {self.destination}:")
-            print(f"URI: {uri}")
-            
-            async with websockets.connect(uri) as websocket:
-                print(f"Connected to {self.destination}")
-                await websocket.send(json.dumps(data))
-                print(f"Data sent to {self.destination}:")
-                print(json.dumps(data, indent=2))
-                return True
-
-        except Exception as e:
-            print(f"Error sending to controller: {e}")
+    def send_to_controller(self, data):
+        """Non-async version to use the thread-based approach"""
+        if self.waiting_for_ack:
+            print("[STATUS] Already waiting for acknowledgment, cannot send new data")
             return False
+
+        # Start the ack server thread if it's not already running
+        if not self.server_running:
+            self.start_ack_server_thread()
+            
+        # Start the sender thread if it's not already running
+        if self.sender_thread is None or not self.sender_thread.is_alive():
+            self.start_sender_thread()
+            
+        # Enqueue the message for sending
+        self._enqueue_message(data)
+        
+        # The actual sending will be handled by the sender thread
+        return True
 
     def run(self, stream_url):
         """Main processing loop"""
@@ -951,69 +947,64 @@ class VideoInputWithAck(VideoInput):
             print("\nStarted acknowledgment server thread")
     
     def _run_ack_server(self):
-        """Run the acknowledgment server in a thread"""
+        """Run the websocket server in a dedicated thread with its own event loop"""
         try:
-            print("\nStarting acknowledgment server on port", self.listen_port)
-            # Create a new event loop for this thread
+            print(f"\nStarting acknowledgment server on port {self.listen_port}")
+            
+            # Create the event loop and set it for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # Create the server
-            server_coroutine = websockets.serve(
-                self._handle_connection_async,
-                "0.0.0.0",  # Listen on all interfaces
-                self.listen_port,
-                ping_interval=None
-            )
-            
-            # Start the server
-            server = loop.run_until_complete(server_coroutine)
-            
-            # Run the event loop
-            try:
-                loop.run_forever()
-            finally:
-                server.close()
-                loop.run_until_complete(server.wait_closed())
-                loop.close()
+            # Define server coroutine
+            async def server_main():
+                # Creating a separate handle_client coroutine
+                async def handle_client(websocket, path):
+                    try:
+                        addr = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+                        print(f"[ACK] New connection from {addr}")
+                        
+                        async for message in websocket:
+                            try:
+                                data = json.loads(message)
+                                if data.get('type') == 'ack':
+                                    print(f"[ACK] Acknowledgment received:")
+                                    
+                                    # Update state variables
+                                    self.waiting_for_ack = False
+                                    self.message_sent = False
+                                    self.should_send_next = True
+                                    
+                                    # Signal to the main thread
+                                    self.ack_received_event.set()
+                                    
+                                    print("[ACK] Ready to send next data packet")
+                            except json.JSONDecodeError:
+                                print(f"[ERROR] Invalid JSON received")
+                    except Exception as e:
+                        print(f"[ERROR] Client error: {e}")
                 
-        except Exception as e:
-            print("\n[ERROR] Error in acknowledgment server thread:", e)
-            import traceback
-            traceback.print_exc()
-            self.server_running = False
-
-    async def _handle_connection_async(self, websocket):
-        """Handle incoming WebSocket connections (runs in the server thread)"""
-        try:
-            client_info = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
-            print(f"\n[ACK] New connection from {client_info}")
+                # Create and start server
+                server = await websockets.serve(handle_client, "0.0.0.0", self.listen_port)
+                print(f"[ACK] Websocket server running on port {self.listen_port}")
+                
+                # Just keep it running
+                while self.server_running:
+                    await asyncio.sleep(1)
+                
+                # Clean up when done
+                server.close()
+                await server.wait_closed()
             
-            async for message in websocket:
-                try:
-                    data = json.loads(message)
-                    if data.get('type') == 'ack':
-                        print(f"\n[ACK] Acknowledgment received from {self.ack_destination}:")
-                        print(json.dumps(data, indent=2))
-                        
-                        # Update state variables
-                        self.waiting_for_ack = False
-                        self.message_sent = False
-                        self.should_send_next = True
-                        
-                        # Signal to the main thread that an ack was received
-                        self.ack_received_event.set()
-                        
-                        print("[ACK] Ready to send next data packet")
-                except json.JSONDecodeError:
-                    print("\n[ERROR] Invalid JSON received:", message)
-                        
-        except websockets.exceptions.ConnectionClosed:
-            print(f"\n[ACK] Connection from {client_info} closed")
+            # Run everything  
+            loop.run_until_complete(server_main())
+        
         except Exception as e:
-            print("\n[ERROR] Error handling acknowledgement:", e)
+            print(f"[ERROR] Server thread error: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            self.server_running = False
+            print("[ACK] Server thread terminated")
     
     def _enqueue_message(self, data):
         """Add a message to the queue for sending in the sender thread"""
@@ -1033,110 +1024,83 @@ class VideoInputWithAck(VideoInput):
     def _run_sender_loop(self):
         """Run the sender loop in a thread"""
         try:
-            print("\n[SEND] Sender thread started")
-            # Create a new event loop for this thread
+            print("[SEND] Sender thread started")
+            
+            # Create and set event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            # Main loop
             while True:
                 try:
-                    # Get the next message from the queue, with a timeout
+                    # Get the next message from the queue with timeout
                     try:
                         data = self.message_queue.get(timeout=0.5)
-                        print("\n[SEND] Got message from queue, sending...")
+                        print("[SEND] Got message from queue")
                     except queue.Empty:
-                        # No message to send, just continue the loop
+                        # No message, continue polling
                         continue
                     
-                    # Send the message
-                    coroutine = self._send_to_controller_async(data)
-                    success = loop.run_until_complete(coroutine)
+                    # Define sender coroutine
+                    async def send_message():
+                        try:
+                            # Get controller config
+                            dest_config = self.config['controllers'].get(self.destination)
+                            if not dest_config:
+                                print("[ERROR] No configuration found for destination:", self.destination)
+                                return False
+                    
+                            # Connect to controller
+                            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
+                            print(f"[SEND] Connecting to {uri}")
+                            
+                            # Connect and send
+                            async with websockets.connect(uri) as websocket:
+                                print(f"[SEND] Connected to {self.destination}")
+                                await websocket.send(json.dumps(data))
+                                print(f"[SEND] Data sent successfully")
+                                
+                                # Update state after sending
+                                self.waiting_for_ack = True
+                                self.message_sent = True
+                                self.last_message = data
+                                self.should_send_next = False
+                                
+                                # Reset the acknowledgment event
+                                self.ack_received_event.clear()
+                                
+                                # Store the time for timeout tracking
+                                self.last_ack_request_time = time.time()
+                                
+                                return True
+                                
+                        except Exception as e:
+                            print(f"[ERROR] Send failed: {e}")
+                            return False
+                    
+                    # Run the send coroutine
+                    success = loop.run_until_complete(send_message())
                     
                     if success:
-                        # Mark the task as done
+                        # Mark as done
                         self.message_queue.task_done()
-                        print("\n[SEND] Message sent successfully")
+                        print("[SEND] Message processed successfully")
                     else:
-                        # Put the message back in the queue to retry later
+                        # Re-queue for retry
                         self.message_queue.put(data)
-                        print("\n[SEND] Failed to send message, will retry later")
-                        time.sleep(2)  # Wait before retrying
+                        print("[SEND] Will retry message later")
+                        time.sleep(2)
                         
                 except Exception as e:
-                    print("\n[ERROR] Error in sender thread:", e)
-                    import traceback
+                    print(f"[ERROR] Sender error: {e}")
                     traceback.print_exc()
-                    time.sleep(1)  # Avoid tight loop in case of error
+                    time.sleep(1)
                     
         except Exception as e:
-            print("\n[ERROR] Sender thread crashed:", e)
-            import traceback
+            print(f"[ERROR] Sender thread crashed: {e}")
             traceback.print_exc()
         finally:
-            loop.close()
-    
-    async def _send_to_controller_async(self, data):
-        """Send data to controller (runs in the sender thread)"""
-        try:
-            # Get controller config
-            dest_config = self.config['controllers'].get(self.destination)
-            if not dest_config:
-                print("\n[ERROR] No configuration found for destination:", self.destination)
-                return False
-
-            # Connect to controller
-            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            print(f"\n[SEND] Connecting to {self.destination}: {uri}")
-            
-            async with websockets.connect(uri) as websocket:
-                print(f"[SEND] Connected to {self.destination}")
-                await websocket.send(json.dumps(data))
-                print(f"[SEND] Data sent to {self.destination}")
-                if len(data.get('data', {}).get('pot_values', [])) > 0:
-                    timestamp = data.get('timestamp', 'unknown')
-                    pot_count = len(data.get('data', {}).get('pot_values', []))
-                    print(f"[SEND] Timestamp: {timestamp}")
-                    print(f"[SEND] Sent {pot_count} movement values")
-                
-                # Update state after successful send
-                self.waiting_for_ack = True
-                self.message_sent = True
-                self.last_message = data
-                self.should_send_next = False  # Reset flag after sending
-                
-                # Reset the acknowledgment event
-                self.ack_received_event.clear()
-                
-                print(f"[SEND] Now waiting for acknowledgment from {self.ack_destination}")
-                # Store the time for timeout tracking
-                self.last_ack_request_time = time.time()
-                return True
-
-        except Exception as e:
-            print(f"\n[ERROR] Failed to send to controller: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return False
-    
-    def send_to_controller(self, data):
-        """Non-async version to use the thread-based approach"""
-        if self.waiting_for_ack:
-            print("\n[STATUS] Already waiting for acknowledgment, cannot send new data")
-            return False
-
-        # Start the ack server thread if it's not already running
-        if not self.server_running:
-            self.start_ack_server_thread()
-            
-        # Start the sender thread if it's not already running
-        if self.sender_thread is None or not self.sender_thread.is_alive():
-            self.start_sender_thread()
-            
-        # Enqueue the message for sending
-        self._enqueue_message(data)
-        
-        # The actual sending will be handled by the sender thread
-        return True
+            print("[SEND] Sender thread terminated")
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 

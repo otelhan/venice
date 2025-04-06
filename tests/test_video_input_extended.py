@@ -23,8 +23,13 @@ from src.networking.video_input import VideoInput, VideoInputWithAck
 
 async def test_video_input(fullscreen=False, debug=False):
     """Test the video input module"""
+    print("\nInitializing VideoInputWithAck...")
     # Create video input with ACK
     video_input = VideoInputWithAck()
+    
+    # Give WebSocket threads a moment to initialize
+    print("Waiting for WebSocket threads to initialize...")
+    time.sleep(2)
     
     # Create a window
     cv2.namedWindow('Video', cv2.WINDOW_NORMAL)
