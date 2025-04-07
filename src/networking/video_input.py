@@ -907,141 +907,238 @@ class VideoInputWithAck(VideoInput):
         else:
             print(f"\nWarning: No configuration found for ACK source: {self.ack_destination}")
     
-    async def setup_ack_server(self):
+    async def setup_ack_server(self, force_restart=False):
         """Setup websocket server to listen for acknowledgments"""
         try:
-            # Only set up the server once
-            if self.server is None:
-                print(f"\n[ACK] Setting up acknowledgment server on port {self.listen_port}")
+            # Handle force restart
+            if force_restart and self.server:
+                print("[ACK] Force restarting acknowledgment server")
+                self.server.close()
+                await self.server.wait_closed()
+                self.server = None
                 
-                # Websocket handler for incoming messages
-                async def handler(websocket):
-                    try:
-                        client_ip = websocket.remote_address[0] if hasattr(websocket, 'remote_address') else 'unknown'
-                        print(f"[ACK] New connection established from {client_ip}")
-                        async for message in websocket:
-                            try:
-                                data = json.loads(message)
-                                print(f"\n[ACK] Received message: {data}")
-                                
-                                # Check if it's an acknowledgment
-                                if data.get('type') == 'ack':
-                                    print(f"[ACK] Acknowledgment received from {client_ip}!")
-                                    # Important: Set this BEFORE setting the event
-                                    self.waiting_for_ack = False
-                                    
-                                    # Clear any timeouts and set the event
-                                    if self.ack_task and not self.ack_task.done():
-                                        self.ack_task.cancel()
-                                        
-                                    self.ack_received.set()
-                                    
-                                    # Respond with confirmation (optional but helps debugging)
-                                    try:
-                                        response = {
-                                            'type': 'ack_receipt',
-                                            'status': 'success',
-                                            'message': 'Acknowledgment received successfully'
-                                        }
-                                        await websocket.send(json.dumps(response))
-                                    except:
-                                        pass
-                                else:
-                                    print(f"[INFO] Received non-ACK message: {data.get('type', 'unknown')}")
-                                    
-                            except json.JSONDecodeError:
-                                print(f"[WARNING] Received invalid JSON: {message}")
-                    except websockets.exceptions.ConnectionClosed:
-                        print(f"[INFO] ACK connection from {client_ip} closed gracefully")
-                    except Exception as e:
-                        print(f"[ERROR] Websocket handler error: {e}")
-                        import traceback
-                        traceback.print_exc()
+            # Only set up the server once, unless force_restart is True
+            if self.server is not None:
+                print(f"[ACK] Acknowledgment server already running on port {self.listen_port}")
+                # Check if the server is still valid
+                if hasattr(self.server, 'sockets') and self.server.sockets:
+                    print("[ACK] Reusing existing server")
+                    return self.server
+                else:
+                    print("[ACK] Existing server appears invalid, creating new server")
+                    self.server = None
+            
+            # Check if the port is already in use by another process
+            try:
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex(('127.0.0.1', self.listen_port))
+                sock.close()
                 
-                # Create the server with more lenient settings
-                print(f"[ACK] Starting server on 0.0.0.0:{self.listen_port}")
+                if result == 0:
+                    print(f"[WARNING] Port {self.listen_port} is already in use by another process")
+                    print("[ACK] Attempting to use existing port binding...")
+            except Exception as e:
+                print(f"[WARNING] Error checking port availability: {e}")
+            
+            # Now try to create the server
+            print(f"\n[ACK] Setting up acknowledgment server on port {self.listen_port}")
                 
+            # Websocket handler for incoming messages
+            async def handler(websocket):
                 try:
-                    # Get the websockets version to determine the correct function signature
-                    import websockets
-                    ws_version = websockets.__version__.split('.')
-                    major_version = int(ws_version[0]) if ws_version else 0
-                    
-                    # Handle both older (path parameter required) and newer versions
-                    if major_version >= 10:
-                        # Newer websockets version (10.0+) - no path parameter
-                        print(f"[INFO] Using websockets {websockets.__version__} (new API)")
-                        self.server = await websockets.serve(
-                            handler, 
-                            "0.0.0.0",
-                            self.listen_port,
-                            ping_interval=None,
-                            ping_timeout=None,
-                            close_timeout=10,
-                            max_size=10485760,
-                            max_queue=32
-                        )
-                    else:
-                        # Older websockets version - path parameter required
-                        print(f"[INFO] Using websockets {websockets.__version__} (legacy API)")
-                        
-                        # Create a wrapper handler that accepts the path parameter
-                        async def legacy_handler(websocket, path):
-                            await handler(websocket)
+                    client_ip = websocket.remote_address[0] if hasattr(websocket, 'remote_address') else 'unknown'
+                    print(f"[ACK] New connection established from {client_ip}")
+                    async for message in websocket:
+                        try:
+                            data = json.loads(message)
+                            print(f"\n[ACK] Received message: {data}")
                             
-                        self.server = await websockets.serve(
-                            legacy_handler, 
-                            "0.0.0.0",
-                            self.listen_port,
-                            ping_interval=None,
-                            ping_timeout=None,
-                            close_timeout=10,
-                            max_size=10485760,
-                            max_queue=32
-                        )
-                    
-                    if self.server:
-                        print(f"[ACK] Acknowledgment server is running on port {self.listen_port}")
-                        if hasattr(self.server, 'sockets') and self.server.sockets:
-                            for sock in self.server.sockets:
-                                print(f"[ACK] Socket: {sock}")
-                        else:
-                            print("[WARNING] Server has no sockets!")
-                    else:
-                        print("[ERROR] Failed to create server!")
+                            # Check if it's an acknowledgment
+                            if data.get('type') == 'ack':
+                                print(f"[ACK] Acknowledgment received from {client_ip}!")
+                                # Important: Set this BEFORE setting the event
+                                self.waiting_for_ack = False
+                                
+                                # Clear any timeouts and set the event
+                                if self.ack_task and not self.ack_task.done():
+                                    self.ack_task.cancel()
+                                    
+                                self.ack_received.set()
+                                
+                                # Respond with confirmation (optional but helps debugging)
+                                try:
+                                    response = {
+                                        'type': 'ack_receipt',
+                                        'status': 'success',
+                                        'message': 'Acknowledgment received successfully'
+                                    }
+                                    await websocket.send(json.dumps(response))
+                                except:
+                                    pass
+                            else:
+                                print(f"[INFO] Received non-ACK message: {data.get('type', 'unknown')}")
+                                
+                        except json.JSONDecodeError:
+                            print(f"[WARNING] Received invalid JSON: {message}")
+                except websockets.exceptions.ConnectionClosed:
+                    print(f"[INFO] ACK connection from {client_ip} closed gracefully")
                 except Exception as e:
-                    print(f"[ERROR] Failed to create server: {e}")
+                    print(f"[ERROR] Websocket handler error: {e}")
                     import traceback
                     traceback.print_exc()
+            
+            # Create the server with more lenient settings
+            print(f"[ACK] Starting server on 0.0.0.0:{self.listen_port}")
+            
+            try:
+                # Get the websockets version to determine the correct function signature
+                import websockets
+                ws_version = websockets.__version__.split('.')
+                major_version = int(ws_version[0]) if ws_version else 0
+                
+                # Try with increased retry count and exception handling
+                max_retries = 3
+                retry_delay = 2  # seconds
+                last_error = None
+                
+                for attempt in range(max_retries):
+                    try:
+                        # Add a small delay between retries
+                        if attempt > 0:
+                            print(f"[ACK] Retry attempt {attempt}/{max_retries} after {retry_delay} seconds")
+                            await asyncio.sleep(retry_delay)
+                            
+                        # Handle both older (path parameter required) and newer versions
+                        if major_version >= 10:
+                            # Newer websockets version (10.0+) - no path parameter
+                            print(f"[INFO] Using websockets {websockets.__version__} (new API)")
+                            # Try with SO_REUSEADDR option
+                            self.server = await websockets.serve(
+                                handler, 
+                                "0.0.0.0",
+                                self.listen_port,
+                                ping_interval=None,
+                                ping_timeout=None,
+                                close_timeout=10,
+                                max_size=10485760,
+                                max_queue=32,
+                                reuse_address=True  # Allow reuse of address
+                            )
+                        else:
+                            # Older websockets version - path parameter required
+                            print(f"[INFO] Using websockets {websockets.__version__} (legacy API)")
+                            
+                            # Create a wrapper handler that accepts the path parameter
+                            async def legacy_handler(websocket, path):
+                                await handler(websocket)
+                                
+                            self.server = await websockets.serve(
+                                legacy_handler, 
+                                "0.0.0.0",
+                                self.listen_port,
+                                ping_interval=None,
+                                ping_timeout=None,
+                                close_timeout=10,
+                                max_size=10485760,
+                                max_queue=32,
+                                reuse_address=True  # Allow reuse of address
+                            )
+                        
+                        # If we get here, server creation was successful
+                        break
+                    except OSError as e:
+                        if e.errno == 98:  # Address already in use
+                            print(f"[WARNING] Port {self.listen_port} is still in use (attempt {attempt+1}/{max_retries})")
+                            # Try alternate port
+                            alt_port = self.listen_port + attempt + 1
+                            print(f"[ACK] Trying alternate port {alt_port}")
+                            try:
+                                if major_version >= 10:
+                                    self.server = await websockets.serve(
+                                        handler, 
+                                        "0.0.0.0",
+                                        alt_port,
+                                        ping_interval=None,
+                                        ping_timeout=None,
+                                        close_timeout=10,
+                                        max_size=10485760,
+                                        max_queue=32
+                                    )
+                                else:
+                                    self.server = await websockets.serve(
+                                        legacy_handler, 
+                                        "0.0.0.0",
+                                        alt_port,
+                                        ping_interval=None,
+                                        ping_timeout=None,
+                                        close_timeout=10,
+                                        max_size=10485760,
+                                        max_queue=32
+                                    )
+                                # Update the port if successful
+                                self.listen_port = alt_port
+                                print(f"[ACK] Successfully bound to alternate port {alt_port}")
+                                break
+                            except Exception as alt_err:
+                                print(f"[ERROR] Failed to bind to alternate port: {alt_err}")
+                        last_error = e
+                    except Exception as e:
+                        print(f"[ERROR] Server creation error: {e}")
+                        last_error = e
+                
+                # Check if all attempts failed
+                if self.server is None:
+                    if last_error:
+                        print(f"[ERROR] All server creation attempts failed: {last_error}")
+                    else:
+                        print("[ERROR] All server creation attempts failed with unknown error")
                     return None
                 
-                # Determine our IP address - try multiple methods
-                ip = await self.get_reliable_ip()
-                
-                # Add our listen port to the config so the output knows where to send ACKs
-                if 'video_input' not in self.config:
-                    self.config['video_input'] = {}
-                
-                # Set our IP and port in the config
-                self.config['video_input']['listen_port'] = self.listen_port
-                self.config['video_input']['ip'] = ip
-                
-                print(f"[ACK] IP address set in config: {ip}:{self.listen_port}")
-                
-                # Save the config
-                config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
-                with open(config_path, 'w') as f:
-                    yaml.dump(self.config, f, default_flow_style=False)
-                    print(f"[ACK] Updated config saved to {config_path}")
-                
-                # Verify the server is actually running
-                server_ok = self.verify_server()
-                if not server_ok:
-                    print("[WARNING] Server verification failed!")
-                
-                # We need to keep this task running
-                return self.server
-                
+                if self.server:
+                    print(f"[ACK] Acknowledgment server is running on port {self.listen_port}")
+                    if hasattr(self.server, 'sockets') and self.server.sockets:
+                        for sock in self.server.sockets:
+                            print(f"[ACK] Socket: {sock}")
+                    else:
+                        print("[WARNING] Server has no sockets!")
+                else:
+                    print("[ERROR] Failed to create server!")
+                    return None
+            except Exception as e:
+                print(f"[ERROR] Failed to create server: {e}")
+                import traceback
+                traceback.print_exc()
+                return None
+            
+            # Determine our IP address - try multiple methods
+            ip = await self.get_reliable_ip()
+            
+            # Add our listen port to the config so the output knows where to send ACKs
+            if 'video_input' not in self.config:
+                self.config['video_input'] = {}
+            
+            # Set our IP and port in the config
+            self.config['video_input']['listen_port'] = self.listen_port
+            self.config['video_input']['ip'] = ip
+            
+            print(f"[ACK] IP address set in config: {ip}:{self.listen_port}")
+            
+            # Save the config
+            config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
+            with open(config_path, 'w') as f:
+                yaml.dump(self.config, f, default_flow_style=False)
+                print(f"[ACK] Updated config saved to {config_path}")
+            
+            # Verify the server is actually running
+            server_ok = self.verify_server()
+            if not server_ok:
+                print("[WARNING] Server verification failed!")
+            
+            # We need to keep this task running
+            return self.server
+            
         except Exception as e:
             print(f"[ERROR] Failed to setup acknowledgment server: {e}")
             import traceback

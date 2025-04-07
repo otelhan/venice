@@ -24,15 +24,33 @@ async def test_ack_server():
     # Create video input with acknowledgment
     video = VideoInputWithAck()
     
-    # Start server and wait for it to be ready
-    server_task = asyncio.create_task(video.setup_ack_server())
-    await asyncio.sleep(3)  # Wait for server to initialize
+    # Start server with force_restart to ensure we get a fresh server
+    print("Starting acknowledgment server with force_restart...")
+    server_task = asyncio.create_task(video.setup_ack_server(force_restart=True))
+    
+    # Wait for server to initialize
+    server = None
+    for attempt in range(3):
+        await asyncio.sleep(2)  # Wait for server to initialize
+        if video.server:
+            server = video.server
+            print(f"Server initialized on attempt {attempt+1}")
+            break
+        else:
+            print(f"Waiting for server initialization (attempt {attempt+1}/3)...")
     
     # Make sure server is running
     print("Verifying server is running...")
-    if video.server is None:
-        print("ERROR: Server not initialized")
+    if not server:
+        print("ERROR: Server not initialized after waiting")
         return False
+    
+    # Check if server has sockets
+    if not hasattr(server, 'sockets') or not server.sockets:
+        print("ERROR: Server has no sockets")
+        return False
+        
+    print(f"Server has {len(server.sockets)} socket(s)")
     
     # Get IP and port from config
     # Simulate sending an acknowledgment
@@ -120,10 +138,15 @@ async def test_video_input(fullscreen=False, debug=False):
     
     # Start acknowledgment server and wait for it to be ready
     print("\nStarting acknowledgment server...")
-    server_task = asyncio.create_task(video.setup_ack_server())
+    # Don't force restart if the test_ack_server already set up a server
+    if video.server is None:
+        server_task = asyncio.create_task(video.setup_ack_server(force_restart=False))
+    else:
+        print("Using existing server from previous test")
+        server_task = None
     
     # Give the server time to start up fully before continuing
-    await asyncio.sleep(5)  # Longer wait for server to fully initialize
+    await asyncio.sleep(2)  # Shorter wait since we already waited in test_ack_server
     
     # Update the IP address in config with the correct IP
     local_ip = video.get_local_ip()
@@ -134,7 +157,7 @@ async def test_video_input(fullscreen=False, debug=False):
     print("\nVerifying acknowledgment server status:")
     if video.server:
         print(f"✓ Server initialized and waiting for connections")
-        print(f"Server socket info: {video.server.sockets}")
+        print(f"Server socket info: {video.server.sockets if hasattr(video.server, 'sockets') else 'No sockets'}")
     else:
         print("⚠ WARNING: Server not properly initialized!")
     
@@ -162,7 +185,9 @@ async def test_video_input(fullscreen=False, debug=False):
     print(f"Attempting to connect to: {url}")
     
     # Connect to stream
-    assert video.connect_to_stream(url), "Failed to connect to stream"
+    if not video.connect_to_stream(url):
+        print("Failed to connect to stream")
+        return False
     
     # Main loop
     print("Stream connected, entering main loop...")
