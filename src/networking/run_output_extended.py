@@ -236,20 +236,12 @@ class OutputController:
         """Handle the current state"""
         if self.current_state == OutputState.START_POSITION:
             print("\n=== Starting Position ===")
-            print("The clock is centered at 0 degrees")
-            
-            # Different behavior based on mode
-            if self.mode == 'test':
-                print("Press Enter to continue to menu...")
-                input()
-                await self.transition_to(OutputState.IDLE)
-            else:
-                # For operation mode, directly start websocket server without user input
+            if self.mode == 'operation':
+                print("Ready to receive data")
                 print("Waiting 3 seconds...")
                 await asyncio.sleep(3)
                 print("Wait complete, proceeding...")
                 
-                # Start websocket server
                 try:
                     async with websockets.serve(
                         self._handle_connection, 
@@ -260,17 +252,20 @@ class OutputController:
                         await asyncio.Future()  # run forever
                 except Exception as e:
                     print(f"Error starting websocket server: {e}")
+            else:
+                print("The clock is centered at 0 degrees")
+                print("Press Enter to continue to menu...")
+                input()
+                await self.transition_to(OutputState.IDLE)
             
         elif self.current_state == OutputState.IDLE:
             print("Waiting for data...")
             
-            # In test mode, ask for the next action
             if self.mode == 'test':
                 await self.handle_test_menu()
 
         elif self.current_state == OutputState.PREDICT:
             print("Predicting (placeholder - waiting 3 seconds)")
-            # In operation mode, center all servos first
             if self.mode == 'operation':
                 await self.center_all_servos_for_operation()
             await asyncio.sleep(3)
@@ -289,7 +284,6 @@ class OutputController:
             
             await self.move_clock()
             
-            # Send acknowledgment to video_input after clock movement is complete
             if self.mode == 'operation' and timestamp:
                 success = await self.send_acknowledgement(timestamp)
                 if success:
@@ -301,24 +295,19 @@ class OutputController:
             
         elif self.current_state == OutputState.TEST_MODE:
             if self.test_data:
-                # Extract values from test data
                 data = self.test_data['data']
                 pot_values = data['pot_values']
                 
-                # First move clock using new method
                 await self.move_clock()
                 
-                # Then process pot values
                 await self.rotate_cubes(pot_values)
                 
-                # Return to idle
                 await self.transition_to(OutputState.IDLE)
             else:
                 print("No test data available")
                 await self.transition_to(OutputState.IDLE)
                 
         elif self.current_state == OutputState.TEST_CLOCK_SECTOR:
-            # Move clock to the specified test sector
             await self.move_clock_to_sector(self.test_sector)
             await self.transition_to(OutputState.IDLE)
 
@@ -855,8 +844,11 @@ class OutputController:
         print()
         print("In operation mode, the clock returns to sector 5 (HOME)")
         print("after displaying the calculated time sector.")
-        print("\nPress Enter to return to the menu...")
-        input()
+        
+        # Only wait for input in test mode
+        if self.mode == 'test':
+            print("\nPress Enter to return to the menu...")
+            input()
 
     async def center_all_servos_for_operation(self):
         """Center all servos before operation, with clock at sector 5 (150 degrees)"""
