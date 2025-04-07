@@ -298,12 +298,22 @@ class VideoInput:
                 # Return existing data if we're not ready for a new frame yet
                 return self.current_movements if return_movements else None
             
+            # Only acquire new frame if we're actually going to process it
+            # This avoids unnecessary frame reads and reduces latency
+            if not self.cap or not self.cap.isOpened():
+                if not hasattr(self, 'last_reconnection_try') or time.time() - self.last_reconnection_try > 5:
+                    print("\n[ERROR] Video capture not open")
+                    self.reconnection_needed = True
+                    self.last_reconnection_try = time.time()
+                return movements if return_movements else None
+                
             ret, frame = self.cap.read()
             if not ret:
                 # Log this only occasionally to avoid console flooding
                 if not hasattr(self, 'last_frame_error_time') or time.time() - self.last_frame_error_time > 5:
                     print("\n[ERROR] Failed to read frame, will try to reconnect if this continues")
                     self.last_frame_error_time = time.time()
+                    self.reconnection_needed = True
                 return movements if return_movements else None
             
             # Update frame buffer efficiently
@@ -508,7 +518,7 @@ class VideoInput:
     def show_frame(self, frame, window_name="Venice Stream"):
         """Show frame with ROI overlay and movement values"""
         if frame is not None:
-            display_frame = frame.copy()
+            display_frame = frame
             
             # Add Venice timestamp and frame number
             venice_time = self.get_venice_time().strftime('%H:%M:%S')

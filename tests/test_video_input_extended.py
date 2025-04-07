@@ -31,6 +31,7 @@ class VideoInputWithAck(VideoInput):
         self.ack_timeout = 30  # seconds to wait before resending data
         self.last_ack_time = time.time()
         self.status_message = "INITIALIZING..."
+        self.current_connection_task = None  # Track current connection attempt
         
         # Print ACK info
         output_config = self.config['controllers'].get(self.ack_destination)
@@ -73,16 +74,45 @@ class VideoInputWithAck(VideoInput):
             print(f"\n[ERROR] Error handling acknowledgement: {e}")
 
     async def send_to_controller(self, data):
-        """Override send_to_controller to wait for acknowledgment"""
+        """Non-blocking version that starts the send operation and returns immediately"""
         if self.waiting_for_ack:
             print("\n[STATUS] Already waiting for acknowledgment, cannot send new data")
             return False
 
+        # Mark as waiting for acknowledgment before starting connection
+        self.waiting_for_ack = True
+        self.message_sent = True
+        self.last_message = data
+        self.should_send_next = False
+        self.last_ack_time = time.time()
+        self.status_message = "WAITING FOR ACK FROM OUTPUT"
+        
+        # Start the connection task in the background
+        if self.current_connection_task is not None:
+            # Cancel any existing tasks
+            try:
+                self.current_connection_task.cancel()
+            except:
+                pass
+                
+        # Create a new connection task
+        self.current_connection_task = asyncio.create_task(
+            self._connect_and_send(data)
+        )
+        
+        # Return immediately
+        print(f"\n[STATUS] Started async connection to {self.destination}")
+        return True
+    
+    async def _connect_and_send(self, data):
+        """Background task to connect and send data"""
         try:
             # Get controller config
             dest_config = self.config['controllers'].get(self.destination)
             if not dest_config:
                 print(f"\n[ERROR] No configuration found for destination: {self.destination}")
+                self.waiting_for_ack = False
+                self.status_message = "CONNECTION ERROR"
                 return False
 
             # Connect to controller
@@ -90,7 +120,7 @@ class VideoInputWithAck(VideoInput):
             print(f"\n[STATUS] Connecting to {self.destination}:")
             print(f"URI: {uri}")
             
-            async with websockets.connect(uri) as websocket:
+            async with websockets.connect(uri, ping_interval=None, close_timeout=5) as websocket:
                 print(f"[SUCCESS] Connected to {self.destination}")
                 await websocket.send(json.dumps(data))
                 print(f"[SUCCESS] Data sent to {self.destination}")
@@ -100,18 +130,18 @@ class VideoInputWithAck(VideoInput):
                     print(f"[DATA] Timestamp: {timestamp}")
                     print(f"[DATA] Sent {pot_count} movement values")
                 
-                self.waiting_for_ack = True
-                self.message_sent = True
-                self.last_message = data
-                self.should_send_next = False  # Reset flag after sending
-                self.last_ack_time = time.time()
-                self.status_message = "WAITING FOR ACK FROM OUTPUT"
                 print(f"[STATUS] Now waiting for acknowledgment from {self.ack_destination}")
                 return True
 
         except Exception as e:
             print(f"\n[ERROR] Failed to send to controller: {e}")
+            # Don't reset waiting_for_ack here - let the timeout mechanism handle it
+            # This prevents immediate retries which could cause connection issues
+            self.status_message = f"CONNECTION ERROR: {str(e)[:30]}"
             return False
+        finally:
+            # Clear the task reference
+            self.current_connection_task = None
     
     async def background_tasks_handler(self):
         """Handle background tasks like checking for timeouts and periodic operations"""
@@ -241,24 +271,28 @@ async def test_video_input(fullscreen=False, debug=False):
         fps_counter = 0
         fps_timer = time.time()
         fps = 0
+        last_key_check = 0
         
         # Initial send handled by background task
         video.status_message = "STARTING UP..."
         video.reconnection_needed = False  # Initialize reconnection flag
         
+        # Frame rate control
+        target_fps = 30
+        frame_duration = 1.0 / target_fps
+        
         while True:
             # Process frames at a controlled rate
             start_time = time.time()
             
-            # Get and process frame
+            # Get frame (non-blocking)
             frame = video.get_frame()
             if frame is not None:
                 frame_count += 1
                 fps_counter += 1
                 
-                # Process frame (always calculating)
+                # Process frame (always calculating but don't wait for result)
                 try:
-                    # Process frame efficiently - don't wait for result
                     video.process_frame(return_movements=False)
                     
                     # Calculate FPS every second
@@ -270,12 +304,12 @@ async def test_video_input(fullscreen=False, debug=False):
                         
                 except Exception as e:
                     if debug:
-                        print(f"\nError in processing: {e}")
+                        print(f"\nError processing frame: {e}")
                 
-                # Show frame with status message
-                frame_copy = frame.copy()
+                # Display frame efficiently - don't copy if we don't need to
+                display_frame = frame.copy() if video.show_rois else frame
                 
-                # Display status message (now controlled by background task)
+                # Add status message
                 msg = video.status_message
                 # Convert RGB (246,190,0) to BGR format (0,190,246)
                 # Yellow color specifically requested by user
@@ -283,53 +317,54 @@ async def test_video_input(fullscreen=False, debug=False):
                 color = yellow_color if "WAITING" in msg else (0, 255, 0)
                 
                 # Position 80 pixels from top
-                cv2.putText(frame_copy, msg, (10, 80), 
+                cv2.putText(display_frame, msg, (10, 80), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                 
                 # Add FPS counter if in debug mode
                 if debug:
-                    cv2.putText(frame_copy, f"FPS: {fps:.1f}", (10, 120),
+                    cv2.putText(display_frame, f"FPS: {fps:.1f}", (10, 120),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 
-                # Show the frame
-                video.show_frame(frame_copy, window_name)
+                # Show the frame (this may use frame as is if no ROIs to show)
+                video.show_frame(display_frame, window_name)
                 
-                # Check for commands - don't poll too frequently
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    print("\nQuitting...")
-                    break
-                elif key == ord('r'):
-                    print("\nStarting ROI selection...")
-                    video.select_single_roi(frame)
-                elif key == ord('s'):
-                    print("\nStarting all ROIs selection...")
-                    video.select_all_rois(frame)
-                elif key == ord('t'):
-                    video.show_rois = not video.show_rois
-                    print(f"\nROI display: {'On' if video.show_rois else 'Off'}")
-                elif key == ord('f'):
-                    fullscreen = not fullscreen
-                    if fullscreen:
-                        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-                    else:
-                        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-                    print(f"\nFullscreen: {'On' if fullscreen else 'Off'}")
+                # Check for key presses (don't check every frame to reduce CPU)
+                current_time = time.time()
+                if current_time - last_key_check >= 0.05:  # 50ms throttle for key checks
+                    key = cv2.waitKey(1) & 0xFF
+                    last_key_check = current_time
+                    
+                    if key == ord('q'):
+                        print("\nQuitting...")
+                        break
+                    elif key == ord('r'):
+                        print("\nStarting ROI selection...")
+                        video.select_single_roi(frame)
+                    elif key == ord('s'):
+                        print("\nStarting all ROIs selection...")
+                        video.select_all_rois(frame)
+                    elif key == ord('t'):
+                        video.show_rois = not video.show_rois
+                        print(f"\nROI display: {'On' if video.show_rois else 'Off'}")
+                    elif key == ord('f'):
+                        fullscreen = not fullscreen
+                        if fullscreen:
+                            cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                        else:
+                            cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                        print(f"\nFullscreen: {'On' if fullscreen else 'Off'}")
             else:
-                # No frame available, give control back to event loop
+                # No frame available, yield to background tasks
                 await asyncio.sleep(0.01)
                 continue
             
-            # Calculate time spent on frame processing
+            # Adaptive frame rate control
             elapsed = time.time() - start_time
-            
-            # Adaptive sleep to maintain a consistent frame rate
-            # Target 30fps but don't sleep more than 33ms
-            sleep_time = max(0, min(0.033, (1/30) - elapsed))
+            sleep_time = max(0, min(0.033, frame_duration - elapsed))
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
             else:
-                # Brief yield to prevent CPU hogging if we're behind
+                # Just yield control briefly if we're behind
                 await asyncio.sleep(0)
                 
     except Exception as e:
