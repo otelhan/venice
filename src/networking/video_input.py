@@ -416,7 +416,7 @@ class VideoInput:
     
     async def save_to_csv_only(self):
         """Save movement vector to CSV only, without sending to controller"""
-            if len(self.movement_buffers['roi_1']) >= 30:
+        if len(self.movement_buffers['roi_1']) >= 30:
             # Scale values for CSV - use the latest 30 values
             scaled_values = []
             # If we have more than 30 values, get the latest 30
@@ -614,7 +614,7 @@ class VideoInput:
         except websockets.exceptions.ConnectionClosed as e:
             print(f"\n[ERROR] Connection to {self.destination} closed unexpectedly: {e}")
             return False
-                except Exception as e:
+        except Exception as e:
             print(f"\n[ERROR] Failed to send to controller: {e}")
             return False
 
@@ -672,9 +672,9 @@ class VideoInput:
         """Clean up resources"""
         print("\n[INFO] Closing video input...")
         self.is_running = False
-            if self.cap:
-                self.cap.release()
-            cv2.destroyAllWindows()
+        if self.cap:
+            self.cap.release()
+        cv2.destroyAllWindows()
         
         # Wait for threads to exit
         if self.processing_thread and self.processing_thread.is_alive():
@@ -939,7 +939,7 @@ class VideoInputWithAck(VideoInput):
                 if result == 0:
                     print(f"[WARNING] Port {self.listen_port} is already in use by another process")
                     print("[ACK] Attempting to use existing port binding...")
-        except Exception as e:
+            except Exception as e:
                 print(f"[WARNING] Error checking port availability: {e}")
             
             # Now try to create the server
@@ -1149,14 +1149,14 @@ class VideoInputWithAck(VideoInput):
         """Verify the server is actually running"""
         if not self.server:
             print("[ERROR] No server object!")
-                return False
+            return False
 
         if not hasattr(self.server, 'sockets') or not self.server.sockets:
             print("[ERROR] Server has no sockets!")
             return False
             
         print(f"[ACK] Server verification successful - {len(self.server.sockets)} socket(s)")
-                return True
+        return True
 
     async def get_reliable_ip(self):
         """Get a reliable IP address using multiple methods"""
