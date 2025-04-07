@@ -13,6 +13,7 @@ import pandas as pd
 from pathlib import Path
 import pytz  # For Venice timezone
 import argparse
+import sys
 
 class OutputState(Enum):
     IDLE = auto()
@@ -24,8 +25,8 @@ class OutputState(Enum):
     START_POSITION = auto()  # New state for initial startup position
 
 class OutputController:
-    def __init__(self, mode='operation'):
-        self.port = 8765
+    def __init__(self, mode='operation', port=8765, verbose=0):
+        self.port = port
         self.current_state = OutputState.IDLE
         self.output_node = OutputNode()
         self.received_data = None
@@ -70,6 +71,40 @@ class OutputController:
         # If in test mode, load test data immediately
         if mode == 'test':
             self.load_test_data()
+        
+        self.verbose = verbose
+        
+        # Servos
+        self.servo_controller = ServoController()
+        self.servo_data = {}
+        
+        # WebSocket server
+        self.server = None
+        self.connected_clients = set()
+        
+        # Data receiving
+        self.current_data = None
+        self.current_timestamp = None
+        self.pot_values = []
+        self.t_sin = 0
+        self.t_cos = 0
+        
+        # Clock
+        self.clock_state = CLOCK_IDLE
+        self.current_sector = 0
+        self.sector_timestamps = {}
+        
+        # Test mode
+        self.is_test_mode = (mode == 'test')
+
+    def log(self, message, level=1):
+        """Print log message if verbose level is high enough"""
+        if self.verbose >= level:
+            print(message)
+            
+    def debug(self, message):
+        """Print debug message (level 2)"""
+        self.log(message, level=2)
 
     def load_test_data(self):
         """Load test data package"""
@@ -141,97 +176,157 @@ class OutputController:
         print("Wait complete, proceeding...")
 
     async def start(self):
-        """Start the output node and websocket server"""
-        if not self.output_node.start():
-            print("Failed to start output node")
-            return
-
-        print(f"\nStarting output controller in {self.mode} mode")
-        print(f"Listening on port: {self.port}")
-        
-        # Center all servos at startup
-        await self.center_all_servos()
-        
-        # Start in START_POSITION state
-        await self.transition_to(OutputState.START_POSITION)
-
-    async def _handle_connection(self, websocket):
-        """Handle incoming websocket connections"""
+        """Start the websocket server and initializes servos"""
         try:
-            async for message in websocket:
-                try:
-                    data = json.loads(message)
-                    response = await self.handle_message(data)
-                    await websocket.send(json.dumps(response))
-                except json.JSONDecodeError:
-                    await websocket.send(json.dumps({
-                        "status": "error",
-                        "message": "Invalid JSON"
-                    }))
-        except websockets.exceptions.ConnectionClosed:
-            print("Connection closed")
-
-    async def handle_message(self, message):
-        """Handle incoming messages"""
-        msg_type = message.get('type', '')
-        
-        if msg_type == 'movement_data':
-            # Extract data from the message
-            timestamp = message.get('timestamp')
-            data = message.get('data', {})
-            movements = data.get('pot_values', [])
-            t_sin = data.get('t_sin')
-            t_cos = data.get('t_cos')
+            if self.verbose >= 1:
+                print(f"\nStarting output controller in {self.mode} mode")
+                print(f"Listening on port {self.port}")
+                
+            # Initialize and center all servos
+            await self.center_all_servos()
             
-            # Validate data
-            if not isinstance(movements, list) or len(movements) != 30:
-                return {"status": "error", "message": "Invalid data format"}
-            
-            if not all(20 <= x <= 127 for x in movements):
-                return {"status": "error", "message": "Values must be between 20 and 127"}
-            
-            if t_sin is None or t_cos is None:
-                return {"status": "error", "message": "Missing time reference data"}
-
-            print(f"\nReceived movement data at {timestamp}")
-            print(f"Time reference - sin: {t_sin:.3f}, cos: {t_cos:.3f}")
-            
-            # Store the data and time reference
-            self.received_data = movements
-            
-            # Store the entire message for later acknowledgment
-            self.test_data = message
-            
-            # Save to CSV
+            # Different behavior based on mode
             if self.mode == 'operation':
-                save_success = self.save_to_csv(message)
-                if save_success:
-                    print("Data saved to CSV file")
-                else:
-                    print("Failed to save data to CSV file")
+                if self.verbose >= 1:
+                    print("\nStarting WebSocket server...")
+                # Start WebSocket server in operation mode
+                self.server = await websockets.serve(
+                    self.handle_client, 
+                    "0.0.0.0",  # Listen on all interfaces
+                    self.port,
+                    ping_interval=None,  # Disable ping
+                    ping_timeout=None    # Disable ping timeout
+                )
+                
+                if self.verbose >= 1:
+                    print(f"WebSocket server running on port {self.port}")
+                    print("Waiting for connections...")
+                
+                # Keep the server running
+                await self.server.wait_closed()
+            else:
+                # In test mode, enter the main test loop
+                await self.main_loop()
             
-            # Process the data through state machine
-            await self.transition_to(OutputState.PREDICT)
+            return True
+        except Exception as e:
+            print(f"Error starting output controller: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
             
-            # Return success response (not the final acknowledgment)
-            return {
-                "status": "success",
-                "message": "Data received, processing started"
-            }
+    async def stop(self):
+        """Stop the websocket server and cleanup"""
+        try:
+            if self.verbose >= 1:
+                print("\nStopping output controller...")
             
-        elif msg_type == 'test':
-            print("\nReceived test command")
-            self.load_test_data()
-            await self.transition_to(OutputState.TEST_MODE)
-            return {"status": "ok", "message": "Test mode activated"}
+            # Close all client connections
+            for client in self.connected_clients.copy():
+                try:
+                    await client.close()
+                except:
+                    pass
+            
+            # Close the server if it exists
+            if self.server:
+                self.server.close()
+                await self.server.wait_closed()
+                
+            # Center all servos before exit
+            await self.center_all_servos()
+            
+            if self.verbose >= 1:
+                print("Output controller stopped")
+            return True
+        except Exception as e:
+            print(f"Error stopping output controller: {e}")
+            return False
 
-        return {"status": "error", "message": "Unknown message type"}
+    async def handle_client(self, websocket, path):
+        """Handle new client connections"""
+        try:
+            # Keep track of connected clients
+            self.connected_clients.add(websocket)
+            client_ip = websocket.remote_address[0] if hasattr(websocket, "remote_address") else "unknown"
+            
+            if self.verbose >= 1:
+                print(f"\nNew connection from: {client_ip}")
+            
+            try:
+                async for message in websocket:
+                    try:
+                        # Parse the message as JSON
+                        data = json.loads(message)
+                        
+                        if self.verbose >= 2:  # Only in debug mode
+                            print(f"\nReceived data: {data}")
+                        else:
+                            # Minimal message in normal mode
+                            message_type = data.get('type', 'unknown')
+                            timestamp = data.get('timestamp', 'none')
+                            if self.verbose >= 1:
+                                print(f"\nReceived {message_type} message with timestamp {timestamp}")
+                        
+                        # Handle different message types
+                        if data.get('type') == 'movement_data':
+                            # Process movement data 
+                            await self.process_movement_data(data)
+                    except json.JSONDecodeError:
+                        if self.verbose >= 1:
+                            print(f"Received invalid JSON message: {message[:100]}...")
+                    except Exception as e:
+                        if self.verbose >= 1:
+                            print(f"Error processing message: {e}")
+            except websockets.exceptions.ConnectionClosed:
+                if self.verbose >= 1:
+                    print(f"Connection with {client_ip} closed")
+            finally:
+                # Remove client from connected set
+                self.connected_clients.remove(websocket)
+                if self.verbose >= 1:
+                    print(f"Client {client_ip} disconnected")
+        except Exception as e:
+            if self.verbose >= 1:
+                print(f"Error in client handler: {e}")
 
-    async def transition_to(self, new_state):
-        """Transition to a new state"""
-        print(f"Transitioning from {self.current_state.name} to {new_state.name}")
-        self.current_state = new_state
-        await self.handle_current_state()
+    async def process_movement_data(self, data):
+        """Process movement data received from controller"""
+        try:
+            # Extract timestamp and movement data
+            self.current_timestamp = data.get('timestamp', '')
+            
+            # Extract pot values and time encoding
+            pot_data = data.get('data', {})
+            self.pot_values = pot_data.get('pot_values', [])
+            self.t_sin = pot_data.get('t_sin', 0)
+            self.t_cos = pot_data.get('t_cos', 0)
+            
+            # Check if we have valid data
+            if not self.pot_values:
+                if self.verbose >= 1:
+                    print(f"Received empty pot values")
+                return
+                
+            if self.verbose >= 1:
+                print(f"Received {len(self.pot_values)} pot values")
+                print(f"Time encoding: sin={self.t_sin:.2f}, cos={self.t_cos:.2f}")
+            
+            # Set current data
+            self.current_data = data
+            
+            # Change state to predict
+            old_state = self.current_state
+            self.current_state = OutputState.PREDICT
+            
+            if self.verbose >= 1:
+                print(f"State transitioning from {old_state.name} to {self.current_state.name}")
+                
+            # Handle the current state (this will process the prediction)
+            await self.handle_current_state()
+        except Exception as e:
+            if self.verbose >= 1:
+                print(f"Error processing movement data: {e}")
 
     async def handle_current_state(self):
         """Handle the current state"""
@@ -250,7 +345,7 @@ class OutputController:
                 
                 # For operation mode, start websocket server and never return
                 server = await websockets.serve(
-                    self._handle_connection, 
+                    self.handle_client, 
                     "0.0.0.0", 
                     self.port,
                     ping_interval=None,
@@ -543,71 +638,81 @@ class OutputController:
     async def send_acknowledgement(self, timestamp):
         """Send acknowledgement back to video_input"""
         try:
-            print("\n=== Sending Acknowledgment to Video Input ===")
+            if self.verbose >= 1:
+                print("\n=== Sending Acknowledgment to Video Input ===")
             
             # Get video_input configuration
             config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
                                     'config', 'controllers.yaml')
-            print(f"Loading config from: {config_path}")
+            if self.verbose >= 1:
+                print(f"Loading config from: {config_path}")
             
             try:
                 with open(config_path, 'r') as f:
                     config = yaml.safe_load(f)
-                print("Config loaded successfully")
+                if self.verbose >= 1:
+                    print("Config loaded successfully")
             except Exception as e:
-                print(f"Failed to load config: {e}")
+                if self.verbose >= 1:
+                    print(f"Failed to load config: {e}")
                 return False
             
             # Print entire video_input config for debugging
             video_input_config = config.get('video_input', {})
-            print(f"\nVideo input config: {video_input_config}")
+            if self.verbose >= 2:  # Only in debug mode
+                print(f"\nVideo input config: {video_input_config}")
             
             if not video_input_config:
-                print("No video_input configuration found in config file")
+                if self.verbose >= 1:
+                    print("No video_input configuration found in config file")
                 return False
             
             # Connect to video_input's IP and listen_port
             video_ip = video_input_config.get('ip')
             if not video_ip:
-                print("No IP address defined for video_input in config")
+                if self.verbose >= 1:
+                    print("No IP address defined for video_input in config")
                 return False
                 
             video_listen_port = video_input_config.get('listen_port')
             if not video_listen_port:
-                print("No listen_port defined for video_input in config")
+                if self.verbose >= 1:
+                    print("No listen_port defined for video_input in config")
                 video_listen_port = 8777  # Default port
             
             uri = f"ws://{video_ip}:{video_listen_port}"
-            print(f"Acknowledgment URI: {uri}")
+            if self.verbose >= 1:
+                print(f"Acknowledgment URI: {uri}")
             
             # Try to ping the target IP first to verify connectivity
-            try:
-                import subprocess
-                ping_result = subprocess.run(
-                    ["ping", "-c", "1", "-W", "2", video_ip], 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE
-                )
-                if ping_result.returncode == 0:
-                    print(f"✓ Host {video_ip} is reachable")
-                else:
-                    print(f"⚠ WARNING: Host {video_ip} did not respond to ping")
-            except Exception as e:
-                print(f"Failed to ping host: {e}")
-            
-            # Try checking if port is open
-            try:
-                import socket
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(1)
-                result = sock.connect_ex((video_ip, int(video_listen_port)))
-                if result == 0:
-                    print(f"✓ Port {video_listen_port} is open on {video_ip}")
-                else:
-                    print(f"⚠ WARNING: Port {video_listen_port} appears to be closed on {video_ip}")
-                sock.close()
-            except Exception as e:
-                print(f"Port check failed: {e}")
+            if self.verbose >= 1:
+                try:
+                    import subprocess
+                    ping_result = subprocess.run(
+                        ["ping", "-c", "1", "-W", "2", video_ip], 
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.PIPE
+                    )
+                    if ping_result.returncode == 0:
+                        print(f"✓ Host {video_ip} is reachable")
+                    else:
+                        print(f"⚠ WARNING: Host {video_ip} did not respond to ping")
+                except Exception as e:
+                    print(f"Failed to ping host: {e}")
+                
+                # Try checking if port is open
+                try:
+                    import socket
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(1)
+                    result = sock.connect_ex((video_ip, int(video_listen_port)))
+                    if result == 0:
+                        print(f"✓ Port {video_listen_port} is open on {video_ip}")
+                    else:
+                        print(f"⚠ WARNING: Port {video_listen_port} appears to be closed on {video_ip}")
+                    sock.close()
+                except Exception as e:
+                    print(f"Port check failed: {e}")
             
             # Add retry logic
             max_retries = 3
@@ -615,7 +720,8 @@ class OutputController:
             
             for attempt in range(max_retries):
                 try:
-                    print(f"\nAttempt {attempt+1}/{max_retries} to send acknowledgment")
+                    if self.verbose >= 1:
+                        print(f"\nAttempt {attempt+1}/{max_retries} to send acknowledgment")
                     
                     # Use more lenient timeout settings
                     async with asyncio.timeout(5):
@@ -625,7 +731,8 @@ class OutputController:
                             ping_timeout=None,
                             close_timeout=2.0
                         ) as websocket:
-                            print(f"✓ Connected to video_input at {uri}")
+                            if self.verbose >= 1:
+                                print(f"✓ Connected to video_input at {uri}")
                             
                             # Create acknowledgment message - IMPORTANT: Must have 'type': 'ack'
                             ack = {
@@ -637,53 +744,67 @@ class OutputController:
                             
                             # Log the exact message we're sending for debugging
                             ack_json = json.dumps(ack)
-                            print(f"Sending ack: {ack_json}")
+                            if self.verbose >= 2:
+                                print(f"Sending ack: {ack_json}")
                             
                             # Send the acknowledgment
                             await websocket.send(ack_json)
-                            print("✓ Acknowledgment JSON sent successfully")
+                            if self.verbose >= 1:
+                                print("✓ Acknowledgment JSON sent successfully")
                             
                             # Wait briefly for any response (optional but helpful for debugging)
-                            try:
-                                response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
-                                print(f"Received response: {response}")
-                            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
-                                # No response is expected, so this is fine
-                                print("No response received (this is normal)")
+                            if self.verbose >= 1:
+                                try:
+                                    response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
+                                    print(f"Received response: {response}")
+                                except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
+                                    # No response is expected, so this is fine
+                                    print("No response received (this is normal)")
                                 
                             # Keep connection open a little longer to ensure message is received
                             await asyncio.sleep(1)
-                            print("Acknowledgment completed successfully")
+                            if self.verbose >= 1:
+                                print("Acknowledgment completed successfully")
                             return True
                             
                 except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as e:
                     error_type = "Timeout" if isinstance(e, asyncio.TimeoutError) else "Connection closed"
-                    print(f"× {error_type} on attempt {attempt+1}: {str(e) or 'No details'}")
+                    if self.verbose >= 1:
+                        print(f"× {error_type} on attempt {attempt+1}: {str(e) or 'No details'}")
                     
                     if attempt < max_retries - 1:
-                        print(f"Retrying in {retry_delay} seconds...")
+                        if self.verbose >= 1:
+                            print(f"Retrying in {retry_delay} seconds...")
                         await asyncio.sleep(retry_delay)
                     else:
-                        print("All retry attempts failed")
+                        if self.verbose >= 1:
+                            print("All retry attempts failed")
                         
                 except Exception as e:
-                    print(f"× Unexpected error on attempt {attempt+1}: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    if self.verbose >= 1:
+                        print(f"× Unexpected error on attempt {attempt+1}: {e}")
+                        if self.verbose >= 2:
+                            import traceback
+                            traceback.print_exc()
                     
                     if attempt < max_retries - 1:
-                        print(f"Retrying in {retry_delay} seconds...")
+                        if self.verbose >= 1:
+                            print(f"Retrying in {retry_delay} seconds...")
                         await asyncio.sleep(retry_delay)
                     else:
-                        print("All retry attempts failed")
+                        if self.verbose >= 1:
+                            print("All retry attempts failed")
             
-            print("=== Failed to send acknowledgment ===")
+            if self.verbose >= 1:
+                print("=== Failed to send acknowledgment ===")
             return False
             
         except Exception as e:
-            print(f"× Error in acknowledgment process: {e}")
-            import traceback
-            traceback.print_exc()
+            if self.verbose >= 1:
+                print(f"× Error in acknowledgment process: {e}")
+                if self.verbose >= 2:
+                    import traceback
+                    traceback.print_exc()
             return False
 
     def stop(self):
@@ -1007,53 +1128,61 @@ class OutputController:
         print("Wait complete, proceeding...")
 
 async def main():
+    """Main entry point"""
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Output Controller for Reservoir Computer')
-    parser.add_argument('--mode', '-m', type=str, choices=['operation', 'test'], 
-                       default='operation', help='Mode to run in (default: operation)')
-    parser.add_argument('--port', '-p', type=int, default=8765,
-                       help='Port to listen on (default: 8765)')
-    parser.add_argument('--non-interactive', '-n', action='store_true',
-                       help='Run in non-interactive mode (no prompts)')
+    parser = argparse.ArgumentParser(description='Run Output Controller')
+    parser.add_argument('--mode', choices=['operation', 'test'], default='operation', help='Controller mode (default: operation)')
+    parser.add_argument('--port', type=int, default=8765, help='WebSocket server port (default: 8765)')
+    parser.add_argument('--non-interactive', action='store_true', help='Run in non-interactive mode (no prompts)')
+    parser.add_argument('--verbose', type=int, default=1, help='Verbosity level (0=minimal, 1=normal, 2=debug)')
     args = parser.parse_args()
     
-    # Use command line arguments
+    # Welcome message
+    print("\n========== Reservoir Computer Output Controller ==========")
+    print("  Venice Biennial Installation - Version 1.0")
+    print("  Mode: {} | Port: {} | Verbosity: {}".format(
+        args.mode, args.port, args.verbose))
+    print("========================================================\n")
+    
+    # Check if we're running in an interactive terminal and not forced non-interactive
+    interactive = sys.stdin.isatty() and not args.non_interactive
+    
     mode = args.mode
-    non_interactive = args.non_interactive
+    port = args.port
+    verbose = args.verbose
     
-    # Print welcome message with mode information
-    print("\n=== Output Controller ===")
-    print(f"Starting in {mode.upper()} mode")
-    
-    # Only show mode selection if in interactive terminal and not explicitly set to non-interactive
-    if os.isatty(0) and not non_interactive and not os.environ.get('NON_INTERACTIVE'):
-        print("\n1. Operation Mode (WebSocket Server)")
-        print("2. Test Mode (Direct Servo Control)")
-        print(f"Default: {mode.upper()} mode")
+    # Allow the user to choose the mode only in interactive mode
+    if interactive:
+        print("Select mode of operation:")
+        print("1. WebSocket Server (Operation Mode) - Default")
+        print("2. Direct Servo Control (Test Mode)")
         
-        choice = input("\nSelect mode (1/2) or press Enter for default: ").strip()
-        if choice == '1':
-            mode = 'operation'
-        elif choice == '2':
-            mode = 'test'
-        # Empty input uses the default from command line args
+        choice = input("Enter choice (1-2) or press Enter for default: ")
+        if choice == "2":
+            mode = "test"
+            print("Selected Test Mode")
+        else:
+            mode = "operation"
+            print("Selected Operation Mode")
     else:
-        print("Running in non-interactive mode")
-    
-    # Create controller with selected mode
-    controller = OutputController(mode)
+        print(f"Running in non-interactive mode: {mode} mode")
     
     try:
-        # Start controller (this will center servos after connection is established)
+        # Create and start output controller
+        controller = OutputController(mode=mode, port=port, verbose=verbose)
+        if verbose >= 1:
+            print(f"Starting output controller in {mode} mode")
         await controller.start()
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        print("\nCtrl+C detected, shutting down...")
     except Exception as e:
-        print(f"\nError occurred: {e}")
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        controller.stop()  # Use the new stop method
+        # Graceful shutdown
+        if 'controller' in locals():
+            await controller.stop()
 
 if __name__ == "__main__":
-    print("\nStarting Output Controller")
-    print("-------------------------")
     asyncio.run(main()) 
