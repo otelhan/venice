@@ -822,13 +822,14 @@ class VideoInputWithAck(VideoInput):
         # Async tasks
         self.ack_task = None
         self.ack_received = asyncio.Event()
-        self.ack_timeout = 60  # Timeout for acknowledgments in seconds
+        self.ack_timeout = 30  # Reduced timeout for acknowledgments in seconds
         
         # Print ACK info
         output_config = self.config['controllers'].get(self.ack_destination)
         if output_config:
             print(f"\nWill receive acknowledgments from: {self.ack_destination}")
             print(f"On listen port: {self.listen_port}")
+            print(f"ACK timeout: {self.ack_timeout} seconds")
         else:
             print(f"\nWarning: No configuration found for ACK source: {self.ack_destination}")
     
@@ -857,11 +858,19 @@ class VideoInputWithAck(VideoInput):
                                     
                             except json.JSONDecodeError:
                                 print(f"[WARNING] Received invalid JSON: {message}")
+                    except websockets.exceptions.ConnectionClosed:
+                        print(f"[INFO] ACK connection closed gracefully")
                     except Exception as e:
                         print(f"[ERROR] Websocket handler error: {e}")
                 
-                # Create the server
-                self.server = await websockets.serve(handler, "0.0.0.0", self.listen_port)
+                # Create the server with ping_interval=None to avoid extra traffic
+                self.server = await websockets.serve(
+                    handler, 
+                    "0.0.0.0", 
+                    self.listen_port,
+                    ping_interval=None,
+                    ping_timeout=None
+                )
                 print("[ACK] Acknowledgment server is running")
                 
                 # We need to keep this task running
@@ -895,6 +904,17 @@ class VideoInputWithAck(VideoInput):
             print(f"[ERROR] Error in acknowledgment wait task: {e}")
             self.waiting_for_ack = False
             return False
+            
+    async def cancel_ack_wait(self):
+        """Cancel the current acknowledgment wait task if it exists"""
+        if self.ack_task and not self.ack_task.done():
+            self.ack_task.cancel()
+            try:
+                await self.ack_task
+            except asyncio.CancelledError:
+                pass
+            self.waiting_for_ack = False
+            print("[ACK] Acknowledgment wait cancelled")
     
     async def send_movement_vector(self):
         """Send latest movement vector with acknowledgment wait"""
@@ -936,11 +956,13 @@ class VideoInputWithAck(VideoInput):
                     }
                 }
                 
-                # Send to controller and wait for acknowledgment
+                # Send to controller with a shorter timeout
                 success = await self.send_to_controller(data)
                 
                 if success:
                     print("\n[ACK] Message sent, starting acknowledgment wait task")
+                    # Cancel any existing ack task
+                    await self.cancel_ack_wait()
                     # Start ack wait task in the background
                     self.ack_task = asyncio.create_task(self.wait_for_ack_task())
                     
@@ -951,6 +973,52 @@ class VideoInputWithAck(VideoInput):
                 self.network_busy = False
         else:
             print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
+            return False
+    
+    async def send_to_controller(self, data):
+        """Send data to controller with improved error handling"""
+        try:
+            # Get controller config
+            dest_config = self.config['controllers'].get(self.destination)
+            if not dest_config:
+                print(f"\n[ERROR] No configuration found for destination: {self.destination}")
+                return False
+
+            # Connect to controller with a shorter timeout
+            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
+            print(f"\n[STATUS] Connecting to {self.destination}:")
+            print(f"URI: {uri}")
+            
+            # Use a timeout to prevent hanging connection - shorter timeout
+            try:
+                async with asyncio.timeout(3):  # 3 seconds timeout instead of 5
+                    async with websockets.connect(
+                        uri,
+                        ping_interval=None,  # Disable ping to reduce traffic
+                        ping_timeout=None,
+                        close_timeout=1.0  # Quick closure
+                    ) as websocket:
+                        print(f"[SUCCESS] Connected to {self.destination}")
+                        await websocket.send(json.dumps(data))
+                        print(f"[SUCCESS] Data sent to {self.destination}")
+                        if len(data.get('data', {}).get('pot_values', [])) > 0:
+                            timestamp = data.get('timestamp', 'unknown')
+                            pot_count = len(data.get('data', {}).get('pot_values', []))
+                            print(f"[DATA] Timestamp: {timestamp}")
+                            print(f"[DATA] Sent {pot_count} movement values")
+                        return True
+            except asyncio.TimeoutError:
+                print(f"\n[ERROR] Connection to {self.destination} timed out")
+                return False
+                    
+        except websockets.exceptions.InvalidStatusCode as e:
+            print(f"\n[ERROR] Invalid status from {self.destination}: {e}")
+            return False
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"\n[ERROR] Connection to {self.destination} closed unexpectedly: {e}")
+            return False
+        except Exception as e:
+            print(f"\n[ERROR] Failed to send to controller: {e}")
             return False
 
 if __name__ == "__main__":

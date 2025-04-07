@@ -12,6 +12,7 @@ import csv
 import pandas as pd
 from pathlib import Path
 import pytz  # For Venice timezone
+import argparse
 
 class OutputState(Enum):
     IDLE = auto()
@@ -242,6 +243,12 @@ class OutputController:
                 await asyncio.sleep(3)
                 print("Wait complete, proceeding...")
                 
+                # First transition to IDLE
+                self.current_state = OutputState.IDLE
+                print("Transitioning to IDLE mode, ready to receive data...")
+                print("Waiting for data...")
+                
+                # Then start the websocket server
                 try:
                     async with websockets.serve(
                         self._handle_connection, 
@@ -892,19 +899,35 @@ class OutputController:
         print("Wait complete, proceeding...")
 
 async def main():
-    # Print welcome message
-    print("\n=== Output Controller ===")
-    print("1. Operation Mode (WebSocket Server)")
-    print("2. Test Mode (Direct Servo Control)")
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Output Controller for Reservoir Computer')
+    parser.add_argument('--mode', '-m', type=str, choices=['operation', 'test'], 
+                       default='operation', help='Mode to run in (default: operation)')
+    parser.add_argument('--port', '-p', type=int, default=8765,
+                       help='Port to listen on (default: 8765)')
+    args = parser.parse_args()
     
-    while True:
-        choice = input("\nSelect mode (1/2): ").strip()
-        if choice in ['1', '2']:
-            break
-        print("Invalid choice. Please enter 1 or 2.")
+    # Use command line arguments
+    mode = args.mode
+    
+    # Print welcome message with mode information
+    print("\n=== Output Controller ===")
+    print(f"Starting in {mode.upper()} mode")
+    
+    # If running in interactive terminal, allow choice override
+    if os.isatty(0):  # Check if running in an interactive terminal
+        print("\n1. Operation Mode (WebSocket Server)")
+        print("2. Test Mode (Direct Servo Control)")
+        print(f"Default: {mode.upper()} mode")
+        
+        choice = input("\nSelect mode (1/2) or press Enter for default: ").strip()
+        if choice == '1':
+            mode = 'operation'
+        elif choice == '2':
+            mode = 'test'
+        # Empty input uses the default from command line args
     
     # Create controller with selected mode
-    mode = 'operation' if choice == '1' else 'test'
     controller = OutputController(mode)
     
     try:
