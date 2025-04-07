@@ -85,23 +85,22 @@ async def test_video_input(fullscreen=False, debug=False):
                 # Add frame to buffer
                 if len(video_input.frame_buffer) < video_input.buffer_size:
                     video_input.frame_buffer.append(frame.copy())
+                    # Only print buffer status while filling up initially
                     print(f"Frame buffer: {len(video_input.frame_buffer)}/{video_input.buffer_size}")
                 else:
                     # Shift buffer and add new frame
                     video_input.frame_buffer.pop(0)
                     video_input.frame_buffer.append(frame.copy())
+                    # Only print buffer status every 30 frames
+                    if frame_count % 30 == 0 and debug:
+                        print(f"Processing frames: {frame_count}")
                 
                 # Update ROIs
                 video_input.update_rois(frame)
                 
                 # Check for movement in ROIs if we have enough frames
                 if len(video_input.frame_buffer) >= video_input.buffer_size:
-                    movements = video_input.check_for_movement()
-                    if movements:
-                        print(f"Movements: roi_1: {movements.get('roi_1', 0):.2f}, "
-                              f"roi_2: {movements.get('roi_2', 0):.2f}, "
-                              f"roi_3: {movements.get('roi_3', 0):.2f}, "
-                              f"roi_4: {movements.get('roi_4', 0):.2f}")
+                    video_input.check_for_movement()
                 
                 # Check if we need to save data
                 if time.time() - video_input.last_save_time >= video_input.save_interval:

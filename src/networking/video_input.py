@@ -770,20 +770,72 @@ class VideoInput:
             return False
             
     def save_to_csv(self):
-        """Non-async version to save data to CSV using a shared event loop"""
-        # We'll reuse a single event loop for all synchronous operations
-        if not hasattr(self, '_sync_loop') or self._sync_loop.is_closed():
-            self._sync_loop = asyncio.new_event_loop()
-            
+        """Non-async version to save data to CSV using a thread-safe approach"""
         try:
-            asyncio.set_event_loop(self._sync_loop)
-            return self._sync_loop.run_until_complete(self.save_to_csv_only())
+            # Check if we're already in an event loop
+            try:
+                asyncio.get_running_loop()
+                # We're already in an event loop, use a direct approach
+                return self._direct_save_to_csv()
+            except RuntimeError:
+                # No running loop, we can create one
+                if not hasattr(self, '_sync_loop') or self._sync_loop.is_closed():
+                    self._sync_loop = asyncio.new_event_loop()
+                
+                try:
+                    asyncio.set_event_loop(self._sync_loop)
+                    return self._sync_loop.run_until_complete(self.save_to_csv_only())
+                finally:
+                    asyncio.set_event_loop(None)
         except Exception as e:
-            print(f"\n[ERROR] Error saving to CSV: {e}")
+            print(f"[ERROR] Error saving to CSV: {e}")
             import traceback
             traceback.print_exc()
             return False
             
+    def _direct_save_to_csv(self):
+        """Save data to CSV without using asyncio"""
+        if len(self.movement_buffers['roi_1']) >= 30:
+            # Scale values for CSV - use the latest 30 values
+            scaled_values = []
+            # If we have more than 30 values, get the latest 30
+            buffer_values = self.movement_buffers['roi_1'][-30:]
+            
+            for i in range(30):
+                raw_movement = buffer_values[i]
+                scaled = self.scale_movement_log(raw_movement, 0, 100)
+                scaled_values.append(scaled)
+            
+            # Get current time in Venice
+            venice_time = self.get_venice_time()
+            t_sin, t_cos = self.encode_time(venice_time)
+            
+            # Get CSV file path and ensure parent directory exists
+            csv_path = self.get_csv_path()
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"[CSV] Saving data to file: {csv_path}")
+            
+            # Write data to CSV
+            try:
+                # Create CSV if it doesn't exist, append if it does
+                file_exists = csv_path.exists()
+                with open(csv_path, mode='a', newline='') as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        # Write header if new file
+                        writer.writerow(['timestamp', 't_sin', 't_cos'] + [f'movement_{i}' for i in range(30)])
+                    
+                    # Write data row
+                    writer.writerow([str(venice_time), t_sin, t_cos] + scaled_values)
+                print(f"[CSV] Successfully wrote data to {csv_path}")
+                return True
+            except Exception as e:
+                print(f"[ERROR] Failed to write to CSV: {e}")
+                return False
+        else:
+            print(f"[WARNING] Not enough values to save to CSV: {len(self.movement_buffers['roi_1'])}/30")
+            return False
+
     def cleanup(self):
         """Clean up resources before exit"""
         # Stop video capture
@@ -921,18 +973,62 @@ class VideoInputWithAck(VideoInput):
         return False
         
     def _sync_send_movement_vector(self):
-        """Send movement vector using a shared event loop to avoid resource leaks"""
-        # We'll reuse a single event loop for all synchronous operations
-        if not hasattr(self, '_sync_loop') or self._sync_loop.is_closed():
-            self._sync_loop = asyncio.new_event_loop()
-            
+        """Send movement vector using a thread-safe approach"""
         try:
-            asyncio.set_event_loop(self._sync_loop)
-            return self._sync_loop.run_until_complete(self.send_movement_vector())
+            # Check if we're already in an event loop
+            try:
+                asyncio.get_running_loop()
+                # We're already in an event loop, use a different approach
+                return self._direct_send_movement_vector()
+            except RuntimeError:
+                # No running loop, we can create one
+                if not hasattr(self, '_sync_loop') or self._sync_loop.is_closed():
+                    self._sync_loop = asyncio.new_event_loop()
+                
+                try:
+                    asyncio.set_event_loop(self._sync_loop)
+                    return self._sync_loop.run_until_complete(self.send_movement_vector())
+                finally:
+                    asyncio.set_event_loop(None)
+                    
         except Exception as e:
-            print(f"\n[ERROR] Error sending movement vector: {e}")
+            print(f"[ERROR] Error sending movement vector: {e}")
             import traceback
             traceback.print_exc()
+            return False
+    
+    def _direct_send_movement_vector(self):
+        """Non-async version that doesn't use event loops"""
+        # Only send if we're not waiting for an ACK and have enough values
+        if len(self.movement_buffers['roi_1']) >= 30:
+            # Scale values for transmission - always use the latest 30 values
+            scaled_values = []
+            # Get the latest 30 values
+            buffer_values = self.movement_buffers['roi_1'][-30:]
+            
+            for i in range(30):
+                raw_movement = buffer_values[i]
+                scaled = self.scale_movement_log(raw_movement, 0, 100)
+                scaled_values.append(scaled)
+            
+            # Get current time in Venice
+            venice_time = self.get_venice_time()
+            t_sin, t_cos = self.encode_time(venice_time)
+            
+            # Create data packet
+            data = {
+                'type': 'movement_data',
+                'timestamp': str(venice_time),
+                'data': {
+                    'pot_values': scaled_values,
+                    't_sin': t_sin,
+                    't_cos': t_cos
+                }
+            }
+            
+            # Send to controller without asyncio
+            return self.send_to_controller(data)
+        else:
             return False
 
     def start_ack_server_thread(self):
