@@ -915,7 +915,7 @@ class VideoInputWithAck(VideoInput):
                 print(f"\n[ACK] Setting up acknowledgment server on port {self.listen_port}")
                 
                 # Websocket handler for incoming messages
-                async def handler(websocket, path):
+                async def handler(websocket):
                     try:
                         client_ip = websocket.remote_address[0] if hasattr(websocket, 'remote_address') else 'unknown'
                         print(f"[ACK] New connection established from {client_ip}")
@@ -962,16 +962,43 @@ class VideoInputWithAck(VideoInput):
                 print(f"[ACK] Starting server on 0.0.0.0:{self.listen_port}")
                 
                 try:
-                    self.server = await websockets.serve(
-                        handler, 
-                        "0.0.0.0",  # Listen on all interfaces
-                        self.listen_port,
-                        ping_interval=None,  # Disable ping
-                        ping_timeout=None,   # Disable ping timeout
-                        close_timeout=10,    # More time for closure
-                        max_size=10485760,   # Larger message size (10MB)
-                        max_queue=32         # Larger connection queue
-                    )
+                    # Get the websockets version to determine the correct function signature
+                    import websockets
+                    ws_version = websockets.__version__.split('.')
+                    major_version = int(ws_version[0]) if ws_version else 0
+                    
+                    # Handle both older (path parameter required) and newer versions
+                    if major_version >= 10:
+                        # Newer websockets version (10.0+) - no path parameter
+                        print(f"[INFO] Using websockets {websockets.__version__} (new API)")
+                        self.server = await websockets.serve(
+                            handler, 
+                            "0.0.0.0",
+                            self.listen_port,
+                            ping_interval=None,
+                            ping_timeout=None,
+                            close_timeout=10,
+                            max_size=10485760,
+                            max_queue=32
+                        )
+                    else:
+                        # Older websockets version - path parameter required
+                        print(f"[INFO] Using websockets {websockets.__version__} (legacy API)")
+                        
+                        # Create a wrapper handler that accepts the path parameter
+                        async def legacy_handler(websocket, path):
+                            await handler(websocket)
+                            
+                        self.server = await websockets.serve(
+                            legacy_handler, 
+                            "0.0.0.0",
+                            self.listen_port,
+                            ping_interval=None,
+                            ping_timeout=None,
+                            close_timeout=10,
+                            max_size=10485760,
+                            max_queue=32
+                        )
                     
                     if self.server:
                         print(f"[ACK] Acknowledgment server is running on port {self.listen_port}")
