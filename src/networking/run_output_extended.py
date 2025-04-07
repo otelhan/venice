@@ -237,14 +237,19 @@ class OutputController:
         if self.current_state == OutputState.START_POSITION:
             print("\n=== Starting Position ===")
             print("The clock is centered at 0 degrees")
-            print("Press Enter to continue to menu...")
-            input()
             
-            # After user confirmation, transition to appropriate mode
+            # Different behavior based on mode
             if self.mode == 'test':
+                print("Press Enter to continue to menu...")
+                input()
                 await self.transition_to(OutputState.IDLE)
             else:
-                # For operation mode, start websocket server
+                # For operation mode, directly start websocket server without user input
+                print("Waiting 3 seconds...")
+                await asyncio.sleep(3)
+                print("Wait complete, proceeding...")
+                
+                # Start websocket server
                 try:
                     async with websockets.serve(
                         self._handle_connection, 
