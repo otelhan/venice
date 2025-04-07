@@ -331,7 +331,6 @@ class VideoInput:
                 if current_time - self.last_save_time >= self.save_interval:
                     # Flag that we need to save to CSV
                     self.save_needed = True
-                    self.last_save_time = current_time
             else:
                 # Clear movement buffers when stopping calculation
                 if hasattr(self, 'movement_buffers'):

@@ -12,7 +12,7 @@ import argparse
 import threading
 import queue
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Add project root to path
 project_root = str(Path(__file__).parent.parent)
@@ -107,8 +107,14 @@ async def test_video_input(fullscreen=False, debug=False):
                 
                 # Check if we need to save data
                 if time.time() - video_input.last_save_time >= video_input.save_interval:
-                    print("\n[STATUS] Save interval reached, saving data to CSV...")
-                    video_input.save_to_csv()
+                    current_time = datetime.now().strftime('%H:%M:%S')
+                    print(f"\n[STATUS] Save interval ({video_input.save_interval}s) reached at {current_time}, saving data to CSV...")
+                    save_result = video_input.save_to_csv()
+                    if save_result:
+                        # Only update the last_save_time if the save was successful
+                        video_input.last_save_time = time.time()
+                        next_save_time = (datetime.now() + timedelta(seconds=video_input.save_interval)).strftime('%H:%M:%S')
+                        print(f"[STATUS] CSV save successful, next save at {next_save_time}")
                 
                 # Send data when we have 30 frames and no pending ACK
                 # First time: send as soon as we reach 30 frames
