@@ -843,6 +843,7 @@ class VideoInputWithAck(VideoInput):
                 # Websocket handler for incoming messages
                 async def handler(websocket, path):
                     try:
+                        print(f"[ACK] New connection established from {websocket.remote_address}")
                         async for message in websocket:
                             try:
                                 data = json.loads(message)
@@ -863,21 +864,63 @@ class VideoInputWithAck(VideoInput):
                     except Exception as e:
                         print(f"[ERROR] Websocket handler error: {e}")
                 
-                # Create the server with ping_interval=None to avoid extra traffic
+                # Create the server with more lenient settings
                 self.server = await websockets.serve(
                     handler, 
-                    "0.0.0.0", 
+                    "0.0.0.0",  # Listen on all interfaces
                     self.listen_port,
-                    ping_interval=None,
-                    ping_timeout=None
+                    ping_interval=None,  # Disable ping
+                    ping_timeout=None,   # Disable ping timeout
+                    close_timeout=5,     # More time for closure
+                    max_size=10485760,   # Larger message size (10MB)
+                    max_queue=32         # Larger connection queue
                 )
-                print("[ACK] Acknowledgment server is running")
+                
+                print(f"[ACK] Acknowledgment server is running on port {self.listen_port}")
+                print(f"[ACK] Server info: {self.server.sockets}")
+                
+                # Add our listen port to the config so the output knows where to send ACKs
+                if 'video_input' not in self.config:
+                    self.config['video_input'] = {}
+                
+                # Set our IP and port in the config
+                self.config['video_input']['listen_port'] = self.listen_port
+                
+                # Try to get our own IP
+                ip = self.get_local_ip()
+                if ip:
+                    self.config['video_input']['ip'] = ip
+                    print(f"[ACK] Set IP in config: {ip}")
+                
+                # Save the config
+                config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
+                with open(config_path, 'w') as f:
+                    yaml.dump(self.config, f, default_flow_style=False)
                 
                 # We need to keep this task running
                 return self.server
+                
         except Exception as e:
             print(f"[ERROR] Failed to setup acknowledgment server: {e}")
+            import traceback
+            traceback.print_exc()
             return None
+            
+    def get_local_ip(self):
+        """Get the local IP address of this machine"""
+        import socket
+        try:
+            # Connect to an external site to determine our outgoing IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Doesn't actually connect, just resolves route
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception as e:
+            print(f"[WARNING] Could not determine local IP: {e}")
+            # Fallback to localhost
+            return "127.0.0.1"
     
     async def wait_for_ack_task(self):
         """Background task to wait for acknowledgment"""

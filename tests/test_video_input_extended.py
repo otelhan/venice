@@ -30,8 +30,13 @@ async def test_video_input(fullscreen=False, debug=False):
     # Create video input with acknowledgment handling
     video = VideoInputWithAck()
     
-    # Start acknowledgment server
+    # Start acknowledgment server and wait for it to be ready
+    print("\nStarting acknowledgment server...")
     server_task = asyncio.create_task(video.setup_ack_server())
+    
+    # Give the server time to start up fully before connecting to stream
+    await asyncio.sleep(2)
+    print("Acknowledgment server started, listening on port 8777")
     
     # Get stream URL from config
     url = video.get_stream_url('venice_live')

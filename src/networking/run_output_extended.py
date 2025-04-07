@@ -562,20 +562,53 @@ class OutputController:
             print(f"\nSending acknowledgment to video_input:")
             print(f"URI: {uri}")
             
-            async with websockets.connect(uri) as websocket:
-                print("Connected to video_input")
-                ack = {
-                    'type': 'ack',
-                    'timestamp': timestamp,
-                    'status': 'success',
-                    'message': 'Clock movement complete'
-                }
-                await websocket.send(json.dumps(ack))
-                print("Acknowledgement sent to video_input")
-                return True
+            # Add retry logic
+            max_retries = 3
+            retry_delay = 2  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    print(f"Acknowledgment attempt {attempt+1}/{max_retries}")
+                    
+                    # Use more lenient timeout settings
+                    async with asyncio.timeout(5):  # 5 second timeout
+                        async with websockets.connect(
+                            uri,
+                            ping_interval=None,
+                            ping_timeout=None,
+                            close_timeout=2.0
+                        ) as websocket:
+                            print("Connected to video_input")
+                            ack = {
+                                'type': 'ack',
+                                'timestamp': timestamp,
+                                'status': 'success',
+                                'message': 'Clock movement complete'
+                            }
+                            await websocket.send(json.dumps(ack))
+                            print("Acknowledgement sent to video_input")
+                            return True
+                except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as e:
+                    print(f"Connection error on attempt {attempt+1}: {e}")
+                    if attempt < max_retries - 1:
+                        print(f"Retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        print("All retry attempts failed")
+                except Exception as e:
+                    print(f"Unexpected error during acknowledgment: {e}")
+                    if attempt < max_retries - 1:
+                        print(f"Retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        print("All retry attempts failed")
+            
+            return False
             
         except Exception as e:
             print(f"Error sending acknowledgement: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def stop(self):
