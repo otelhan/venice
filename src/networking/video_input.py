@@ -246,7 +246,6 @@ class VideoInput:
         """Calculate rate of movement for a specific ROI using consecutive frames"""
         try:
             if len(self.frame_buffer) < self.buffer_size:
-                print(f"[DEBUG] Not enough frames for movement calculation: {len(self.frame_buffer)}/{self.buffer_size}")
                 return 0
             
             # Get the ROI from the most recent and previous frames
@@ -273,8 +272,6 @@ class VideoInput:
             changed_pixels = np.count_nonzero(threshold)
             total_pixels = threshold.size
             change_percent = (changed_pixels / total_pixels) * 100
-            
-            print(f"[DEBUG] Movement calculation: changed={changed_pixels}, total={total_pixels}, percent={change_percent:.2f}%")
             
             return change_percent
         except Exception as e:
@@ -800,19 +797,14 @@ class VideoInput:
     def update_rois(self, frame):
         """Update ROIs based on the frame"""
         if frame is None or not self.roi_configs:
-            print("[DEBUG] Cannot update ROIs - frame is None or no ROI configs")
             return
             
-        print("[DEBUG] Updating ROIs from frame...")
-        
         # Copy regions from the frame to rois dictionary
         for roi_name, roi_config in self.roi_configs.items():
             x = int(roi_config['x'])
             y = int(roi_config['y'])
             w = int(roi_config['width'])
             h = int(roi_config['height'])
-            
-            print(f"[DEBUG] ROI {roi_name}: x={x}, y={y}, w={w}, h={h}")
             
             # Make sure coordinates are valid
             frame_h, frame_w = frame.shape[:2]
@@ -825,26 +817,18 @@ class VideoInput:
             roi = frame[y:y+h, x:x+w]
             if roi.size > 0:  # Check if ROI is valid
                 self.rois[roi_name] = roi.copy()
-                print(f"[DEBUG] Extracted {roi_name} with size {roi.shape}")
-            else:
-                print(f"[WARNING] ROI {roi_name} has invalid size")
 
     def check_for_movement(self):
         """Calculate movement for each ROI"""
         if not self.calculating or len(self.frame_buffer) < self.buffer_size:
-            print("[DEBUG] Skipping movement calculation - calculating:", self.calculating, "buffer size:", len(self.frame_buffer))
             return {}
             
-        print("[DEBUG] Calculating movement for ROIs...")
-        
         movements = {}
         for roi_name, roi_config in self.roi_configs.items():
             try:
-                print(f"[DEBUG] Calculating movement for {roi_name}")
                 movement = self.calculate_movement_rate(roi_config)
                 self.movement_buffers[roi_name].append(movement)
                 movements[roi_name] = movement
-                print(f"[DEBUG] {roi_name} movement: {movement:.2f}")
                 
                 # Limit buffer size to prevent unbounded growth
                 max_buffer_size = 100  # Keep last 100 values maximum
@@ -857,7 +841,6 @@ class VideoInput:
                 traceback.print_exc()
                 
         self.current_movements = movements  # Store for display
-        print(f"[DEBUG] Movement calculation complete: {movements}")
         return movements
 
 class VideoInputWithAck(VideoInput):

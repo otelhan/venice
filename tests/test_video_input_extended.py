@@ -31,10 +31,8 @@ async def test_video_input(fullscreen=False, debug=False):
     print("Waiting for WebSocket threads to initialize...")
     time.sleep(2)
     
-    # Create a window
+    # Create a window - always start in normal mode
     cv2.namedWindow('Video', cv2.WINDOW_NORMAL)
-    if fullscreen:
-        cv2.setWindowProperty('Video', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     
     # Get stream URL and connect
     stream_url = video_input.get_stream_url("venice_live")
@@ -86,20 +84,24 @@ async def test_video_input(fullscreen=False, debug=False):
             try:
                 # Add frame to buffer
                 if len(video_input.frame_buffer) < video_input.buffer_size:
-                    print(f"[DEBUG] Adding frame to buffer ({len(video_input.frame_buffer)+1}/{video_input.buffer_size})")
                     video_input.frame_buffer.append(frame.copy())
+                    print(f"Frame buffer: {len(video_input.frame_buffer)}/{video_input.buffer_size}")
                 else:
                     # Shift buffer and add new frame
                     video_input.frame_buffer.pop(0)
                     video_input.frame_buffer.append(frame.copy())
-                    print(f"[DEBUG] Updated frame buffer with new frame (rotating buffer)")
                 
                 # Update ROIs
                 video_input.update_rois(frame)
                 
                 # Check for movement in ROIs if we have enough frames
                 if len(video_input.frame_buffer) >= video_input.buffer_size:
-                    video_input.check_for_movement()
+                    movements = video_input.check_for_movement()
+                    if movements:
+                        print(f"Movements: roi_1: {movements.get('roi_1', 0):.2f}, "
+                              f"roi_2: {movements.get('roi_2', 0):.2f}, "
+                              f"roi_3: {movements.get('roi_3', 0):.2f}, "
+                              f"roi_4: {movements.get('roi_4', 0):.2f}")
                 
                 # Check if we need to save data
                 if time.time() - video_input.last_save_time >= video_input.save_interval:
@@ -134,12 +136,6 @@ async def test_video_input(fullscreen=False, debug=False):
                 
                 # Ensure show_rois is enabled
                 video_input.show_rois = True
-                
-                # Debug ROI information
-                print(f"[DEBUG] ROI configs: {video_input.roi_configs}")
-                print(f"[DEBUG] show_rois flag: {video_input.show_rois}")
-                print(f"[DEBUG] Frame buffer size: {len(video_input.frame_buffer)}")
-                print(f"[DEBUG] calculating flag: {video_input.calculating}")
                 
                 # Draw ROIs on the display frame
                 if video_input.show_rois and video_input.roi_configs:
