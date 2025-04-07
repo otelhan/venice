@@ -13,9 +13,6 @@ import pytz  # Added for timezone handling
 import websockets  # Add this import at the top
 import json
 import asyncio
-import threading
-import queue
-import socket  # For simple socket server
 
 # Use cocoa backend for Mac, xcb for Linux
 # if os.uname().sysname == 'Darwin':  # macOS
@@ -243,42 +240,44 @@ class VideoInput:
         return t_sin, t_cos
 
     def calculate_movement_rate(self, roi_config):
-        """Calculate rate of movement for a specific ROI using consecutive frames"""
-        try:
-            if len(self.frame_buffer) < self.buffer_size:
-                return 0
+        """Compute movement using Rate of Change Filtering"""
+        if len(self.frame_buffer) < 3:
+            return 0.0
             
-            # Get the ROI from the most recent and previous frames
-            x = int(roi_config['x'])
-            y = int(roi_config['y'])
-            w = int(roi_config['width'])
-            h = int(roi_config['height'])
-            
-            # Extract the same ROI from multiple frames
-            current_roi = self.frame_buffer[-1][y:y+h, x:x+w]
-            prev_roi = self.frame_buffer[-2][y:y+h, x:x+w]
-            
-            # Convert to grayscale
-            current_gray = cv2.cvtColor(current_roi, cv2.COLOR_BGR2GRAY)
-            prev_gray = cv2.cvtColor(prev_roi, cv2.COLOR_BGR2GRAY)
-            
-            # Calculate absolute difference
-            diff = cv2.absdiff(current_gray, prev_gray)
-            
-            # Apply threshold to isolate areas of significant change
-            _, threshold = cv2.threshold(diff, self.movement_threshold, 255, cv2.THRESH_BINARY)
-            
-            # Calculate percentage of pixels that changed
-            changed_pixels = np.count_nonzero(threshold)
-            total_pixels = threshold.size
-            change_percent = (changed_pixels / total_pixels) * 100
-            
-            return change_percent
-        except Exception as e:
-            print(f"[ERROR] Movement calculation error: {e}")
-            import traceback
-            traceback.print_exc()
-            return 0
+        # Get ROI coordinates
+        x = int(roi_config['x'])
+        y = int(roi_config['y'])
+        w = int(roi_config['width'])
+        h = int(roi_config['height'])
+        roi = (x, y, x+w, y+h)
+        
+        # Get frames from buffer
+        frame1, frame2, frame3 = self.frame_buffer[-3:]
+        
+        # Convert to grayscale
+        gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
+        gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+        gray3 = cv2.cvtColor(frame3, cv2.COLOR_BGR2GRAY)
+        
+        # Compute absolute differences
+        diff1 = cv2.absdiff(gray1, gray2)
+        diff2 = cv2.absdiff(gray2, gray3)
+        
+        # Compute rate of change
+        rate_of_change = np.abs(diff2.astype(np.int16) - diff1.astype(np.int16))
+        
+        # Threshold: Ignore small intensity shifts
+        rate_of_change[rate_of_change < self.movement_threshold] = 0
+        
+        # Focus on ROI
+        roi_change = rate_of_change[y:y+h, x:x+w]
+        
+        # Compute movement score (percentage of significant changes)
+        movement_score = np.sum(roi_change > 0) / (roi_change.shape[0] * roi_change.shape[1])
+        
+        # Scale to [20, 127] range
+        scaled_score = 20 + (movement_score * (127 - 20))
+        return np.clip(scaled_score, 20, 127)
 
     def init_plots(self):
         """Disabled in headless mode"""
@@ -295,60 +294,74 @@ class VideoInput:
             movements = {}
             
             # Check if it's time for a new frame
-            if current_time - self.last_frame_time < self.frame_interval:
-                return movements if return_movements else None
+            if current_time - self.last_frame_time < self.frame_interval and len(self.frame_buffer) > 0:
+                # Return existing data if we're not ready for a new frame yet
+                return self.current_movements if return_movements else None
             
             ret, frame = self.cap.read()
             if not ret:
-                raise ValueError("Failed to read frame")
+                # Log this only occasionally to avoid console flooding
+                if not hasattr(self, 'last_frame_error_time') or time.time() - self.last_frame_error_time > 5:
+                    print("\n[ERROR] Failed to read frame, will try to reconnect if this continues")
+                    self.last_frame_error_time = time.time()
+                return movements if return_movements else None
             
-            # Update frame buffer
-            self.frame_buffer.append(frame.copy())
-            if len(self.frame_buffer) > self.buffer_size:
+            # Update frame buffer efficiently
+            if len(self.frame_buffer) >= self.buffer_size:
+                # Reuse existing array memory where possible
                 self.frame_buffer.pop(0)
             
-            # Only calculate and save if we're in calculation mode
-            if self.calculating:
-                # Calculate movement for each ROI if we have enough frames
-                if len(self.frame_buffer) == self.buffer_size:
-                    for roi_name, roi_config in self.roi_configs.items():
-                        movement = self.calculate_movement_rate(roi_config)
-                        self.movement_buffers[roi_name].append(movement)
-                        movements[roi_name] = movement
-                        
-                        # Limit buffer size to prevent unbounded growth
-                        max_buffer_size = 100  # Keep last 100 values maximum
-                        if len(self.movement_buffers[roi_name]) > max_buffer_size:
-                            # Remove oldest values, keeping the most recent
-                            self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-max_buffer_size:]
+            # Only copy if we need to (for calculations)
+            self.frame_buffer.append(frame.copy() if self.calculating else frame)
+            
+            # Only calculate and save if we're in calculation mode and have enough frames
+            if self.calculating and len(self.frame_buffer) == self.buffer_size:
+                # Process one ROI at a time to avoid blocking the main thread too long
+                for roi_name, roi_config in self.roi_configs.items():
+                    movement = self.calculate_movement_rate(roi_config)
+                    self.movement_buffers[roi_name].append(movement)
+                    movements[roi_name] = movement
+                    
+                    # Limit buffer size efficiently with slicing
+                    max_buffer_size = 100  # Keep last 100 values maximum
+                    if len(self.movement_buffers[roi_name]) > max_buffer_size:
+                        self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-max_buffer_size:]
+                
+                # Store for display - do this immediately after calculation
+                self.current_movements = movements
                 
                 # Check if it's time to calculate vectors (every vector_interval seconds)
                 if current_time - self.last_vector_time >= self.vector_interval:
-                    # This would be where vector calculation happens if needed
+                    # Flag for vector calculation without doing it here
                     self.last_vector_time = current_time
                 
                 # Check if it's time to save to CSV (every save_interval seconds)
                 if current_time - self.last_save_time >= self.save_interval:
-                    # Flag that we need to save to CSV
+                    # Only flag for saving, don't block processing
                     self.save_needed = True
+                    self.last_save_time = current_time
             else:
+                # If not calculating, just reference the current frame
+                self.last_frame = frame
+                
                 # Clear movement buffers when stopping calculation
-                if hasattr(self, 'movement_buffers'):
+                if not self.calculating and hasattr(self, 'movement_buffers'):
                     for roi_name in self.movement_buffers:
+                        # Efficiently clear buffers
                         self.movement_buffers[roi_name] = []
-                self.frame_buffer = []  # Clear frame buffer too
             
             self.last_frame_time = current_time
-            self.current_movements = movements  # Store for display
-            
             return movements if return_movements else None
             
         except Exception as e:
-            print(f"\n[ERROR] Error in frame processing: {e}")
-            movements = {}
-            self.reconnect()
+            # Log errors but don't do expensive operations in the main thread
+            if not hasattr(self, 'last_error_time') or time.time() - self.last_error_time > 5:
+                print(f"\n[ERROR] Error in frame processing: {e}")
+                self.last_error_time = time.time()
             
-        return movements if return_movements else None
+            # Don't reconnect in the main thread, flag for background task
+            self.reconnection_needed = True
+            return movements if return_movements else None
 
     def get_csv_path(self):
         """Get CSV path with date-based rotation"""
@@ -472,25 +485,9 @@ class VideoInput:
             print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
             return False
 
-    def send_to_controller(self, data):
-        """Non-async version to use the thread-based approach"""
-        if self.waiting_for_ack:
-            print("[STATUS] Already waiting for acknowledgment, cannot send new data")
-            return False
-
-        # Start the ack server thread if it's not already running
-        if not self.server_running:
-            self.start_ack_server_thread()
-            
-        # Start the sender thread if it's not already running
-        if self.sender_thread is None or not self.sender_thread.is_alive():
-            self.start_sender_thread()
-            
-        # Enqueue the message for sending
-        self._enqueue_message(data)
-        
-        # The actual sending will be handled by the sender thread
-        return True
+    async def save_movement_vector(self):
+        """Legacy method - now just calls save_to_csv_only for backward compatibility"""
+        return await self.save_to_csv_only()
 
     def run(self, stream_url):
         """Main processing loop"""
@@ -752,450 +749,48 @@ class VideoInput:
             print(f"Error scaling movement value: {e}")
             return 20
 
-    def setup_csv_saving(self):
-        """Set up CSV file for saving data"""
+    async def send_to_controller(self, data):
+        """Send data to res00 controller"""
         try:
-            # Get CSV file path and ensure parent directory exists
-            csv_path = self.get_csv_path()
-            csv_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            print(f"\nCSV file will be saved to: {csv_path}")
-            print(f"Directory exists: {csv_path.parent.exists()}")
-            print(f"Directory is writable: {os.access(str(csv_path.parent), os.W_OK)}")
-            
-            return True
-        except Exception as e:
-            print(f"[ERROR] Failed to set up CSV saving: {e}")
-            return False
-            
-    def save_to_csv(self):
-        """Non-async version to save data to CSV using a thread-safe approach"""
-        try:
-            # Check if we're already in an event loop
-            try:
-                asyncio.get_running_loop()
-                # We're already in an event loop, use a direct approach
-                return self._direct_save_to_csv()
-            except RuntimeError:
-                # No running loop, we can create one
-                if not hasattr(self, '_sync_loop') or self._sync_loop.is_closed():
-                    self._sync_loop = asyncio.new_event_loop()
-                
-                try:
-                    asyncio.set_event_loop(self._sync_loop)
-                    return self._sync_loop.run_until_complete(self.save_to_csv_only())
-                finally:
-                    asyncio.set_event_loop(None)
-        except Exception as e:
-            print(f"[ERROR] Error saving to CSV: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-            
-    def _direct_save_to_csv(self):
-        """Save data to CSV without using asyncio"""
-        if len(self.movement_buffers['roi_1']) >= 30:
-            # Scale values for CSV - use the latest 30 values
-            scaled_values = []
-            # If we have more than 30 values, get the latest 30
-            buffer_values = self.movement_buffers['roi_1'][-30:]
-            
-            for i in range(30):
-                raw_movement = buffer_values[i]
-                scaled = self.scale_movement_log(raw_movement, 0, 100)
-                scaled_values.append(scaled)
-            
-            # Get current time in Venice
-            venice_time = self.get_venice_time()
-            t_sin, t_cos = self.encode_time(venice_time)
-            
-            # Get CSV file path and ensure parent directory exists
-            csv_path = self.get_csv_path()
-            csv_path.parent.mkdir(parents=True, exist_ok=True)
-            print(f"[CSV] Saving data to file: {csv_path}")
-            
-            # Write data to CSV
-            try:
-                # Create CSV if it doesn't exist, append if it does
-                file_exists = csv_path.exists()
-                with open(csv_path, mode='a', newline='') as f:
-                    writer = csv.writer(f)
-                    if not file_exists:
-                        # Write header if new file
-                        writer.writerow(['timestamp', 't_sin', 't_cos'] + [f'movement_{i}' for i in range(30)])
-                    
-                    # Write data row
-                    writer.writerow([str(venice_time), t_sin, t_cos] + scaled_values)
-                print(f"[CSV] Successfully wrote data to {csv_path}")
-                return True
-            except Exception as e:
-                print(f"[ERROR] Failed to write to CSV: {e}")
+            # Get controller config
+            dest_config = self.config['controllers'].get(self.destination)
+            if not dest_config:
+                print(f"No configuration found for destination: {self.destination}")
                 return False
-        else:
-            print(f"[WARNING] Not enough values to save to CSV: {len(self.movement_buffers['roi_1'])}/30")
+
+            # Connect to controller
+            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
+            print(f"\nConnecting to {self.destination}:")
+            print(f"URI: {uri}")
+            
+            async with websockets.connect(uri) as websocket:
+                print(f"Connected to {self.destination}")
+                await websocket.send(json.dumps(data))
+                print(f"Data sent to {self.destination}:")
+                print(json.dumps(data, indent=2))
+                return True
+
+        except Exception as e:
+            print(f"Error sending to controller: {e}")
             return False
-
-    def cleanup(self):
-        """Clean up resources before exit"""
-        # Stop video capture
-        self.is_running = False
-        if self.cap:
-            self.cap.release()
-            
-        # Close any open windows
-        cv2.destroyAllWindows()
-
-    def update_rois(self, frame):
-        """Update ROIs based on the frame"""
-        if frame is None or not self.roi_configs:
-            return
-            
-        # Copy regions from the frame to rois dictionary
-        for roi_name, roi_config in self.roi_configs.items():
-            x = int(roi_config['x'])
-            y = int(roi_config['y'])
-            w = int(roi_config['width'])
-            h = int(roi_config['height'])
-            
-            # Make sure coordinates are valid
-            frame_h, frame_w = frame.shape[:2]
-            x = max(0, min(x, frame_w - 1))
-            y = max(0, min(y, frame_h - 1))
-            w = max(1, min(w, frame_w - x))
-            h = max(1, min(h, frame_h - y))
-            
-            # Extract ROI
-            roi = frame[y:y+h, x:x+w]
-            if roi.size > 0:  # Check if ROI is valid
-                self.rois[roi_name] = roi.copy()
-
-    def check_for_movement(self):
-        """Calculate movement for each ROI"""
-        if not self.calculating or len(self.frame_buffer) < self.buffer_size:
-            return {}
-            
-        movements = {}
-        for roi_name, roi_config in self.roi_configs.items():
-            try:
-                movement = self.calculate_movement_rate(roi_config)
-                self.movement_buffers[roi_name].append(movement)
-                movements[roi_name] = movement
-                
-                # Limit buffer size to prevent unbounded growth
-                max_buffer_size = 100  # Keep last 100 values maximum
-                if len(self.movement_buffers[roi_name]) > max_buffer_size:
-                    # Remove oldest values, keeping the most recent
-                    self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-max_buffer_size:]
-            except Exception as e:
-                print(f"[ERROR] Error calculating movement for {roi_name}: {e}")
-                import traceback
-                traceback.print_exc()
-                
-        self.current_movements = movements  # Store for display
-        return movements
 
 class VideoInputWithAck(VideoInput):
-    """VideoInput with acknowledgment handling in separate threads."""
-    
-    def __init__(self, ack_destination='output'):
+    def __init__(self):
         super().__init__()
-        # Set up acknowledgment config
-        self.ack_destination = ack_destination
-        
-        # Get ack destination config
-        self.ack_config = self.config['controllers'].get(self.ack_destination, {})
-        if not self.ack_config:
-            print(f"Warning: No configuration found for {self.ack_destination}")
-            self.listen_port = 8777  # Default port
-        else:
-            self.listen_port = self.ack_config.get('ack_port', 8777)
-        
-        print(f"\nWill receive acknowledgments from: {self.ack_destination}")
-        print(f"On listen port: {self.listen_port}")
-        
-        # Set up state variables
         self.waiting_for_ack = False
-        self.message_sent = False
+        self.server = None
+        self.listen_port = 8777  # Port to listen for acknowledgments
         self.last_message = None
-        self.should_send_next = True  # Start with sending enabled
+        self.message_sent = False
+        self.ack_destination = 'output'  # The controller that will send ACKs
         
-        # Threading setup
-        self.server_running = False
-        self.ack_server_thread = None
-        self.ack_received_event = threading.Event()
-        self.message_queue = queue.Queue()
-        self.sender_thread = None
-        self.ack_wait_count = 0
-        
-        # Start the acknowledgment server thread
-        self.start_ack_server_thread()
-        
-        # Start the sender thread
-        self.start_sender_thread()
-
-    def check_and_try_send(self):
-        """Non-async version to check and send data to controller"""
-        # Initialize count attributes if they don't exist
-        if not hasattr(self, 'not_enough_data_count'):
-            self.not_enough_data_count = 0
-        if not hasattr(self, 'ack_wait_count'):
-            self.ack_wait_count = 0
-            
-        if self.should_send_next and not self.waiting_for_ack:
-            if len(self.movement_buffers['roi_1']) >= 30:
-                print("\n[STATUS] Sending latest movement data to controller...")
-                # Use a separate function that doesn't create a new event loop for each call
-                return self._sync_send_movement_vector()
-            else:
-                # Only print status every 300 calls to avoid flooding
-                self.not_enough_data_count += 1
-                if self.not_enough_data_count % 300 == 0:
-                    print(f"\n[STATUS] Not enough data to send: {len(self.movement_buffers['roi_1'])}/30 values")
-                return False
-        elif self.waiting_for_ack:
-            # Print status message every 30 calls (to avoid flooding terminal)
-            if hasattr(self, 'ack_wait_count'):
-                self.ack_wait_count += 1
-                if self.ack_wait_count % 30 == 0:
-                    print(f"\n[STATUS] Still waiting for acknowledgment from {self.ack_destination}...")
-                    # Check if it's been too long since we sent the message
-                    if hasattr(self, 'last_ack_request_time'):
-                        elapsed = time.time() - self.last_ack_request_time
-                        if elapsed > 60:  # More than 60 seconds
-                            print(f"\n[STATUS] Acknowledgment timeout (waited {elapsed:.1f}s). Resetting state...")
-                            self.waiting_for_ack = False
-                            self.should_send_next = True
-            else:
-                self.ack_wait_count = 1
-                self.last_ack_request_time = time.time()
-                print(f"\n[STATUS] Waiting for acknowledgment from {self.ack_destination}...")
-        return False
-        
-    def _sync_send_movement_vector(self):
-        """Send movement vector using a thread-safe approach"""
-        try:
-            # Check if we're already in an event loop
-            try:
-                asyncio.get_running_loop()
-                # We're already in an event loop, use a different approach
-                return self._direct_send_movement_vector()
-            except RuntimeError:
-                # No running loop, we can create one
-                if not hasattr(self, '_sync_loop') or self._sync_loop.is_closed():
-                    self._sync_loop = asyncio.new_event_loop()
-                
-                try:
-                    asyncio.set_event_loop(self._sync_loop)
-                    return self._sync_loop.run_until_complete(self.send_movement_vector())
-                finally:
-                    asyncio.set_event_loop(None)
-                    
-        except Exception as e:
-            print(f"[ERROR] Error sending movement vector: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-    
-    def _direct_send_movement_vector(self):
-        """Non-async version that doesn't use event loops"""
-        # Only send if we're not waiting for an ACK and have enough values
-        if len(self.movement_buffers['roi_1']) >= 30:
-            # Scale values for transmission - always use the latest 30 values
-            scaled_values = []
-            # Get the latest 30 values
-            buffer_values = self.movement_buffers['roi_1'][-30:]
-            
-            for i in range(30):
-                raw_movement = buffer_values[i]
-                scaled = self.scale_movement_log(raw_movement, 0, 100)
-                scaled_values.append(scaled)
-            
-            # Get current time in Venice
-            venice_time = self.get_venice_time()
-            t_sin, t_cos = self.encode_time(venice_time)
-            
-            # Create data packet
-            data = {
-                'type': 'movement_data',
-                'timestamp': str(venice_time),
-                'data': {
-                    'pot_values': scaled_values,
-                    't_sin': t_sin,
-                    't_cos': t_cos
-                }
-            }
-            
-            # Send to controller without asyncio
-            return self.send_to_controller(data)
+        # Print ACK info
+        output_config = self.config['controllers'].get(self.ack_destination)
+        if output_config:
+            print(f"\nWill receive acknowledgments from: {self.ack_destination}")
+            print(f"On listen port: {self.listen_port}")
         else:
-            return False
-
-    def start_ack_server_thread(self):
-        """Start the acknowledgment server in a separate thread"""
-        if not self.server_running:
-            self.server_running = True
-            self.ack_server_thread = threading.Thread(
-                target=self._run_ack_server,
-                daemon=True  # This ensures the thread will exit when the main program exits
-            )
-            self.ack_server_thread.start()
-            print("\nStarted acknowledgment server thread")
-    
-    def _run_ack_server(self):
-        """Run the websocket server in a dedicated thread with its own event loop"""
-        try:
-            print(f"\nStarting acknowledgment server on port {self.listen_port}")
-            
-            # Create the event loop and set it for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Define server coroutine
-            async def server_main():
-                # Creating a separate handle_client coroutine
-                async def handle_client(websocket, path):
-                    try:
-                        addr = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
-                        print(f"[ACK] New connection from {addr}")
-                        
-                        async for message in websocket:
-                            try:
-                                data = json.loads(message)
-                                if data.get('type') == 'ack':
-                                    print(f"[ACK] Acknowledgment received:")
-                                    
-                                    # Update state variables
-                                    self.waiting_for_ack = False
-                                    self.message_sent = False
-                                    self.should_send_next = True
-                                    
-                                    # Signal to the main thread
-                                    self.ack_received_event.set()
-                                    
-                                    print("[ACK] Ready to send next data packet")
-                            except json.JSONDecodeError:
-                                print(f"[ERROR] Invalid JSON received")
-                    except Exception as e:
-                        print(f"[ERROR] Client error: {e}")
-                
-                # Create and start server
-                server = await websockets.serve(handle_client, "0.0.0.0", self.listen_port)
-                print(f"[ACK] Websocket server running on port {self.listen_port}")
-                
-                # Just keep it running
-                while self.server_running:
-                    await asyncio.sleep(1)
-                
-                # Clean up when done
-                server.close()
-                await server.wait_closed()
-            
-            # Run everything  
-            loop.run_until_complete(server_main())
-        
-        except Exception as e:
-            print(f"[ERROR] Server thread error: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            self.server_running = False
-            print("[ACK] Server thread terminated")
-    
-    def _enqueue_message(self, data):
-        """Add a message to the queue for sending in the sender thread"""
-        self.message_queue.put(data)
-        print(f"\n[SEND] Added message to send queue (queue size: {self.message_queue.qsize()})")
-        
-    def start_sender_thread(self):
-        """Start a thread for sending messages to the controller"""
-        if self.sender_thread is None or not self.sender_thread.is_alive():
-            self.sender_thread = threading.Thread(
-                target=self._run_sender_loop,
-                daemon=True
-            )
-            self.sender_thread.start()
-            print("\nStarted message sender thread")
-    
-    def _run_sender_loop(self):
-        """Run the sender loop in a thread"""
-        try:
-            print("[SEND] Sender thread started")
-            
-            # Create and set event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Main loop
-            while True:
-                try:
-                    # Get the next message from the queue with timeout
-                    try:
-                        data = self.message_queue.get(timeout=0.5)
-                        print("[SEND] Got message from queue")
-                    except queue.Empty:
-                        # No message, continue polling
-                        continue
-                    
-                    # Define sender coroutine
-                    async def send_message():
-                        try:
-                            # Get controller config
-                            dest_config = self.config['controllers'].get(self.destination)
-                            if not dest_config:
-                                print("[ERROR] No configuration found for destination:", self.destination)
-                                return False
-                    
-                            # Connect to controller
-                            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-                            print(f"[SEND] Connecting to {uri}")
-                            
-                            # Connect and send
-                            async with websockets.connect(uri) as websocket:
-                                print(f"[SEND] Connected to {self.destination}")
-                                await websocket.send(json.dumps(data))
-                                print(f"[SEND] Data sent successfully")
-                                
-                                # Update state after sending
-                                self.waiting_for_ack = True
-                                self.message_sent = True
-                                self.last_message = data
-                                self.should_send_next = False
-                                
-                                # Reset the acknowledgment event
-                                self.ack_received_event.clear()
-                                
-                                # Store the time for timeout tracking
-                                self.last_ack_request_time = time.time()
-                                
-                                return True
-                                
-                        except Exception as e:
-                            print(f"[ERROR] Send failed: {e}")
-                            return False
-                    
-                    # Run the send coroutine
-                    success = loop.run_until_complete(send_message())
-                    
-                    if success:
-                        # Mark as done
-                        self.message_queue.task_done()
-                        print("[SEND] Message processed successfully")
-                    else:
-                        # Re-queue for retry
-                        self.message_queue.put(data)
-                        print("[SEND] Will retry message later")
-                        time.sleep(2)
-                        
-                except Exception as e:
-                    print(f"[ERROR] Sender error: {e}")
-                    traceback.print_exc()
-                    time.sleep(1)
-                    
-        except Exception as e:
-            print(f"[ERROR] Sender thread crashed: {e}")
-            traceback.print_exc()
-        finally:
-            print("[SEND] Sender thread terminated")
+            print(f"\nWarning: No configuration found for ACK source: {self.ack_destination}")
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 
