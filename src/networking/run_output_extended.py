@@ -243,22 +243,22 @@ class OutputController:
                 await asyncio.sleep(3)
                 print("Wait complete, proceeding...")
                 
-                # First transition to IDLE
+                # Transition to IDLE state
                 self.current_state = OutputState.IDLE
                 print("Transitioning to IDLE mode, ready to receive data...")
                 print("Waiting for data...")
                 
-                # Then start the websocket server
-                try:
-                    async with websockets.serve(
-                        self._handle_connection, 
-                        "0.0.0.0", 
-                        self.port,
-                        max_size=None
-                    ) as server:
-                        await asyncio.Future()  # run forever
-                except Exception as e:
-                    print(f"Error starting websocket server: {e}")
+                # For operation mode, start websocket server and never return
+                server = await websockets.serve(
+                    self._handle_connection, 
+                    "0.0.0.0", 
+                    self.port,
+                    ping_interval=None,
+                    ping_timeout=None
+                )
+                print(f"Websocket server running on port {self.port}")
+                await server.wait_closed()  # This will block until the server is closed
+                
             else:
                 print("The clock is centered at 0 degrees")
                 print("Press Enter to continue to menu...")
@@ -905,17 +905,20 @@ async def main():
                        default='operation', help='Mode to run in (default: operation)')
     parser.add_argument('--port', '-p', type=int, default=8765,
                        help='Port to listen on (default: 8765)')
+    parser.add_argument('--non-interactive', '-n', action='store_true',
+                       help='Run in non-interactive mode (no prompts)')
     args = parser.parse_args()
     
     # Use command line arguments
     mode = args.mode
+    non_interactive = args.non_interactive
     
     # Print welcome message with mode information
     print("\n=== Output Controller ===")
     print(f"Starting in {mode.upper()} mode")
     
-    # If running in interactive terminal, allow choice override
-    if os.isatty(0):  # Check if running in an interactive terminal
+    # Only show mode selection if in interactive terminal and not explicitly set to non-interactive
+    if os.isatty(0) and not non_interactive and not os.environ.get('NON_INTERACTIVE'):
         print("\n1. Operation Mode (WebSocket Server)")
         print("2. Test Mode (Direct Servo Control)")
         print(f"Default: {mode.upper()} mode")
@@ -926,6 +929,8 @@ async def main():
         elif choice == '2':
             mode = 'test'
         # Empty input uses the default from command line args
+    else:
+        print("Running in non-interactive mode")
     
     # Create controller with selected mode
     controller = OutputController(mode)

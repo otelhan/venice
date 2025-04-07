@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 
 # Check for arguments
 MODE="operation"  # Default mode
+INTERACTIVE=""    # By default, run in non-interactive mode
 
 # Process command line arguments
 while [[ $# -gt 0 ]]; do
@@ -19,6 +20,10 @@ while [[ $# -gt 0 ]]; do
       MODE="operation"
       shift
       ;;
+    --interactive|-i)
+      INTERACTIVE=""  # Remove non-interactive flag
+      shift
+      ;;
     *)
       # Pass any other arguments directly to the Python script
       EXTRA_ARGS="$EXTRA_ARGS $1"
@@ -26,6 +31,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# If not interactive, add the flag
+if [ -z "$INTERACTIVE" ]; then
+  EXTRA_ARGS="$EXTRA_ARGS --non-interactive"
+fi
 
 # Run the output controller
 echo "Starting Output Controller in $MODE mode..."
