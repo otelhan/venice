@@ -13,6 +13,8 @@ import pytz  # Added for timezone handling
 import websockets  # Add this import at the top
 import json
 import asyncio
+import threading
+import queue
 
 # Use cocoa backend for Mac, xcb for Linux
 # if os.uname().sysname == 'Darwin':  # macOS
@@ -93,6 +95,13 @@ class VideoInput:
         else:
             print(f"\nWarning: No configuration found for {self.destination}")
 
+        # Network operation flag to avoid blocking main thread
+        self.network_busy = False
+        
+        # Create frame queue for threaded processing
+        self.frame_queue = queue.Queue(maxsize=10)  # Limit queue size to 10 frames
+        self.processing_thread = None
+        
         # Remove or set to False
         self.show_plots = False
         self.plots_initialized = False
@@ -156,12 +165,20 @@ class VideoInput:
                 # Open video stream with timeout property
                 self.cap = cv2.VideoCapture(stream_url)
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # Reduce buffer size
+                
+                # Set additional CV2 properties for better performance
+                self.cap.set(cv2.CAP_PROP_FPS, 30)  # Request 30fps
+                
                 if not self.cap.isOpened():
                     raise Exception("Could not open stream")
                 
                 self.is_running = True
                 self.last_frame_success = time.time()
                 print(f"Connected to stream: {info.get('title', 'Unknown')}")
+                
+                # Start frame capture thread
+                self.start_frame_capture_thread()
+                
                 return True
                 
             except Exception as e:
@@ -174,9 +191,34 @@ class VideoInput:
                 
         print("All connection attempts failed")
         return False
+    
+    def start_frame_capture_thread(self):
+        """Start a background thread to continuously capture frames"""
+        def capture_frames():
+            while self.is_running:
+                if not self.cap or not self.cap.isOpened():
+                    time.sleep(0.1)
+                    continue
+                
+                success, frame = self.cap.read()
+                if success:
+                    self.last_frame_success = time.time()
+                    # Only add to queue if there's space (to avoid memory issues)
+                    if not self.frame_queue.full():
+                        self.frame_queue.put(frame)
+                    time.sleep(0.01)  # Small sleep to avoid hogging CPU
+                else:
+                    print("\nFailed to read frame in capture thread")
+                    self.reconnect()
+                    time.sleep(0.5)
+        
+        # Start the capture thread
+        self.processing_thread = threading.Thread(target=capture_frames, daemon=True)
+        self.processing_thread.start()
+        print("Frame capture thread started")
             
     def get_frame(self) -> Optional[np.ndarray]:
-        """Get current frame from stream with timeout check"""
+        """Get current frame from queue with timeout check"""
         if not self.is_running:
             return None
             
@@ -186,106 +228,93 @@ class VideoInput:
                 print("\nStream timeout detected, attempting to reconnect...")
                 self.reconnect()
                 return None
-                
-            ret, frame = self.cap.read()
-            if ret:
-                self.last_frame_success = time.time()
-                self.last_frame = frame
+            
+            # Try to get a frame from the queue with a short timeout
+            try:
+                frame = self.frame_queue.get(timeout=0.1)
                 self.frame_count += 1
+                self.last_frame = frame
                 return frame
-            else:
-                print("\nFailed to read frame, attempting to reconnect...")
-                self.reconnect()
-                return None
+            except queue.Empty:
+                # If no frame is available, return the last frame if we have one
+                return self.last_frame
                 
         except Exception as e:
-            print(f"\nError reading frame: {e}")
-            self.reconnect()
+            print(f"\nError getting frame: {e}")
             return None
-            
-    def get_venice_time(self):
-        """Get current time in Venice"""
-        utc_now = datetime.now(pytz.UTC)
-        return utc_now.astimezone(self.venice_tz)
 
+    def get_venice_time(self):
+        """Get current time in Venice timezone"""
+        utc_now = datetime.now(pytz.utc)
+        venice_now = utc_now.astimezone(self.venice_tz)
+        return venice_now
+        
     def encode_time(self, timestamp):
-        """Encodes time-of-day into sin-cos representation using Venice time.
-        
-        Converts time to a point on a circle where:
-        - 00:00:00 = 0 radians
-        - 12:00:00 = π radians
-        - 23:59:59 = 2π radians
         """
-        # Convert to Venice time if timestamp is naive
-        if timestamp.tzinfo is None:
-            timestamp = datetime.now(self.venice_tz)
-        else:
-            timestamp = timestamp.astimezone(self.venice_tz)
-            
-        # Convert to decimal hours with seconds precision
-        hour = timestamp.hour
-        minute = timestamp.minute
-        second = timestamp.second
+        Encode time of day (hours, minutes, seconds) into sin/cos values
+        Returns: (sin_value, cos_value) tuple
+        """
+        # Get hours as float (0.0-23.999)
+        hours = timestamp.hour
+        minutes = timestamp.minute
+        seconds = timestamp.second
+        microseconds = timestamp.microsecond
         
-        # Convert to fraction of day [0, 1]
-        day_fraction = (hour + minute/60 + second/3600) / 24.0
+        # Convert to fraction of day (0.0-1.0)
+        day_fraction = (hours + minutes/60 + seconds/3600 + microseconds/3600000000) / 24.0
         
-        # Convert to radians [0, 2π]
-        angle = 2 * np.pi * day_fraction
+        # Convert to radians (0 to 2π)
+        angle_rad = day_fraction * 2 * np.pi
         
-        # Calculate sine and cosine
-        t_sin = np.sin(angle)
-        t_cos = np.cos(angle)
+        # Calculate sin and cos values
+        sin_val = np.sin(angle_rad)
+        cos_val = np.cos(angle_rad)
         
-        return t_sin, t_cos
+        return sin_val, cos_val
 
     def calculate_movement_rate(self, roi_config):
-        """Compute movement using Rate of Change Filtering"""
-        if len(self.frame_buffer) < 3:
+        """Calculate movement rate for an ROI"""
+        if len(self.frame_buffer) < self.buffer_size:
             return 0.0
+        
+        try:
+            # Extract ROI from newest and oldest frames
+            oldest = self.frame_buffer[0]
+            newest = self.frame_buffer[-1]
             
-        # Get ROI coordinates
-        x = int(roi_config['x'])
-        y = int(roi_config['y'])
-        w = int(roi_config['width'])
-        h = int(roi_config['height'])
-        roi = (x, y, x+w, y+h)
-        
-        # Get frames from buffer
-        frame1, frame2, frame3 = self.frame_buffer[-3:]
-        
-        # Convert to grayscale
-        gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-        gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
-        gray3 = cv2.cvtColor(frame3, cv2.COLOR_BGR2GRAY)
-        
-        # Compute absolute differences
-        diff1 = cv2.absdiff(gray1, gray2)
-        diff2 = cv2.absdiff(gray2, gray3)
-        
-        # Compute rate of change
-        rate_of_change = np.abs(diff2.astype(np.int16) - diff1.astype(np.int16))
-        
-        # Threshold: Ignore small intensity shifts
-        rate_of_change[rate_of_change < self.movement_threshold] = 0
-        
-        # Focus on ROI
-        roi_change = rate_of_change[y:y+h, x:x+w]
-        
-        # Compute movement score (percentage of significant changes)
-        movement_score = np.sum(roi_change > 0) / (roi_change.shape[0] * roi_change.shape[1])
-        
-        # Scale to [20, 127] range
-        scaled_score = 20 + (movement_score * (127 - 20))
-        return np.clip(scaled_score, 20, 127)
-
-    def init_plots(self):
-        """Disabled in headless mode"""
-        pass
-
-    def update_plots(self):
-        """Disabled in headless mode"""
-        pass
+            x = int(roi_config['x'])
+            y = int(roi_config['y'])
+            w = int(roi_config['width'])
+            h = int(roi_config['height'])
+            
+            oldest_roi = oldest[y:y+h, x:x+w]
+            newest_roi = newest[y:y+h, x:x+w]
+            
+            # Convert to grayscale and apply blur to reduce noise
+            oldest_gray = cv2.cvtColor(oldest_roi, cv2.COLOR_BGR2GRAY)
+            newest_gray = cv2.cvtColor(newest_roi, cv2.COLOR_BGR2GRAY)
+            
+            oldest_blur = cv2.GaussianBlur(oldest_gray, (21, 21), 0)
+            newest_blur = cv2.GaussianBlur(newest_gray, (21, 21), 0)
+            
+            # Calculate absolute difference between frames
+            frame_diff = cv2.absdiff(oldest_blur, newest_blur)
+            
+            # Apply threshold to highlight changes
+            _, thresh = cv2.threshold(frame_diff, self.movement_threshold, 255, cv2.THRESH_BINARY)
+            
+            # Count changed pixels (white pixels in threshold image)
+            movement_pixels = cv2.countNonZero(thresh)
+            
+            # Normalize by ROI size to get percentage of changed pixels
+            roi_size = w * h
+            movement_rate = (movement_pixels / roi_size) * 100.0
+            
+            return movement_rate
+            
+        except Exception as e:
+            print(f"Error calculating movement: {e}")
+            return 0.0
 
     def process_frame(self, return_movements=False):
         """Process a single frame with error handling"""
@@ -294,84 +323,61 @@ class VideoInput:
             movements = {}
             
             # Check if it's time for a new frame
-            if current_time - self.last_frame_time < self.frame_interval and len(self.frame_buffer) > 0:
-                # Return existing data if we're not ready for a new frame yet
-                return self.current_movements if return_movements else None
-            
-            # Only acquire new frame if we're actually going to process it
-            # This avoids unnecessary frame reads and reduces latency
-            if not self.cap or not self.cap.isOpened():
-                if not hasattr(self, 'last_reconnection_try') or time.time() - self.last_reconnection_try > 5:
-                    print("\n[ERROR] Video capture not open")
-                    self.reconnection_needed = True
-                    self.last_reconnection_try = time.time()
-                return movements if return_movements else None
-                
-            ret, frame = self.cap.read()
-            if not ret:
-                # Log this only occasionally to avoid console flooding
-                if not hasattr(self, 'last_frame_error_time') or time.time() - self.last_frame_error_time > 5:
-                    print("\n[ERROR] Failed to read frame, will try to reconnect if this continues")
-                    self.last_frame_error_time = time.time()
-                    self.reconnection_needed = True
+            if current_time - self.last_frame_time < self.frame_interval:
                 return movements if return_movements else None
             
-            # Update frame buffer efficiently
-            if len(self.frame_buffer) >= self.buffer_size:
-                # Reuse existing array memory where possible
+            # Get frame from buffer or capture
+            frame = self.last_frame
+            if frame is None:
+                return movements if return_movements else None
+            
+            # Update frame buffer
+            self.frame_buffer.append(frame.copy())
+            if len(self.frame_buffer) > self.buffer_size:
                 self.frame_buffer.pop(0)
             
-            # Only copy if we need to (for calculations)
-            self.frame_buffer.append(frame.copy() if self.calculating else frame)
-            
-            # Only calculate and save if we're in calculation mode and have enough frames
-            if self.calculating and len(self.frame_buffer) == self.buffer_size:
-                # Process one ROI at a time to avoid blocking the main thread too long
-                for roi_name, roi_config in self.roi_configs.items():
-                    movement = self.calculate_movement_rate(roi_config)
-                    self.movement_buffers[roi_name].append(movement)
-                    movements[roi_name] = movement
-                    
-                    # Limit buffer size efficiently with slicing
-                    max_buffer_size = 100  # Keep last 100 values maximum
-                    if len(self.movement_buffers[roi_name]) > max_buffer_size:
-                        self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-max_buffer_size:]
-                
-                # Store for display - do this immediately after calculation
-                self.current_movements = movements
+            # Only calculate and save if we're in calculation mode
+            if self.calculating:
+                # Calculate movement for each ROI if we have enough frames
+                if len(self.frame_buffer) == self.buffer_size:
+                    for roi_name, roi_config in self.roi_configs.items():
+                        movement = self.calculate_movement_rate(roi_config)
+                        self.movement_buffers[roi_name].append(movement)
+                        movements[roi_name] = movement
+                        
+                        # Limit buffer size to prevent unbounded growth
+                        max_buffer_size = 100  # Keep last 100 values maximum
+                        if len(self.movement_buffers[roi_name]) > max_buffer_size:
+                            # Remove oldest values, keeping the most recent
+                            self.movement_buffers[roi_name] = self.movement_buffers[roi_name][-max_buffer_size:]
                 
                 # Check if it's time to calculate vectors (every vector_interval seconds)
                 if current_time - self.last_vector_time >= self.vector_interval:
-                    # Flag for vector calculation without doing it here
+                    # This would be where vector calculation happens if needed
                     self.last_vector_time = current_time
                 
                 # Check if it's time to save to CSV (every save_interval seconds)
                 if current_time - self.last_save_time >= self.save_interval:
-                    # Only flag for saving, don't block processing
+                    # Flag that we need to save to CSV
                     self.save_needed = True
                     self.last_save_time = current_time
             else:
-                # If not calculating, just reference the current frame
-                self.last_frame = frame
-                
                 # Clear movement buffers when stopping calculation
-                if not self.calculating and hasattr(self, 'movement_buffers'):
+                if hasattr(self, 'movement_buffers'):
                     for roi_name in self.movement_buffers:
-                        # Efficiently clear buffers
                         self.movement_buffers[roi_name] = []
+                self.frame_buffer = []  # Clear frame buffer too
             
             self.last_frame_time = current_time
+            self.current_movements = movements  # Store for display
+            
             return movements if return_movements else None
             
         except Exception as e:
-            # Log errors but don't do expensive operations in the main thread
-            if not hasattr(self, 'last_error_time') or time.time() - self.last_error_time > 5:
-                print(f"\n[ERROR] Error in frame processing: {e}")
-                self.last_error_time = time.time()
+            print(f"\n[ERROR] Error in frame processing: {e}")
+            movements = {}
             
-            # Don't reconnect in the main thread, flag for background task
-            self.reconnection_needed = True
-            return movements if return_movements else None
+        return movements if return_movements else None
 
     def get_csv_path(self):
         """Get CSV path with date-based rotation"""
@@ -430,95 +436,183 @@ class VideoInput:
             csv_path.parent.mkdir(parents=True, exist_ok=True)
             print(f"\n[CSV] Saving data to file: {csv_path}")
             
-            # Write data to CSV
-            try:
-                # Create CSV if it doesn't exist, append if it does
-                file_exists = csv_path.exists()
-                with open(csv_path, mode='a', newline='') as f:
-                    writer = csv.writer(f)
-                    if not file_exists:
-                        # Write header if new file
-                        writer.writerow(['timestamp', 't_sin', 't_cos'] + [f'movement_{i}' for i in range(30)])
-                    
-                    # Write data row
-                    writer.writerow([str(venice_time), t_sin, t_cos] + scaled_values)
-                print(f"[CSV] Successfully wrote data to {csv_path}")
-                return True
-            except Exception as e:
-                print(f"[ERROR] Failed to write to CSV: {e}")
-                return False
+            # Create a thread for CSV writing to avoid blocking
+            def write_csv():
+                try:
+                    # Create CSV if it doesn't exist, append if it does
+                    file_exists = csv_path.exists()
+                    with open(csv_path, mode='a', newline='') as f:
+                        writer = csv.writer(f)
+                        if not file_exists:
+                            # Write header if new file
+                            writer.writerow(['timestamp', 't_sin', 't_cos'] + [f'movement_{i}' for i in range(30)])
+                        
+                        # Write data row
+                        writer.writerow([str(venice_time), t_sin, t_cos] + scaled_values)
+                    print(f"[CSV] Successfully wrote data to {csv_path}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to write to CSV: {e}")
+            
+            # Create and start CSV write thread
+            csv_thread = threading.Thread(target=write_csv)
+            csv_thread.daemon = True
+            csv_thread.start()
+            return True
         else:
             print(f"[WARNING] Not enough values to save to CSV: {len(self.movement_buffers['roi_1'])}/30")
             return False
     
     async def send_movement_vector(self):
         """Send latest movement vector to controller"""
-        # Only send if we're not waiting for an ACK and have enough values
+        # Only send if not currently in a network operation and have enough values
+        if self.network_busy:
+            print("\n[NETWORK] Network operation in progress, skipping send")
+            return False
+            
         if len(self.movement_buffers['roi_1']) >= 30:
-            # Scale values for transmission - always use the latest 30 values
-            scaled_values = []
-            # Get the latest 30 values
-            buffer_values = self.movement_buffers['roi_1'][-30:]
+            # Set network busy flag to prevent concurrent operations
+            self.network_busy = True
             
-            for i in range(30):
-                raw_movement = buffer_values[i]
-                scaled = self.scale_movement_log(raw_movement, 0, 100)
-                scaled_values.append(scaled)
-            
-            # Get current time in Venice
-            venice_time = self.get_venice_time()
-            t_sin, t_cos = self.encode_time(venice_time)
-            
-            # Create data packet
-            data = {
-                'type': 'movement_data',
-                'timestamp': str(venice_time),
-                'data': {
-                    'pot_values': scaled_values,
-                    't_sin': t_sin,
-                    't_cos': t_cos
+            try:
+                # Scale values for transmission - always use the latest 30 values
+                scaled_values = []
+                # Get the latest 30 values
+                buffer_values = self.movement_buffers['roi_1'][-30:]
+                
+                for i in range(30):
+                    raw_movement = buffer_values[i]
+                    scaled = self.scale_movement_log(raw_movement, 0, 100)
+                    scaled_values.append(scaled)
+                
+                # Get current time in Venice
+                venice_time = self.get_venice_time()
+                t_sin, t_cos = self.encode_time(venice_time)
+                
+                # Create data packet
+                data = {
+                    'type': 'movement_data',
+                    'timestamp': str(venice_time),
+                    'data': {
+                        'pot_values': scaled_values,
+                        't_sin': t_sin,
+                        't_cos': t_cos
+                    }
                 }
-            }
+                
+                # Send to controller in a non-blocking way
+                success = await self.send_to_controller(data)
+                return success
             
-            # Send to controller
-            success = await self.send_to_controller(data)
-            
-            # We don't clear the buffer after sending for several reasons:
-            # 1. To maintain continuity in the data - allowing overlap between sent packets
-            # 2. To ensure we always have the most recent movement data to send
-            # 3. To avoid gaps in data if acknowledgments are delayed
-            # Instead, we limit the buffer to a maximum size in the process_frame method
-            # This way, we continuously record movement but prevent memory issues
-            
-            return success
+            finally:
+                # Reset network busy flag
+                self.network_busy = False
         else:
             print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
             return False
 
-    async def save_movement_vector(self):
-        """Legacy method - now just calls save_to_csv_only for backward compatibility"""
-        return await self.save_to_csv_only()
-
-    def run(self, stream_url):
-        """Main processing loop"""
-        self.connect_to_stream(stream_url)
+    async def send_to_controller(self, data):
+        """Send data to controller"""
         try:
-            while True:
-                self.process_frame()
-                
-        except KeyboardInterrupt:
-            print("\nStopping video processing...")
-        finally:
-            if self.cap:
-                self.cap.release()
-            if self.show_plots:
-                plt.close('all')
-            cv2.destroyAllWindows()
+            # Get controller config
+            dest_config = self.config['controllers'].get(self.destination)
+            if not dest_config:
+                print(f"\n[ERROR] No configuration found for destination: {self.destination}")
+                return False
+
+            # Connect to controller with a timeout
+            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
+            print(f"\n[STATUS] Connecting to {self.destination}:")
+            print(f"URI: {uri}")
+            
+            # Use a timeout to prevent hanging connection
+            async with asyncio.timeout(5):  # 5 seconds timeout
+                async with websockets.connect(uri) as websocket:
+                    print(f"[SUCCESS] Connected to {self.destination}")
+                    await websocket.send(json.dumps(data))
+                    print(f"[SUCCESS] Data sent to {self.destination}")
+                    if len(data.get('data', {}).get('pot_values', [])) > 0:
+                        timestamp = data.get('timestamp', 'unknown')
+                        pot_count = len(data.get('data', {}).get('pot_values', []))
+                        print(f"[DATA] Timestamp: {timestamp}")
+                        print(f"[DATA] Sent {pot_count} movement values")
+                    return True
+                    
+        except asyncio.TimeoutError:
+            print(f"\n[ERROR] Connection to {self.destination} timed out")
+            return False
+        except Exception as e:
+            print(f"\n[ERROR] Failed to send to controller: {e}")
+            return False
+
+    def reconnect(self):
+        """Reconnect to stream if connection is lost"""
+        if not self.is_running:
+            return
+            
+        print("\n[INFO] Attempting to reconnect to stream...")
+        
+        # Stop the current stream
+        self.is_running = False
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+        
+        # Wait for processing thread to exit
+        if self.processing_thread and self.processing_thread.is_alive():
+            print("[INFO] Waiting for processing thread to complete...")
+            time.sleep(1)  # Give thread a chance to exit
+            
+        # Clear frame queue
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except:
+                pass
+        
+        # Reconnect to stream
+        url = self.get_stream_url('venice_live')
+        if url:
+            print(f"[INFO] Reconnecting to {url}...")
+            self.is_running = True
+            self.connect_to_stream(url)
+        else:
+            print("[ERROR] No stream URL found for reconnection")
+
+    def scale_movement_log(self, raw_movement, min_value, max_value):
+        """Scale movement value using logarithmic scaling (to emphasize smaller movements)"""
+        # Apply a logarithmic scaling to emphasize smaller movements
+        if raw_movement <= 0:
+            return min_value
+            
+        # Log scaling (natural log) with a small offset to handle zero
+        log_value = np.log(raw_movement + 0.1)
+        
+        # Map to final range (original was -10 to 0, so shift and scale)
+        # Empirically, log(0.1) ≈ -2.3 and maximum log for large movement could be around 4.6
+        scaled = min_value + (log_value + 2.3) * ((max_value - min_value) / 7)
+        
+        # Clamp to range
+        return max(min_value, min(max_value, scaled))
+
+    def close(self):
+        """Clean up resources"""
+        print("\n[INFO] Closing video input...")
+        self.is_running = False
+        if self.cap:
+            self.cap.release()
+        cv2.destroyAllWindows()
+        
+        # Wait for threads to exit
+        if self.processing_thread and self.processing_thread.is_alive():
+            print("[INFO] Waiting for processing thread to complete...")
+            time.sleep(1)  # Give thread a chance to exit
+        
+        print("[INFO] Video input closed")
 
     def show_frame(self, frame, window_name="Venice Stream"):
         """Show frame with ROI overlay and movement values"""
         if frame is not None:
-            display_frame = frame
+            display_frame = frame.copy()
             
             # Add Venice timestamp and frame number
             venice_time = self.get_venice_time().strftime('%H:%M:%S')
@@ -567,13 +661,6 @@ class VideoInput:
             cv2.imshow(window_name, display_frame)
         return True
             
-    def close(self):
-        """Clean up resources"""
-        self.is_running = False
-        if self.cap:
-            self.cap.release()
-        cv2.destroyAllWindows()
-
     def save_roi_to_config(self, roi_number: int, selected_cells: list):
         """Save ROI coordinates from selected cells to config"""
         if not selected_cells:
@@ -722,68 +809,6 @@ class VideoInput:
                 cv2.destroyWindow("Select ROI")
                 return None
 
-    def reconnect(self):
-        """Attempt to reconnect to the stream"""
-        print("Reconnecting to stream...")
-        self.is_running = False
-        if self.cap:
-            self.cap.release()
-            
-        # Get the current stream URL
-        url = self.get_stream_url('venice_live')
-        if not url:
-            print("ERROR: No stream URL found in config")
-            return
-            
-        # Try to reconnect
-        if self.connect_to_stream(url):
-            print("Successfully reconnected")
-        else:
-            print("Failed to reconnect")
-
-    def scale_movement_log(self, raw_movement, min_value, max_value):
-        """Same scaling as builder uses"""
-        try:
-            if max_value <= min_value:
-                return 20
-            if raw_movement <= min_value:
-                return 20
-            if raw_movement >= max_value:
-                return 127
-                
-            log_scaled = np.log1p(raw_movement - min_value) / np.log1p(max_value - min_value)
-            scaled = int(round(20 + log_scaled * (127 - 20)))
-            return max(20, min(127, scaled))
-            
-        except Exception as e:
-            print(f"Error scaling movement value: {e}")
-            return 20
-
-    async def send_to_controller(self, data):
-        """Send data to res00 controller"""
-        try:
-            # Get controller config
-            dest_config = self.config['controllers'].get(self.destination)
-            if not dest_config:
-                print(f"No configuration found for destination: {self.destination}")
-                return False
-
-            # Connect to controller
-            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            print(f"\nConnecting to {self.destination}:")
-            print(f"URI: {uri}")
-            
-            async with websockets.connect(uri) as websocket:
-                print(f"Connected to {self.destination}")
-                await websocket.send(json.dumps(data))
-                print(f"Data sent to {self.destination}:")
-                print(json.dumps(data, indent=2))
-                return True
-
-        except Exception as e:
-            print(f"Error sending to controller: {e}")
-            return False
-
 class VideoInputWithAck(VideoInput):
     def __init__(self):
         super().__init__()
@@ -794,6 +819,11 @@ class VideoInputWithAck(VideoInput):
         self.message_sent = False
         self.ack_destination = 'output'  # The controller that will send ACKs
         
+        # Async tasks
+        self.ack_task = None
+        self.ack_received = asyncio.Event()
+        self.ack_timeout = 60  # Timeout for acknowledgments in seconds
+        
         # Print ACK info
         output_config = self.config['controllers'].get(self.ack_destination)
         if output_config:
@@ -801,6 +831,127 @@ class VideoInputWithAck(VideoInput):
             print(f"On listen port: {self.listen_port}")
         else:
             print(f"\nWarning: No configuration found for ACK source: {self.ack_destination}")
+    
+    async def setup_ack_server(self):
+        """Setup websocket server to listen for acknowledgments"""
+        try:
+            # Only set up the server once
+            if self.server is None:
+                print(f"\n[ACK] Setting up acknowledgment server on port {self.listen_port}")
+                
+                # Websocket handler for incoming messages
+                async def handler(websocket, path):
+                    try:
+                        async for message in websocket:
+                            try:
+                                data = json.loads(message)
+                                print(f"\n[ACK] Received message: {data}")
+                                
+                                # Check if it's an acknowledgment
+                                if data.get('type') == 'ack':
+                                    print("[ACK] Acknowledgment received!")
+                                    self.waiting_for_ack = False
+                                    self.ack_received.set()
+                                else:
+                                    print(f"[INFO] Received non-ACK message: {data.get('type', 'unknown')}")
+                                    
+                            except json.JSONDecodeError:
+                                print(f"[WARNING] Received invalid JSON: {message}")
+                    except Exception as e:
+                        print(f"[ERROR] Websocket handler error: {e}")
+                
+                # Create the server
+                self.server = await websockets.serve(handler, "0.0.0.0", self.listen_port)
+                print("[ACK] Acknowledgment server is running")
+                
+                # We need to keep this task running
+                return self.server
+        except Exception as e:
+            print(f"[ERROR] Failed to setup acknowledgment server: {e}")
+            return None
+    
+    async def wait_for_ack_task(self):
+        """Background task to wait for acknowledgment"""
+        try:
+            print("\n[ACK] Started acknowledgment wait task")
+            self.waiting_for_ack = True
+            
+            # Wait for the ack with timeout
+            try:
+                # Reset the event before waiting
+                self.ack_received.clear()
+                
+                # Wait for acknowledgment with timeout
+                print(f"[ACK] Waiting for acknowledgment (timeout: {self.ack_timeout}s)")
+                await asyncio.wait_for(self.ack_received.wait(), timeout=self.ack_timeout)
+                print("[ACK] Acknowledgment received, continuing processing")
+                return True
+            except asyncio.TimeoutError:
+                print(f"\n[WARNING] Acknowledgment timeout after {self.ack_timeout} seconds")
+                self.waiting_for_ack = False
+                return False
+                
+        except Exception as e:
+            print(f"[ERROR] Error in acknowledgment wait task: {e}")
+            self.waiting_for_ack = False
+            return False
+    
+    async def send_movement_vector(self):
+        """Send latest movement vector with acknowledgment wait"""
+        # Only send if not currently waiting for an ACK and have enough values
+        if self.waiting_for_ack:
+            print("\n[ACK] Still waiting for acknowledgment, skipping send")
+            return False
+            
+        if self.network_busy:
+            print("\n[NETWORK] Network operation in progress, skipping send")
+            return False
+            
+        if len(self.movement_buffers['roi_1']) >= 30:
+            # Set network busy flag to prevent concurrent operations
+            self.network_busy = True
+            
+            try:
+                # Scale values for transmission - always use the latest 30 values
+                scaled_values = []
+                buffer_values = self.movement_buffers['roi_1'][-30:]
+                
+                for i in range(30):
+                    raw_movement = buffer_values[i]
+                    scaled = self.scale_movement_log(raw_movement, 0, 100)
+                    scaled_values.append(scaled)
+                
+                # Get current time in Venice
+                venice_time = self.get_venice_time()
+                t_sin, t_cos = self.encode_time(venice_time)
+                
+                # Create data packet
+                data = {
+                    'type': 'movement_data',
+                    'timestamp': str(venice_time),
+                    'data': {
+                        'pot_values': scaled_values,
+                        't_sin': t_sin,
+                        't_cos': t_cos
+                    }
+                }
+                
+                # Send to controller and wait for acknowledgment
+                success = await self.send_to_controller(data)
+                
+                if success:
+                    print("\n[ACK] Message sent, starting acknowledgment wait task")
+                    # Start ack wait task in the background
+                    self.ack_task = asyncio.create_task(self.wait_for_ack_task())
+                    
+                return success
+            
+            finally:
+                # Reset network busy flag
+                self.network_busy = False
+        else:
+            print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
+            return False
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 
