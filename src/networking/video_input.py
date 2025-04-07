@@ -23,201 +23,232 @@ import queue
 #     os.environ['QT_QPA_PLATFORM'] = 'xcb'
 
 class VideoInput:
-    def __init__(self, verbose=0):
-        """Initialize video input"""
-        # Set verbosity level (0=minimal, 1=normal, 2=debug)
-        self.verbose = verbose
-        
-        # Load config
-        config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
-        
-        # Stream source
+    def __init__(self):
+        self.stream = None
         self.cap = None
+        self.frame_count = 0
+        self.last_frame = None
         self.is_running = False
-        self.frame_queue = queue.Queue(maxsize=10)  # Buffer up to 10 frames
-        self.processing_thread = None
-        
-        # Movement calculation
-        self.calculating = False
-        self.cell_size = 5  # Size of each cell in pixels
-        self.selected_cells = []  # List of selected cells as (x, y) tuples
-        self.previous_gray = None
-        self.movement_buffers = {
-            'roi_1': [],      # Buffer for ROI movements
-        }
-        
-        # ROI display
-        self.show_rois = True
-        
-        # Interval management
+        self.config = self.load_config()
+        self.roi_configs = self.config['video_input']['roi_configs']
+        self.rois = {}  # Store ROI frames
+        self.movement_buffers = {f'roi_{i+1}': [] for i in range(4)}
+        self.last_frame_time = 0
         self.last_vector_time = 0
-        self.last_save_time = 0
-        self.vector_interval = 30.0  # Movement calculation interval in seconds
-        self.save_interval = 60.0    # CSV save interval in seconds
+        self.selected_cells = []
+        self.cell_size = 40
+        self.scale_factor = 1.0
+        self.show_rois = True  # Toggle for ROI display
+        self.calculating = False  # Initialize calculation state
+        self.save_needed = False  # Flag for when saving is needed
         
-        # Network destination
-        self.destination = 'res00'  # Default controller to send data to
+        # Frame buffer for movement calculation
+        self.frame_buffer = []
+        self.buffer_size = 3  # Keep 3 frames for rate of change calculation
+        self.movement_threshold = 5  # Threshold for movement detection
+        
+        # Movement calculation timing
+        self.frame_interval = 1.0  # Capture one frame per second
+        self.vector_interval = 30.0  # Calculate movement vectors every 30 seconds
+        
+        # Get sampling config if available
+        sampling_config = self.config['video_input'].get('sampling', {})
+        if sampling_config:
+            # Override defaults with config values if present
+            self.frame_interval = float(sampling_config.get('frame_interval', self.frame_interval))
+            self.vector_interval = float(sampling_config.get('vector_interval', self.vector_interval))
+            
+        # Save interval can be different from vector calculation interval
+        self.save_interval = float(sampling_config.get('save_interval', self.vector_interval))
+        print(f"Movement calculation interval: {self.vector_interval} seconds")
+        print(f"CSV save interval: {self.save_interval} seconds")
+        
+        # Add timestamps for tracking intervals
+        self.last_vector_time = time.time()  # Last time vectors were calculated
+        self.last_save_time = time.time()    # Last time data was saved to CSV
+        
+        # Movement buffers
+        self.vector_size = 30  # Store 30 values per ROI
+
+        # Add Venice timezone
+        self.venice_tz = pytz.timezone('Europe/Rome')  # Venice uses same timezone as Rome
+
+        # Add reconnection settings
+        self.max_retries = 3
+        self.retry_delay = 5  # seconds
+        self.stream_timeout = 30  # seconds
+        self.last_frame_success = time.time()
+
+        # Add controller connection config - get from config file
+        self.destination = self.config['video_input'].get('destination', 'res00')
+        self.first_vector_sent = False
+        self.last_vector_time = time.time()  # Track when we last sent a vector
+        
+        # Print initial connection info
+        dest_config = self.config['controllers'].get(self.destination)
+        if dest_config:
+            print("\nInitial controller connection info:")
+            print(f"Destination: {self.destination}")
+            print(f"IP: {dest_config['ip']}")
+            print(f"Port: {dest_config.get('listen_port', 8765)}")
+            print(f"URI: ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}")
+        else:
+            print(f"\nWarning: No configuration found for {self.destination}")
+
+        # Network operation flag to avoid blocking main thread
         self.network_busy = False
         
-        if self.verbose >= 1:
-            print(f"Movement calculation interval: {self.vector_interval} seconds")
-            print(f"CSV save interval: {self.save_interval} seconds")
-            
-            # Show controller connection info
-            print("\nInitial controller connection info:")
-            dest_config = self.config['controllers'].get(self.destination)
-            if dest_config:
-                print(f"Destination: {self.destination}")
-                print(f"IP: {dest_config.get('ip')}")
-                print(f"Port: {dest_config.get('listen_port', 8765)}")
-                print(f"URI: ws://{dest_config.get('ip')}:{dest_config.get('listen_port', 8765)}")
-            else:
-                print(f"No configuration found for {self.destination}")
+        # Create frame queue for threaded processing
+        self.frame_queue = queue.Queue(maxsize=10)  # Limit queue size to 10 frames
+        self.processing_thread = None
+        
+        # Remove or set to False
+        self.show_plots = False
+        self.plots_initialized = False
 
+    def load_config(self):
+        """Load and initialize config with default ROI settings if needed"""
+        config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            
+        # Initialize video_input section if not present
+        if 'video_input' not in config:
+            config['video_input'] = {}
+            
+        # Initialize ROI configs if not present
+        if 'roi_configs' not in config['video_input']:
+            config['video_input']['roi_configs'] = {}
+            
+        # Ensure all ROIs have at least empty configs
+        for i in range(1, 5):  # For ROIs 1-4
+            roi_name = f'roi_{i}'
+            if roi_name not in config['video_input']['roi_configs']:
+                config['video_input']['roi_configs'][roi_name] = {
+                    'x': 0,
+                    'y': 0,
+                    'width': 100,
+                    'height': 100,
+                    'description': f"ROI {i}",
+                    'selected_cells': []
+                }
+                
+        # Save initialized config
+        with open(config_path, 'w') as f:
+            yaml.dump(config, f, default_flow_style=False)
+            
+        return config
+
+    def get_stream_url(self, stream_name: str = 'venice_live') -> Optional[str]:
+        """Get stream URL from config"""
+        if not self.config or 'streams' not in self.config:
+            return None
+        return self.config['streams'].get(stream_name, {}).get('url')
+        
+    def connect_to_stream(self, url: str) -> bool:
+        """Connect to YouTube stream with retry logic"""
+        for attempt in range(self.max_retries):
+            try:
+                print(f"Connection attempt {attempt + 1}/{self.max_retries}")
+                
+                # Configure yt-dlp
+                ydl_opts = {
+                    'format': 'best',
+                    'quiet': True,
+                }
+                
+                # Get stream URL using yt-dlp
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    stream_url = info['url']
+                
+                # Open video stream with timeout property
+                self.cap = cv2.VideoCapture(stream_url)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # Reduce buffer size
+                
+                # Set additional CV2 properties for better performance
+                self.cap.set(cv2.CAP_PROP_FPS, 30)  # Request 30fps
+                
+                if not self.cap.isOpened():
+                    raise Exception("Could not open stream")
+                
+                self.is_running = True
+                self.last_frame_success = time.time()
+                print(f"Connected to stream: {info.get('title', 'Unknown')}")
+                
+                # Start frame capture thread
+                self.start_frame_capture_thread()
+                
+                return True
+                
+            except Exception as e:
+                print(f"Connection attempt {attempt + 1} failed: {e}")
+                if self.cap:
+                    self.cap.release()
+                if attempt < self.max_retries - 1:
+                    print(f"Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                
+        print("All connection attempts failed")
+        return False
+    
     def start_frame_capture_thread(self):
-        """Start a thread to continuously capture frames"""
-        # Function to run in the thread
+        """Start a background thread to continuously capture frames"""
         def capture_frames():
             while self.is_running:
-                if self.cap is None or not self.cap.isOpened():
+                if not self.cap or not self.cap.isOpened():
                     time.sleep(0.1)
                     continue
-                    
-                ret, frame = self.cap.read()
-                if not ret:
-                    if self.verbose >= 1:
-                        print("\n[ERROR] Failed to read frame, attempting reconnection...")
+                
+                success, frame = self.cap.read()
+                if success:
+                    self.last_frame_success = time.time()
+                    # Only add to queue if there's space (to avoid memory issues)
+                    if not self.frame_queue.full():
+                        self.frame_queue.put(frame)
+                    time.sleep(0.01)  # Small sleep to avoid hogging CPU
+                else:
+                    print("\nFailed to read frame in capture thread")
                     self.reconnect()
                     time.sleep(0.5)
-                    continue
-                
-                # Put the frame in the queue, but don't block if queue is full (skip frames)
-                try:
-                    self.frame_queue.put(frame, block=False)
-                except queue.Full:
-                    # Queue is full, skip this frame
-                    pass
         
-        # Create and start the thread
-        self.processing_thread = threading.Thread(target=capture_frames)
-        self.processing_thread.daemon = True
+        # Start the capture thread
+        self.processing_thread = threading.Thread(target=capture_frames, daemon=True)
         self.processing_thread.start()
-        
-        if self.verbose >= 1:
-            print("[INFO] Frame capture thread started")
-
-    def get_frame(self):
-        """Get the latest frame from the queue"""
+        print("Frame capture thread started")
+            
+    def get_frame(self) -> Optional[np.ndarray]:
+        """Get current frame from queue with timeout check"""
         if not self.is_running:
             return None
             
         try:
-            # Get frame with a short timeout
-            frame = self.frame_queue.get(timeout=0.1)
-            return frame
-        except queue.Empty:
-            # No frames available
-            return None
-        except Exception as e:
-            if self.verbose >= 1:
-                print(f"[ERROR] Exception getting frame: {e}")
-            return None
-
-    def process_frame(self, frame=None, return_movements=False):
-        """Process a frame to calculate movement in ROIs"""
-        if not self.calculating:
-            return None
-            
-        if frame is None:
-            return None
-            
-        try:
-            # Convert to grayscale for optical flow
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
-            if self.previous_gray is None:
-                self.previous_gray = gray
+            # Check for stream timeout
+            if time.time() - self.last_frame_success > self.stream_timeout:
+                print("\nStream timeout detected, attempting to reconnect...")
+                self.reconnect()
                 return None
                 
-            # Only calculate movements every vector_interval seconds
-            current_time = time.time()
-            if current_time - self.last_vector_time < self.vector_interval and not return_movements:
-                return None
+            # Try to get a frame from the queue with a short timeout
+            try:
+                frame = self.frame_queue.get(timeout=0.1)
+                self.frame_count += 1
+                self.last_frame = frame
+                return frame
+            except queue.Empty:
+                # If no frame is available, return the last frame if we have one
+                return self.last_frame
                 
-            # Calculate optical flow
-            flow = cv2.calcOpticalFlowFarneback(
-                self.previous_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
-                
-            # Calculate average movement in selected cells
-            if len(self.selected_cells) > 0:
-                # Get movements for first ROI
-                roi_movement = self.calculate_roi_movement(flow, self.selected_cells)
-                
-                # Add to buffer
-                self.movement_buffers['roi_1'].append(roi_movement)
-                # Keep at most 100 values
-                if len(self.movement_buffers['roi_1']) > 100:
-                    self.movement_buffers['roi_1'] = self.movement_buffers['roi_1'][-100:]
-                
-                # Update the last vector time
-                self.last_vector_time = current_time
-                
-                if return_movements:
-                    return {'roi_1': roi_movement}
-            
-            # Update previous frame
-            self.previous_gray = gray
-            
         except Exception as e:
-            if self.verbose >= 1:
-                print(f"[ERROR] Exception in process_frame: {e}")
+            print(f"\nError getting frame: {e}")
+            return None
             
-        return None
-
-    def log(self, message, level=1):
-        """Log a message if the verbosity level is high enough"""
-        if self.verbose >= level:
-            print(message)
-            
-    def debug(self, message):
-        """Log a debug message (level 2)"""
-        self.log(message, level=2)
-
-    def connect_to_stream(self, url):
-        """Connect to the stream"""
-        try:
-            self.cap = cv2.VideoCapture(url)
-            if not self.cap.isOpened():
-                if self.verbose >= 1:
-                    print(f"[ERROR] Failed to open stream: {url}")
-                return False
-                
-            # Get stream properties
-            width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = self.cap.get(cv2.CAP_PROP_FPS)
-            
-            if self.verbose >= 1:
-                print(f"[SUCCESS] Connected to stream: {url}")
-                print(f"Stream properties: {width}x{height} @ {fps:.2f} FPS")
-                
-            # Set running flag and start capture thread
-            self.is_running = True
-            self.start_frame_capture_thread()
-            return True
-        except Exception as e:
-            if self.verbose >= 1:
-                print(f"[ERROR] Exception connecting to stream: {e}")
-            return False
-
     def get_venice_time(self):
         """Get current time in Venice timezone"""
         utc_now = datetime.now(pytz.utc)
-        venice_now = utc_now.astimezone(pytz.timezone('Europe/Rome'))
+        venice_now = utc_now.astimezone(self.venice_tz)
         return venice_now
-        
+
     def encode_time(self, timestamp):
         """
         Encode time of day (hours, minutes, seconds) into sin/cos values
@@ -245,16 +276,16 @@ class VideoInput:
         """Calculate movement rate for an ROI"""
         if len(self.frame_buffer) < self.buffer_size:
             return 0.0
-        
+            
         try:
             # Extract ROI from newest and oldest frames
             oldest = self.frame_buffer[0]
             newest = self.frame_buffer[-1]
             
-            x = int(roi_config['x'])
-            y = int(roi_config['y'])
-            w = int(roi_config['width'])
-            h = int(roi_config['height'])
+        x = int(roi_config['x'])
+        y = int(roi_config['y'])
+        w = int(roi_config['width'])
+        h = int(roi_config['height'])
             
             oldest_roi = oldest[y:y+h, x:x+w]
             newest_roi = newest[y:y+h, x:x+w]
@@ -385,7 +416,7 @@ class VideoInput:
     
     async def save_to_csv_only(self):
         """Save movement vector to CSV only, without sending to controller"""
-        if len(self.movement_buffers['roi_1']) >= 30:
+            if len(self.movement_buffers['roi_1']) >= 30:
             # Scale values for CSV - use the latest 30 values
             scaled_values = []
             # If we have more than 30 values, get the latest 30
@@ -434,15 +465,13 @@ class VideoInput:
     async def wait_for_ack_task(self):
         """Non-blocking task to wait for acknowledgment with timeout"""
         try:
-            if self.verbose >= 1:
-                print("\n[ACK] Started acknowledgment wait task")
+            print("\n[ACK] Started acknowledgment wait task")
             self.waiting_for_ack = True
             
             # Reset the event before waiting
             self.ack_received.clear()
             
-            if self.verbose >= 1:
-                print(f"[ACK] Waiting for acknowledgment (timeout: {self.ack_timeout}s)")
+            print(f"[ACK] Waiting for acknowledgment (timeout: {self.ack_timeout}s)")
             
             # Create a timeout task that will automatically clear the wait after timeout
             async def timeout_task():
@@ -452,15 +481,13 @@ class VideoInput:
                     
                     # If we're still waiting, cancel the wait
                     if self.waiting_for_ack:
-                        if self.verbose >= 1:
-                            print(f"\n[WARNING] Acknowledgment timeout after {self.ack_timeout} seconds")
+                        print(f"\n[WARNING] Acknowledgment timeout after {self.ack_timeout} seconds")
                         self.waiting_for_ack = False
                 except asyncio.CancelledError:
                     # Task was cancelled, which means ack was received
                     pass
                 except Exception as e:
-                    if self.verbose >= 1:
-                        print(f"[ERROR] Error in timeout task: {e}")
+                    print(f"[ERROR] Error in timeout task: {e}")
             
             # Start the timeout task in the background
             self.ack_task = asyncio.create_task(timeout_task())
@@ -470,8 +497,7 @@ class VideoInput:
             return True
             
         except Exception as e:
-            if self.verbose >= 1:
-                print(f"[ERROR] Error in acknowledgment wait task: {e}")
+            print(f"[ERROR] Error in acknowledgment wait task: {e}")
             self.waiting_for_ack = False
             return False
             
@@ -484,20 +510,17 @@ class VideoInput:
             except asyncio.CancelledError:
                 pass
             self.waiting_for_ack = False
-            if self.verbose >= 1:
-                print("[ACK] Acknowledgment wait cancelled")
+            print("[ACK] Acknowledgment wait cancelled")
     
     async def send_movement_vector(self):
         """Send latest movement vector with acknowledgment wait"""
         # Only send if not currently waiting for an ACK and have enough values
         if self.waiting_for_ack:
-            if self.verbose >= 1:
-                print("\n[ACK] Still waiting for acknowledgment, skipping send")
+            print("\n[ACK] Still waiting for acknowledgment, skipping send")
             return False
             
         if self.network_busy:
-            if self.verbose >= 1:
-                print("\n[NETWORK] Network operation in progress, skipping send")
+            print("\n[NETWORK] Network operation in progress, skipping send")
             return False
             
         if len(self.movement_buffers['roi_1']) >= 30:
@@ -534,8 +557,7 @@ class VideoInput:
                 success = await self.send_to_controller(data)
                 
                 if success:
-                    if self.verbose >= 1:
-                        print("\n[ACK] Message sent, starting acknowledgment wait task")
+                    print("\n[ACK] Message sent, starting acknowledgment wait task")
                     # Cancel any existing ack task
                     await self.cancel_ack_wait()
                     # Start non-blocking ack wait task
@@ -547,8 +569,7 @@ class VideoInput:
                 # Reset network busy flag
                 self.network_busy = False
         else:
-            if self.verbose >= 1:
-                print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
+            print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
             return False
     
     async def send_to_controller(self, data):
@@ -557,15 +578,13 @@ class VideoInput:
             # Get controller config
             dest_config = self.config['controllers'].get(self.destination)
             if not dest_config:
-                if self.verbose >= 1:
-                    print(f"\n[ERROR] No configuration found for destination: {self.destination}")
+                print(f"\n[ERROR] No configuration found for destination: {self.destination}")
                 return False
 
             # Connect to controller with a shorter timeout
             uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            if self.verbose >= 1:
-                print(f"\n[STATUS] Connecting to {self.destination}:")
-                print(f"URI: {uri}")
+            print(f"\n[STATUS] Connecting to {self.destination}:")
+            print(f"URI: {uri}")
             
             # Use a timeout to prevent hanging connection - shorter timeout
             try:
@@ -576,33 +595,27 @@ class VideoInput:
                         ping_timeout=None,
                         close_timeout=1.0  # Quick closure
                     ) as websocket:
-                        if self.verbose >= 1:
-                            print(f"[SUCCESS] Connected to {self.destination}")
+                        print(f"[SUCCESS] Connected to {self.destination}")
                         await websocket.send(json.dumps(data))
-                        if self.verbose >= 1:
-                            print(f"[SUCCESS] Data sent to {self.destination}")
-                            if len(data.get('data', {}).get('pot_values', [])) > 0:
-                                timestamp = data.get('timestamp', 'unknown')
-                                pot_count = len(data.get('data', {}).get('pot_values', []))
-                                print(f"[DATA] Timestamp: {timestamp}")
-                                print(f"[DATA] Sent {pot_count} movement values")
+                        print(f"[SUCCESS] Data sent to {self.destination}")
+                        if len(data.get('data', {}).get('pot_values', [])) > 0:
+                            timestamp = data.get('timestamp', 'unknown')
+                            pot_count = len(data.get('data', {}).get('pot_values', []))
+                            print(f"[DATA] Timestamp: {timestamp}")
+                            print(f"[DATA] Sent {pot_count} movement values")
                         return True
             except asyncio.TimeoutError:
-                if self.verbose >= 1:
-                    print(f"\n[ERROR] Connection to {self.destination} timed out")
+                print(f"\n[ERROR] Connection to {self.destination} timed out")
                 return False
                     
         except websockets.exceptions.InvalidStatusCode as e:
-            if self.verbose >= 1:
-                print(f"\n[ERROR] Invalid status from {self.destination}: {e}")
+            print(f"\n[ERROR] Invalid status from {self.destination}: {e}")
             return False
         except websockets.exceptions.ConnectionClosed as e:
-            if self.verbose >= 1:
-                print(f"\n[ERROR] Connection to {self.destination} closed unexpectedly: {e}")
+            print(f"\n[ERROR] Connection to {self.destination} closed unexpectedly: {e}")
             return False
-        except Exception as e:
-            if self.verbose >= 1:
-                print(f"\n[ERROR] Failed to send to controller: {e}")
+                except Exception as e:
+            print(f"\n[ERROR] Failed to send to controller: {e}")
             return False
 
     def reconnect(self):
@@ -659,9 +672,9 @@ class VideoInput:
         """Clean up resources"""
         print("\n[INFO] Closing video input...")
         self.is_running = False
-        if self.cap:
-            self.cap.release()
-        cv2.destroyAllWindows()
+            if self.cap:
+                self.cap.release()
+            cv2.destroyAllWindows()
         
         # Wait for threads to exit
         if self.processing_thread and self.processing_thread.is_alive():
@@ -721,7 +734,7 @@ class VideoInput:
                 
             cv2.imshow(window_name, display_frame)
         return True
-            
+
     def save_roi_to_config(self, roi_number: int, selected_cells: list):
         """Save ROI coordinates from selected cells to config"""
         if not selected_cells:
@@ -871,8 +884,8 @@ class VideoInput:
                 return None
 
 class VideoInputWithAck(VideoInput):
-    def __init__(self, verbose=0):
-        super().__init__(verbose=verbose)
+    def __init__(self):
+        super().__init__()
         self.waiting_for_ack = False
         self.server = None
         self.listen_port = 8777  # Port to listen for acknowledgments
@@ -886,38 +899,33 @@ class VideoInputWithAck(VideoInput):
         self.ack_timeout = 30  # Reduced timeout for acknowledgments in seconds
         
         # Print ACK info
-        if self.verbose >= 1:
-            output_config = self.config['controllers'].get(self.ack_destination)
-            if output_config:
-                print(f"\nWill receive acknowledgments from: {self.ack_destination}")
-                print(f"On listen port: {self.listen_port}")
-                print(f"ACK timeout: {self.ack_timeout} seconds")
-            else:
-                print(f"\nWarning: No configuration found for ACK source: {self.ack_destination}")
+        output_config = self.config['controllers'].get(self.ack_destination)
+        if output_config:
+            print(f"\nWill receive acknowledgments from: {self.ack_destination}")
+            print(f"On listen port: {self.listen_port}")
+            print(f"ACK timeout: {self.ack_timeout} seconds")
+        else:
+            print(f"\nWarning: No configuration found for ACK source: {self.ack_destination}")
     
     async def setup_ack_server(self, force_restart=False):
         """Setup websocket server to listen for acknowledgments"""
         try:
             # Handle force restart
             if force_restart and self.server:
-                if self.verbose >= 1:
-                    print("[ACK] Force restarting acknowledgment server")
+                print("[ACK] Force restarting acknowledgment server")
                 self.server.close()
                 await self.server.wait_closed()
                 self.server = None
                 
             # Only set up the server once, unless force_restart is True
             if self.server is not None:
-                if self.verbose >= 1:
-                    print(f"[ACK] Acknowledgment server already running on port {self.listen_port}")
+                print(f"[ACK] Acknowledgment server already running on port {self.listen_port}")
                 # Check if the server is still valid
                 if hasattr(self.server, 'sockets') and self.server.sockets:
-                    if self.verbose >= 1:
-                        print("[ACK] Reusing existing server")
+                    print("[ACK] Reusing existing server")
                     return self.server
                 else:
-                    if self.verbose >= 1:
-                        print("[ACK] Existing server appears invalid, creating new server")
+                    print("[ACK] Existing server appears invalid, creating new server")
                     self.server = None
             
             # Check if the port is already in use by another process
@@ -928,33 +936,28 @@ class VideoInputWithAck(VideoInput):
                 result = sock.connect_ex(('127.0.0.1', self.listen_port))
                 sock.close()
                 
-                if result == 0 and self.verbose >= 1:
+                if result == 0:
                     print(f"[WARNING] Port {self.listen_port} is already in use by another process")
                     print("[ACK] Attempting to use existing port binding...")
-            except Exception as e:
-                if self.verbose >= 1:
-                    print(f"[WARNING] Error checking port availability: {e}")
+        except Exception as e:
+                print(f"[WARNING] Error checking port availability: {e}")
             
             # Now try to create the server
-            if self.verbose >= 1:
-                print(f"\n[ACK] Setting up acknowledgment server on port {self.listen_port}")
+            print(f"\n[ACK] Setting up acknowledgment server on port {self.listen_port}")
                 
             # Websocket handler for incoming messages
             async def handler(websocket):
                 try:
                     client_ip = websocket.remote_address[0] if hasattr(websocket, 'remote_address') else 'unknown'
-                    if self.verbose >= 1:
-                        print(f"[ACK] New connection established from {client_ip}")
+                    print(f"[ACK] New connection established from {client_ip}")
                     async for message in websocket:
                         try:
                             data = json.loads(message)
-                            if self.verbose >= 1:
-                                print(f"\n[ACK] Received message: {data}")
+                            print(f"\n[ACK] Received message: {data}")
                             
                             # Check if it's an acknowledgment
                             if data.get('type') == 'ack':
-                                if self.verbose >= 1:
-                                    print(f"[ACK] Acknowledgment received from {client_ip}!")
+                                print(f"[ACK] Acknowledgment received from {client_ip}!")
                                 # Important: Set this BEFORE setting the event
                                 self.waiting_for_ack = False
                                 
@@ -965,36 +968,29 @@ class VideoInputWithAck(VideoInput):
                                 self.ack_received.set()
                                 
                                 # Respond with confirmation (optional but helps debugging)
-                                if self.verbose >= 2:  # Only in debug mode
-                                    try:
-                                        response = {
-                                            'type': 'ack_receipt',
-                                            'status': 'success',
-                                            'message': 'Acknowledgment received successfully'
-                                        }
-                                        await websocket.send(json.dumps(response))
-                                    except:
-                                        pass
+                                try:
+                                    response = {
+                                        'type': 'ack_receipt',
+                                        'status': 'success',
+                                        'message': 'Acknowledgment received successfully'
+                                    }
+                                    await websocket.send(json.dumps(response))
+                                except:
+                                    pass
                             else:
-                                if self.verbose >= 1:
-                                    print(f"[INFO] Received non-ACK message: {data.get('type', 'unknown')}")
+                                print(f"[INFO] Received non-ACK message: {data.get('type', 'unknown')}")
                                 
                         except json.JSONDecodeError:
-                            if self.verbose >= 1:
-                                print(f"[WARNING] Received invalid JSON: {message}")
+                            print(f"[WARNING] Received invalid JSON: {message}")
                 except websockets.exceptions.ConnectionClosed:
-                    if self.verbose >= 1:
-                        print(f"[INFO] ACK connection from {client_ip} closed gracefully")
+                    print(f"[INFO] ACK connection from {client_ip} closed gracefully")
                 except Exception as e:
-                    if self.verbose >= 1:
-                        print(f"[ERROR] Websocket handler error: {e}")
-                        if self.verbose >= 2:
-                            import traceback
-                            traceback.print_exc()
+                    print(f"[ERROR] Websocket handler error: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             # Create the server with more lenient settings
-            if self.verbose >= 1:
-                print(f"[ACK] Starting server on 0.0.0.0:{self.listen_port}")
+            print(f"[ACK] Starting server on 0.0.0.0:{self.listen_port}")
             
             try:
                 # Get the websockets version to determine the correct function signature
@@ -1011,15 +1007,13 @@ class VideoInputWithAck(VideoInput):
                     try:
                         # Add a small delay between retries
                         if attempt > 0:
-                            if self.verbose >= 1:
-                                print(f"[ACK] Retry attempt {attempt}/{max_retries} after {retry_delay} seconds")
+                            print(f"[ACK] Retry attempt {attempt}/{max_retries} after {retry_delay} seconds")
                             await asyncio.sleep(retry_delay)
                             
                         # Handle both older (path parameter required) and newer versions
                         if major_version >= 10:
                             # Newer websockets version (10.0+) - no path parameter
-                            if self.verbose >= 1:
-                                print(f"[INFO] Using websockets {websockets.__version__} (new API)")
+                            print(f"[INFO] Using websockets {websockets.__version__} (new API)")
                             # Try with SO_REUSEADDR option
                             self.server = await websockets.serve(
                                 handler, 
@@ -1034,8 +1028,7 @@ class VideoInputWithAck(VideoInput):
                             )
                         else:
                             # Older websockets version - path parameter required
-                            if self.verbose >= 1:
-                                print(f"[INFO] Using websockets {websockets.__version__} (legacy API)")
+                            print(f"[INFO] Using websockets {websockets.__version__} (legacy API)")
                             
                             # Create a wrapper handler that accepts the path parameter
                             async def legacy_handler(websocket, path):
@@ -1057,12 +1050,10 @@ class VideoInputWithAck(VideoInput):
                         break
                     except OSError as e:
                         if e.errno == 98:  # Address already in use
-                            if self.verbose >= 1:
-                                print(f"[WARNING] Port {self.listen_port} is still in use (attempt {attempt+1}/{max_retries})")
+                            print(f"[WARNING] Port {self.listen_port} is still in use (attempt {attempt+1}/{max_retries})")
                             # Try alternate port
                             alt_port = self.listen_port + attempt + 1
-                            if self.verbose >= 1:
-                                print(f"[ACK] Trying alternate port {alt_port}")
+                            print(f"[ACK] Trying alternate port {alt_port}")
                             try:
                                 if major_version >= 10:
                                     self.server = await websockets.serve(
@@ -1088,44 +1079,37 @@ class VideoInputWithAck(VideoInput):
                                     )
                                 # Update the port if successful
                                 self.listen_port = alt_port
-                                if self.verbose >= 1:
-                                    print(f"[ACK] Successfully bound to alternate port {alt_port}")
+                                print(f"[ACK] Successfully bound to alternate port {alt_port}")
                                 break
                             except Exception as alt_err:
-                                if self.verbose >= 1:
-                                    print(f"[ERROR] Failed to bind to alternate port: {alt_err}")
+                                print(f"[ERROR] Failed to bind to alternate port: {alt_err}")
                         last_error = e
                     except Exception as e:
-                        if self.verbose >= 1:
-                            print(f"[ERROR] Server creation error: {e}")
+                        print(f"[ERROR] Server creation error: {e}")
                         last_error = e
                 
                 # Check if all attempts failed
                 if self.server is None:
-                    if last_error and self.verbose >= 1:
+                    if last_error:
                         print(f"[ERROR] All server creation attempts failed: {last_error}")
-                    elif self.verbose >= 1:
+                    else:
                         print("[ERROR] All server creation attempts failed with unknown error")
                     return None
                 
                 if self.server:
-                    if self.verbose >= 1:
-                        print(f"[ACK] Acknowledgment server is running on port {self.listen_port}")
-                        if hasattr(self.server, 'sockets') and self.server.sockets:
-                            for sock in self.server.sockets:
-                                print(f"[ACK] Socket: {sock}")
-                        else:
-                            print("[WARNING] Server has no sockets!")
+                    print(f"[ACK] Acknowledgment server is running on port {self.listen_port}")
+                    if hasattr(self.server, 'sockets') and self.server.sockets:
+                        for sock in self.server.sockets:
+                            print(f"[ACK] Socket: {sock}")
+                    else:
+                        print("[WARNING] Server has no sockets!")
                 else:
-                    if self.verbose >= 1:
-                        print("[ERROR] Failed to create server!")
+                    print("[ERROR] Failed to create server!")
                     return None
             except Exception as e:
-                if self.verbose >= 1:
-                    print(f"[ERROR] Failed to create server: {e}")
-                    if self.verbose >= 2:
-                        import traceback
-                        traceback.print_exc()
+                print(f"[ERROR] Failed to create server: {e}")
+                import traceback
+                traceback.print_exc()
                 return None
             
             # Determine our IP address - try multiple methods
@@ -1139,48 +1123,41 @@ class VideoInputWithAck(VideoInput):
             self.config['video_input']['listen_port'] = self.listen_port
             self.config['video_input']['ip'] = ip
             
-            if self.verbose >= 1:
-                print(f"[ACK] IP address set in config: {ip}:{self.listen_port}")
+            print(f"[ACK] IP address set in config: {ip}:{self.listen_port}")
             
             # Save the config
             config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
             with open(config_path, 'w') as f:
                 yaml.dump(self.config, f, default_flow_style=False)
-                if self.verbose >= 1:
-                    print(f"[ACK] Updated config saved to {config_path}")
+                print(f"[ACK] Updated config saved to {config_path}")
             
             # Verify the server is actually running
             server_ok = self.verify_server()
-            if not server_ok and self.verbose >= 1:
+            if not server_ok:
                 print("[WARNING] Server verification failed!")
             
             # We need to keep this task running
             return self.server
             
         except Exception as e:
-            if self.verbose >= 1:
-                print(f"[ERROR] Failed to setup acknowledgment server: {e}")
-                if self.verbose >= 2:
-                    import traceback
-                    traceback.print_exc()
+            print(f"[ERROR] Failed to setup acknowledgment server: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def verify_server(self):
         """Verify the server is actually running"""
         if not self.server:
-            if self.verbose >= 1:
-                print("[ERROR] No server object!")
-            return False
-            
+            print("[ERROR] No server object!")
+                return False
+
         if not hasattr(self.server, 'sockets') or not self.server.sockets:
-            if self.verbose >= 1:
-                print("[ERROR] Server has no sockets!")
+            print("[ERROR] Server has no sockets!")
             return False
             
-        if self.verbose >= 1:
-            print(f"[ACK] Server verification successful - {len(self.server.sockets)} socket(s)")
-        return True
-    
+        print(f"[ACK] Server verification successful - {len(self.server.sockets)} socket(s)")
+                return True
+
     async def get_reliable_ip(self):
         """Get a reliable IP address using multiple methods"""
         ip = None

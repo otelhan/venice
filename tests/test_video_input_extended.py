@@ -21,8 +21,8 @@ async def test_ack_server():
     """Test that the acknowledgment server works properly"""
     print("\nTesting acknowledgment server...")
     
-    # Create video input with acknowledgment (minimal logging)
-    video = VideoInputWithAck(verbose=0)
+    # Create video input with acknowledgment
+    video = VideoInputWithAck()
     
     # Start server with force_restart to ensure we get a fresh server
     print("Starting acknowledgment server with force_restart...")
@@ -133,8 +133,8 @@ async def test_video_input(fullscreen=False, debug=False):
     print("'f' - Toggle fullscreen")
     print("'q' - Quit")
     
-    # Create video input with acknowledgment handling (use minimal logging for performance)
-    video = VideoInputWithAck(verbose=0)
+    # Create video input with acknowledgment handling
+    video = VideoInputWithAck()
     
     # Start acknowledgment server and wait for it to be ready
     print("\nStarting acknowledgment server...")

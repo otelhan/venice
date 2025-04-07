@@ -5,65 +5,41 @@
 # Navigate to the project root directory
 cd "$(dirname "$0")/.."
 
-# Default values
-MODE="operation"
-VERBOSE=0  # Default to minimal logging
-PORT=8765
-EXTRA_ARGS=""
-NON_INTERACTIVE="--non-interactive"
+# Check for arguments
+MODE="operation"  # Default mode
+INTERACTIVE=""    # By default, run in non-interactive mode
 
-# Parse command line arguments
+# Process command line arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --test)
+    --test|-t)
       MODE="test"
       shift
       ;;
-    --operation)
+    --operation|-o)
       MODE="operation"
       shift
       ;;
-    --port)
-      PORT="$2"
-      shift 2
-      ;;
-    --verbose)
-      VERBOSE=1  # Normal logging
-      shift
-      ;;
-    --debug)
-      VERBOSE=2  # Debug logging
-      shift
-      ;;
-    --interactive)
-      NON_INTERACTIVE=""  # Remove non-interactive flag
+    --interactive|-i)
+      INTERACTIVE=""  # Remove non-interactive flag
       shift
       ;;
     *)
+      # Pass any other arguments directly to the Python script
       EXTRA_ARGS="$EXTRA_ARGS $1"
       shift
       ;;
   esac
 done
 
-# Activate virtual environment if it exists
-if [ -d "venv" ]; then
-    echo "Activating virtual environment..."
-    source venv/bin/activate
-fi
-
-# Display startup message
-echo "Starting output controller in $MODE mode"
-echo "Port: $PORT"
-echo "Verbosity: $VERBOSE"
-if [ -n "$NON_INTERACTIVE" ]; then
-    echo "Mode: Non-interactive"
-else
-    echo "Mode: Interactive"
+# If not interactive, add the flag
+if [ -z "$INTERACTIVE" ]; then
+  EXTRA_ARGS="$EXTRA_ARGS --non-interactive"
 fi
 
 # Run the output controller
-python -m src.networking.run_output_extended --mode $MODE --port $PORT --verbose $VERBOSE $NON_INTERACTIVE $EXTRA_ARGS
+echo "Starting Output Controller in $MODE mode..."
+python -m src.networking.run_output_extended --mode $MODE $EXTRA_ARGS
 
 # Exit with the same status code as the Python script
 exit $? 
