@@ -282,10 +282,10 @@ class VideoInput:
             oldest = self.frame_buffer[0]
             newest = self.frame_buffer[-1]
             
-        x = int(roi_config['x'])
-        y = int(roi_config['y'])
-        w = int(roi_config['width'])
-        h = int(roi_config['height'])
+            x = int(roi_config['x'])
+            y = int(roi_config['y'])
+            w = int(roi_config['width'])
+            h = int(roi_config['height'])
             
             oldest_roi = oldest[y:y+h, x:x+w]
             newest_roi = newest[y:y+h, x:x+w]
