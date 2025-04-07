@@ -462,9 +462,63 @@ class VideoInput:
             print(f"[WARNING] Not enough values to save to CSV: {len(self.movement_buffers['roi_1'])}/30")
             return False
     
+    async def wait_for_ack_task(self):
+        """Non-blocking task to wait for acknowledgment with timeout"""
+        try:
+            print("\n[ACK] Started acknowledgment wait task")
+            self.waiting_for_ack = True
+            
+            # Reset the event before waiting
+            self.ack_received.clear()
+            
+            print(f"[ACK] Waiting for acknowledgment (timeout: {self.ack_timeout}s)")
+            
+            # Create a timeout task that will automatically clear the wait after timeout
+            async def timeout_task():
+                try:
+                    # Wait for the specified timeout period
+                    await asyncio.sleep(self.ack_timeout)
+                    
+                    # If we're still waiting, cancel the wait
+                    if self.waiting_for_ack:
+                        print(f"\n[WARNING] Acknowledgment timeout after {self.ack_timeout} seconds")
+                        self.waiting_for_ack = False
+                except asyncio.CancelledError:
+                    # Task was cancelled, which means ack was received
+                    pass
+                except Exception as e:
+                    print(f"[ERROR] Error in timeout task: {e}")
+            
+            # Start the timeout task in the background
+            self.ack_task = asyncio.create_task(timeout_task())
+            
+            # Return immediately - don't block execution
+            # The timeout task will handle clearing the wait flag after timeout
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Error in acknowledgment wait task: {e}")
+            self.waiting_for_ack = False
+            return False
+            
+    async def cancel_ack_wait(self):
+        """Cancel the current acknowledgment wait task if it exists"""
+        if self.ack_task and not self.ack_task.done():
+            self.ack_task.cancel()
+            try:
+                await self.ack_task
+            except asyncio.CancelledError:
+                pass
+            self.waiting_for_ack = False
+            print("[ACK] Acknowledgment wait cancelled")
+    
     async def send_movement_vector(self):
-        """Send latest movement vector to controller"""
-        # Only send if not currently in a network operation and have enough values
+        """Send latest movement vector with acknowledgment wait"""
+        # Only send if not currently waiting for an ACK and have enough values
+        if self.waiting_for_ack:
+            print("\n[ACK] Still waiting for acknowledgment, skipping send")
+            return False
+            
         if self.network_busy:
             print("\n[NETWORK] Network operation in progress, skipping send")
             return False
@@ -476,12 +530,12 @@ class VideoInput:
             try:
                 # Scale values for transmission - always use the latest 30 values
                 scaled_values = []
-                # Get the latest 30 values
                 buffer_values = self.movement_buffers['roi_1'][-30:]
                 
                 for i in range(30):
                     raw_movement = buffer_values[i]
-                    scaled = self.scale_movement_log(raw_movement, 20, 127)  # Update range to 20-127
+                    # Use updated scaling to ensure values are in 20-127 range
+                    scaled = self.scale_movement_log(raw_movement, 20, 127)
                     scaled_values.append(scaled)
                 
                 # Get current time in Venice
@@ -499,8 +553,16 @@ class VideoInput:
                     }
                 }
                 
-                # Send to controller in a non-blocking way
+                # Send to controller
                 success = await self.send_to_controller(data)
+                
+                if success:
+                    print("\n[ACK] Message sent, starting acknowledgment wait task")
+                    # Cancel any existing ack task
+                    await self.cancel_ack_wait()
+                    # Start non-blocking ack wait task
+                    await self.wait_for_ack_task()
+                    
                 return success
             
             finally:
@@ -509,9 +571,9 @@ class VideoInput:
         else:
             print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
             return False
-
+    
     async def send_to_controller(self, data):
-        """Send data to controller"""
+        """Send data to controller with improved error handling"""
         try:
             # Get controller config
             dest_config = self.config['controllers'].get(self.destination)
@@ -519,26 +581,38 @@ class VideoInput:
                 print(f"\n[ERROR] No configuration found for destination: {self.destination}")
                 return False
 
-            # Connect to controller with a timeout
+            # Connect to controller with a shorter timeout
             uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
             print(f"\n[STATUS] Connecting to {self.destination}:")
             print(f"URI: {uri}")
             
-            # Use a timeout to prevent hanging connection
-            async with asyncio.timeout(5):  # 5 seconds timeout
-                async with websockets.connect(uri) as websocket:
-                    print(f"[SUCCESS] Connected to {self.destination}")
-                    await websocket.send(json.dumps(data))
-                    print(f"[SUCCESS] Data sent to {self.destination}")
-                    if len(data.get('data', {}).get('pot_values', [])) > 0:
-                        timestamp = data.get('timestamp', 'unknown')
-                        pot_count = len(data.get('data', {}).get('pot_values', []))
-                        print(f"[DATA] Timestamp: {timestamp}")
-                        print(f"[DATA] Sent {pot_count} movement values")
-                    return True
+            # Use a timeout to prevent hanging connection - shorter timeout
+            try:
+                async with asyncio.timeout(3):  # 3 seconds timeout instead of 5
+                    async with websockets.connect(
+                        uri,
+                        ping_interval=None,  # Disable ping to reduce traffic
+                        ping_timeout=None,
+                        close_timeout=1.0  # Quick closure
+                    ) as websocket:
+                        print(f"[SUCCESS] Connected to {self.destination}")
+                        await websocket.send(json.dumps(data))
+                        print(f"[SUCCESS] Data sent to {self.destination}")
+                        if len(data.get('data', {}).get('pot_values', [])) > 0:
+                            timestamp = data.get('timestamp', 'unknown')
+                            pot_count = len(data.get('data', {}).get('pot_values', []))
+                            print(f"[DATA] Timestamp: {timestamp}")
+                            print(f"[DATA] Sent {pot_count} movement values")
+                        return True
+            except asyncio.TimeoutError:
+                print(f"\n[ERROR] Connection to {self.destination} timed out")
+                return False
                     
-        except asyncio.TimeoutError:
-            print(f"\n[ERROR] Connection to {self.destination} timed out")
+        except websockets.exceptions.InvalidStatusCode as e:
+            print(f"\n[ERROR] Invalid status from {self.destination}: {e}")
+            return False
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"\n[ERROR] Connection to {self.destination} closed unexpectedly: {e}")
             return False
         except Exception as e:
             print(f"\n[ERROR] Failed to send to controller: {e}")
@@ -843,7 +917,8 @@ class VideoInputWithAck(VideoInput):
                 # Websocket handler for incoming messages
                 async def handler(websocket, path):
                     try:
-                        print(f"[ACK] New connection established from {websocket.remote_address}")
+                        client_ip = websocket.remote_address[0] if hasattr(websocket, 'remote_address') else 'unknown'
+                        print(f"[ACK] New connection established from {client_ip}")
                         async for message in websocket:
                             try:
                                 data = json.loads(message)
@@ -851,33 +926,70 @@ class VideoInputWithAck(VideoInput):
                                 
                                 # Check if it's an acknowledgment
                                 if data.get('type') == 'ack':
-                                    print("[ACK] Acknowledgment received!")
+                                    print(f"[ACK] Acknowledgment received from {client_ip}!")
+                                    # Important: Set this BEFORE setting the event
                                     self.waiting_for_ack = False
+                                    
+                                    # Clear any timeouts and set the event
+                                    if self.ack_task and not self.ack_task.done():
+                                        self.ack_task.cancel()
+                                        
                                     self.ack_received.set()
+                                    
+                                    # Respond with confirmation (optional but helps debugging)
+                                    try:
+                                        response = {
+                                            'type': 'ack_receipt',
+                                            'status': 'success',
+                                            'message': 'Acknowledgment received successfully'
+                                        }
+                                        await websocket.send(json.dumps(response))
+                                    except:
+                                        pass
                                 else:
                                     print(f"[INFO] Received non-ACK message: {data.get('type', 'unknown')}")
                                     
                             except json.JSONDecodeError:
                                 print(f"[WARNING] Received invalid JSON: {message}")
                     except websockets.exceptions.ConnectionClosed:
-                        print(f"[INFO] ACK connection closed gracefully")
+                        print(f"[INFO] ACK connection from {client_ip} closed gracefully")
                     except Exception as e:
                         print(f"[ERROR] Websocket handler error: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # Create the server with more lenient settings
-                self.server = await websockets.serve(
-                    handler, 
-                    "0.0.0.0",  # Listen on all interfaces
-                    self.listen_port,
-                    ping_interval=None,  # Disable ping
-                    ping_timeout=None,   # Disable ping timeout
-                    close_timeout=5,     # More time for closure
-                    max_size=10485760,   # Larger message size (10MB)
-                    max_queue=32         # Larger connection queue
-                )
+                print(f"[ACK] Starting server on 0.0.0.0:{self.listen_port}")
                 
-                print(f"[ACK] Acknowledgment server is running on port {self.listen_port}")
-                print(f"[ACK] Server info: {self.server.sockets}")
+                try:
+                    self.server = await websockets.serve(
+                        handler, 
+                        "0.0.0.0",  # Listen on all interfaces
+                        self.listen_port,
+                        ping_interval=None,  # Disable ping
+                        ping_timeout=None,   # Disable ping timeout
+                        close_timeout=10,    # More time for closure
+                        max_size=10485760,   # Larger message size (10MB)
+                        max_queue=32         # Larger connection queue
+                    )
+                    
+                    if self.server:
+                        print(f"[ACK] Acknowledgment server is running on port {self.listen_port}")
+                        if hasattr(self.server, 'sockets') and self.server.sockets:
+                            for sock in self.server.sockets:
+                                print(f"[ACK] Socket: {sock}")
+                        else:
+                            print("[WARNING] Server has no sockets!")
+                    else:
+                        print("[ERROR] Failed to create server!")
+                except Exception as e:
+                    print(f"[ERROR] Failed to create server: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return None
+                
+                # Determine our IP address - try multiple methods
+                ip = await self.get_reliable_ip()
                 
                 # Add our listen port to the config so the output knows where to send ACKs
                 if 'video_input' not in self.config:
@@ -885,17 +997,20 @@ class VideoInputWithAck(VideoInput):
                 
                 # Set our IP and port in the config
                 self.config['video_input']['listen_port'] = self.listen_port
+                self.config['video_input']['ip'] = ip
                 
-                # Try to get our own IP
-                ip = self.get_local_ip()
-                if ip:
-                    self.config['video_input']['ip'] = ip
-                    print(f"[ACK] Set IP in config: {ip}")
+                print(f"[ACK] IP address set in config: {ip}:{self.listen_port}")
                 
                 # Save the config
                 config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
                 with open(config_path, 'w') as f:
                     yaml.dump(self.config, f, default_flow_style=False)
+                    print(f"[ACK] Updated config saved to {config_path}")
+                
+                # Verify the server is actually running
+                server_ok = self.verify_server()
+                if not server_ok:
+                    print("[WARNING] Server verification failed!")
                 
                 # We need to keep this task running
                 return self.server
@@ -905,6 +1020,77 @@ class VideoInputWithAck(VideoInput):
             import traceback
             traceback.print_exc()
             return None
+    
+    def verify_server(self):
+        """Verify the server is actually running"""
+        if not self.server:
+            print("[ERROR] No server object!")
+            return False
+            
+        if not hasattr(self.server, 'sockets') or not self.server.sockets:
+            print("[ERROR] Server has no sockets!")
+            return False
+            
+        print(f"[ACK] Server verification successful - {len(self.server.sockets)} socket(s)")
+        return True
+    
+    async def get_reliable_ip(self):
+        """Get a reliable IP address using multiple methods"""
+        ip = None
+        
+        # Method 1: Connect to external service
+        try:
+            ip = self.get_local_ip()
+            print(f"[ACK] Method 1 IP: {ip}")
+        except Exception as e:
+            print(f"[WARNING] Method 1 IP detection failed: {e}")
+        
+        # Method 2: Use socket to get all interfaces
+        if not ip or ip == '127.0.0.1':
+            try:
+                import socket
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('10.255.255.255', 1))
+                ip = s.getsockname()[0]
+                s.close()
+                print(f"[ACK] Method 2 IP: {ip}")
+            except Exception as e:
+                print(f"[WARNING] Method 2 IP detection failed: {e}")
+        
+        # Method 3: List all network interfaces
+        if not ip or ip == '127.0.0.1':
+            try:
+                import socket
+                import netifaces
+                
+                print("[ACK] Available network interfaces:")
+                for interface in netifaces.interfaces():
+                    try:
+                        # Get IPv4 addresses
+                        addrs = netifaces.ifaddresses(interface)
+                        if netifaces.AF_INET in addrs:
+                            for addr in addrs[netifaces.AF_INET]:
+                                if 'addr' in addr and addr['addr'] != '127.0.0.1':
+                                    print(f"  - {interface}: {addr['addr']}")
+                                    # Use first non-loopback address
+                                    if not ip or ip == '127.0.0.1':
+                                        ip = addr['addr']
+                                        print(f"[ACK] Method 3 IP: {ip} (from {interface})")
+                    except Exception as e:
+                        print(f"  - Error with {interface}: {e}")
+            except ImportError:
+                print("[WARNING] netifaces module not available")
+            except Exception as e:
+                print(f"[WARNING] Method 3 IP detection failed: {e}")
+        
+        # If all methods fail, use fallback
+        if not ip:
+            print("[WARNING] All IP detection methods failed. Using 0.0.0.0 (accept all)")
+            ip = "0.0.0.0"
+        else:
+            print(f"[ACK] Final IP address selection: {ip}")
+            
+        return ip
             
     def get_local_ip(self):
         """Get the local IP address of this machine"""
@@ -919,151 +1105,16 @@ class VideoInputWithAck(VideoInput):
             return local_ip
         except Exception as e:
             print(f"[WARNING] Could not determine local IP: {e}")
+            # Try to get hostname IP
+            try:
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+                if local_ip != "127.0.0.1":
+                    return local_ip
+            except:
+                pass
             # Fallback to localhost
             return "127.0.0.1"
-    
-    async def wait_for_ack_task(self):
-        """Background task to wait for acknowledgment"""
-        try:
-            print("\n[ACK] Started acknowledgment wait task")
-            self.waiting_for_ack = True
-            
-            # Wait for the ack with timeout
-            try:
-                # Reset the event before waiting
-                self.ack_received.clear()
-                
-                # Wait for acknowledgment with timeout
-                print(f"[ACK] Waiting for acknowledgment (timeout: {self.ack_timeout}s)")
-                await asyncio.wait_for(self.ack_received.wait(), timeout=self.ack_timeout)
-                print("[ACK] Acknowledgment received, continuing processing")
-                return True
-            except asyncio.TimeoutError:
-                print(f"\n[WARNING] Acknowledgment timeout after {self.ack_timeout} seconds")
-                self.waiting_for_ack = False
-                return False
-                
-        except Exception as e:
-            print(f"[ERROR] Error in acknowledgment wait task: {e}")
-            self.waiting_for_ack = False
-            return False
-            
-    async def cancel_ack_wait(self):
-        """Cancel the current acknowledgment wait task if it exists"""
-        if self.ack_task and not self.ack_task.done():
-            self.ack_task.cancel()
-            try:
-                await self.ack_task
-            except asyncio.CancelledError:
-                pass
-            self.waiting_for_ack = False
-            print("[ACK] Acknowledgment wait cancelled")
-    
-    async def send_movement_vector(self):
-        """Send latest movement vector with acknowledgment wait"""
-        # Only send if not currently waiting for an ACK and have enough values
-        if self.waiting_for_ack:
-            print("\n[ACK] Still waiting for acknowledgment, skipping send")
-            return False
-            
-        if self.network_busy:
-            print("\n[NETWORK] Network operation in progress, skipping send")
-            return False
-            
-        if len(self.movement_buffers['roi_1']) >= 30:
-            # Set network busy flag to prevent concurrent operations
-            self.network_busy = True
-            
-            try:
-                # Scale values for transmission - always use the latest 30 values
-                scaled_values = []
-                buffer_values = self.movement_buffers['roi_1'][-30:]
-                
-                for i in range(30):
-                    raw_movement = buffer_values[i]
-                    # Use updated scaling to ensure values are in 20-127 range
-                    scaled = self.scale_movement_log(raw_movement, 20, 127)
-                    scaled_values.append(scaled)
-                
-                # Get current time in Venice
-                venice_time = self.get_venice_time()
-                t_sin, t_cos = self.encode_time(venice_time)
-                
-                # Create data packet
-                data = {
-                    'type': 'movement_data',
-                    'timestamp': str(venice_time),
-                    'data': {
-                        'pot_values': scaled_values,
-                        't_sin': t_sin,
-                        't_cos': t_cos
-                    }
-                }
-                
-                # Send to controller and wait for acknowledgment
-                success = await self.send_to_controller(data)
-                
-                if success:
-                    print("\n[ACK] Message sent, starting acknowledgment wait task")
-                    # Cancel any existing ack task
-                    await self.cancel_ack_wait()
-                    # Start ack wait task in the background
-                    self.ack_task = asyncio.create_task(self.wait_for_ack_task())
-                    
-                return success
-            
-            finally:
-                # Reset network busy flag
-                self.network_busy = False
-        else:
-            print(f"[WARNING] Not enough values to send: {len(self.movement_buffers['roi_1'])}/30")
-            return False
-    
-    async def send_to_controller(self, data):
-        """Send data to controller with improved error handling"""
-        try:
-            # Get controller config
-            dest_config = self.config['controllers'].get(self.destination)
-            if not dest_config:
-                print(f"\n[ERROR] No configuration found for destination: {self.destination}")
-                return False
-
-            # Connect to controller with a shorter timeout
-            uri = f"ws://{dest_config['ip']}:{dest_config.get('listen_port', 8765)}"
-            print(f"\n[STATUS] Connecting to {self.destination}:")
-            print(f"URI: {uri}")
-            
-            # Use a timeout to prevent hanging connection - shorter timeout
-            try:
-                async with asyncio.timeout(3):  # 3 seconds timeout instead of 5
-                    async with websockets.connect(
-                        uri,
-                        ping_interval=None,  # Disable ping to reduce traffic
-                        ping_timeout=None,
-                        close_timeout=1.0  # Quick closure
-                    ) as websocket:
-                        print(f"[SUCCESS] Connected to {self.destination}")
-                        await websocket.send(json.dumps(data))
-                        print(f"[SUCCESS] Data sent to {self.destination}")
-                        if len(data.get('data', {}).get('pot_values', [])) > 0:
-                            timestamp = data.get('timestamp', 'unknown')
-                            pot_count = len(data.get('data', {}).get('pot_values', []))
-                            print(f"[DATA] Timestamp: {timestamp}")
-                            print(f"[DATA] Sent {pot_count} movement values")
-                        return True
-            except asyncio.TimeoutError:
-                print(f"\n[ERROR] Connection to {self.destination} timed out")
-                return False
-                    
-        except websockets.exceptions.InvalidStatusCode as e:
-            print(f"\n[ERROR] Invalid status from {self.destination}: {e}")
-            return False
-        except websockets.exceptions.ConnectionClosed as e:
-            print(f"\n[ERROR] Connection to {self.destination} closed unexpectedly: {e}")
-            return False
-        except Exception as e:
-            print(f"\n[ERROR] Failed to send to controller: {e}")
-            return False
 
 if __name__ == "__main__":
     print("Please run tests/test_video_input.py for testing") 

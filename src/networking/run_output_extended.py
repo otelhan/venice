@@ -543,24 +543,71 @@ class OutputController:
     async def send_acknowledgement(self, timestamp):
         """Send acknowledgement back to video_input"""
         try:
+            print("\n=== Sending Acknowledgment to Video Input ===")
+            
             # Get video_input configuration
             config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
                                     'config', 'controllers.yaml')
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
+            print(f"Loading config from: {config_path}")
             
+            try:
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                print("Config loaded successfully")
+            except Exception as e:
+                print(f"Failed to load config: {e}")
+                return False
+            
+            # Print entire video_input config for debugging
             video_input_config = config.get('video_input', {})
+            print(f"\nVideo input config: {video_input_config}")
+            
             if not video_input_config:
-                print("No video_input configuration found")
+                print("No video_input configuration found in config file")
                 return False
             
             # Connect to video_input's IP and listen_port
-            video_ip = video_input_config.get('ip', '127.0.0.1')
-            video_listen_port = video_input_config.get('listen_port', 8777)
+            video_ip = video_input_config.get('ip')
+            if not video_ip:
+                print("No IP address defined for video_input in config")
+                return False
+                
+            video_listen_port = video_input_config.get('listen_port')
+            if not video_listen_port:
+                print("No listen_port defined for video_input in config")
+                video_listen_port = 8777  # Default port
             
             uri = f"ws://{video_ip}:{video_listen_port}"
-            print(f"\nSending acknowledgment to video_input:")
-            print(f"URI: {uri}")
+            print(f"Acknowledgment URI: {uri}")
+            
+            # Try to ping the target IP first to verify connectivity
+            try:
+                import subprocess
+                ping_result = subprocess.run(
+                    ["ping", "-c", "1", "-W", "2", video_ip], 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE
+                )
+                if ping_result.returncode == 0:
+                    print(f"✓ Host {video_ip} is reachable")
+                else:
+                    print(f"⚠ WARNING: Host {video_ip} did not respond to ping")
+            except Exception as e:
+                print(f"Failed to ping host: {e}")
+            
+            # Try checking if port is open
+            try:
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex((video_ip, int(video_listen_port)))
+                if result == 0:
+                    print(f"✓ Port {video_listen_port} is open on {video_ip}")
+                else:
+                    print(f"⚠ WARNING: Port {video_listen_port} appears to be closed on {video_ip}")
+                sock.close()
+            except Exception as e:
+                print(f"Port check failed: {e}")
             
             # Add retry logic
             max_retries = 3
@@ -568,45 +615,73 @@ class OutputController:
             
             for attempt in range(max_retries):
                 try:
-                    print(f"Acknowledgment attempt {attempt+1}/{max_retries}")
+                    print(f"\nAttempt {attempt+1}/{max_retries} to send acknowledgment")
                     
                     # Use more lenient timeout settings
-                    async with asyncio.timeout(5):  # 5 second timeout
+                    async with asyncio.timeout(5):
                         async with websockets.connect(
                             uri,
                             ping_interval=None,
                             ping_timeout=None,
                             close_timeout=2.0
                         ) as websocket:
-                            print("Connected to video_input")
+                            print(f"✓ Connected to video_input at {uri}")
+                            
+                            # Create acknowledgment message - IMPORTANT: Must have 'type': 'ack'
                             ack = {
-                                'type': 'ack',
+                                'type': 'ack',  # Must be exactly 'ack'
                                 'timestamp': timestamp,
                                 'status': 'success',
                                 'message': 'Clock movement complete'
                             }
-                            await websocket.send(json.dumps(ack))
-                            print("Acknowledgement sent to video_input")
+                            
+                            # Log the exact message we're sending for debugging
+                            ack_json = json.dumps(ack)
+                            print(f"Sending ack: {ack_json}")
+                            
+                            # Send the acknowledgment
+                            await websocket.send(ack_json)
+                            print("✓ Acknowledgment JSON sent successfully")
+                            
+                            # Wait briefly for any response (optional but helpful for debugging)
+                            try:
+                                response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
+                                print(f"Received response: {response}")
+                            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
+                                # No response is expected, so this is fine
+                                print("No response received (this is normal)")
+                                
+                            # Keep connection open a little longer to ensure message is received
+                            await asyncio.sleep(1)
+                            print("Acknowledgment completed successfully")
                             return True
+                            
                 except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as e:
-                    print(f"Connection error on attempt {attempt+1}: {e}")
+                    error_type = "Timeout" if isinstance(e, asyncio.TimeoutError) else "Connection closed"
+                    print(f"× {error_type} on attempt {attempt+1}: {str(e) or 'No details'}")
+                    
                     if attempt < max_retries - 1:
                         print(f"Retrying in {retry_delay} seconds...")
                         await asyncio.sleep(retry_delay)
                     else:
                         print("All retry attempts failed")
+                        
                 except Exception as e:
-                    print(f"Unexpected error during acknowledgment: {e}")
+                    print(f"× Unexpected error on attempt {attempt+1}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    
                     if attempt < max_retries - 1:
                         print(f"Retrying in {retry_delay} seconds...")
                         await asyncio.sleep(retry_delay)
                     else:
                         print("All retry attempts failed")
             
+            print("=== Failed to send acknowledgment ===")
             return False
             
         except Exception as e:
-            print(f"Error sending acknowledgement: {e}")
+            print(f"× Error in acknowledgment process: {e}")
             import traceback
             traceback.print_exc()
             return False
