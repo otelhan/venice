@@ -70,6 +70,9 @@ async def test_video_input(fullscreen=False, debug=False):
     yellow_color = (0, 190, 246)  # BGR value for RGB(246,190,0)
     green_color = (0, 255, 0)     # BGR value for green
     
+    # Flag to track if we've sent our first data packet
+    first_send_done = False
+    
     # Main loop
     try:
         while True:
@@ -107,9 +110,16 @@ async def test_video_input(fullscreen=False, debug=False):
                     print("\n[STATUS] Save interval reached, saving data to CSV...")
                     video_input.save_to_csv()
                 
-                # Check if we should send data to controller - but only every 10 frames
-                if frame_count % 10 == 0:
-                    video_input.check_and_try_send()
+                # Send data when we have 30 frames and no pending ACK
+                # First time: send as soon as we reach 30 frames
+                # After that: wait for ACK before sending again
+                if len(video_input.movement_buffers['roi_1']) >= 30:
+                    if (not first_send_done) or (not video_input.waiting_for_ack and first_send_done):
+                        print("\n[STATUS] Sending movement data to controller...")
+                        send_result = video_input.check_and_try_send()
+                        if send_result:
+                            first_send_done = True
+                            print("[STATUS] First data packet sent successfully")
                 
                 # Process key presses for UI
                 key = cv2.waitKey(1) & 0xFF
