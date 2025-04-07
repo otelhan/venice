@@ -424,7 +424,7 @@ class VideoInput:
             
             for i in range(30):
                 raw_movement = buffer_values[i]
-                scaled = self.scale_movement_log(raw_movement, 0, 100)
+                scaled = self.scale_movement_log(raw_movement, 20, 127)  # Update range to 20-127
                 scaled_values.append(scaled)
             
             # Get current time in Venice
@@ -481,7 +481,7 @@ class VideoInput:
                 
                 for i in range(30):
                     raw_movement = buffer_values[i]
-                    scaled = self.scale_movement_log(raw_movement, 0, 100)
+                    scaled = self.scale_movement_log(raw_movement, 20, 127)  # Update range to 20-127
                     scaled_values.append(scaled)
                 
                 # Get current time in Venice
@@ -582,17 +582,17 @@ class VideoInput:
         """Scale movement value using logarithmic scaling (to emphasize smaller movements)"""
         # Apply a logarithmic scaling to emphasize smaller movements
         if raw_movement <= 0:
-            return min_value
+            return 20  # Return minimum valid value for output (20 instead of 0)
             
         # Log scaling (natural log) with a small offset to handle zero
         log_value = np.log(raw_movement + 0.1)
         
-        # Map to final range (original was -10 to 0, so shift and scale)
+        # Map to final range 20-127 instead of min_value-max_value
         # Empirically, log(0.1) ≈ -2.3 and maximum log for large movement could be around 4.6
-        scaled = min_value + (log_value + 2.3) * ((max_value - min_value) / 7)
+        scaled = 20 + (log_value + 2.3) * ((127 - 20) / 7)
         
-        # Clamp to range
-        return max(min_value, min(max_value, scaled))
+        # Clamp to range 20-127
+        return max(20, min(127, scaled))
 
     def close(self):
         """Clean up resources"""
@@ -938,7 +938,8 @@ class VideoInputWithAck(VideoInput):
                 
                 for i in range(30):
                     raw_movement = buffer_values[i]
-                    scaled = self.scale_movement_log(raw_movement, 0, 100)
+                    # Use updated scaling to ensure values are in 20-127 range
+                    scaled = self.scale_movement_log(raw_movement, 20, 127)
                     scaled_values.append(scaled)
                 
                 # Get current time in Venice
@@ -956,7 +957,7 @@ class VideoInputWithAck(VideoInput):
                     }
                 }
                 
-                # Send to controller with a shorter timeout
+                # Send to controller and wait for acknowledgment
                 success = await self.send_to_controller(data)
                 
                 if success:
