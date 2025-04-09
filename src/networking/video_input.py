@@ -698,78 +698,87 @@ class VideoInput:
     def show_frame(self, frame, window_name="Venice Stream"):
         """Show frame with ROI overlay and movement values"""
         if frame is not None:
-            # Create a black background the size of the screen
-            screen_width = cv2.getWindowImageRect(window_name)[2]
-            screen_height = cv2.getWindowImageRect(window_name)[3]
+            # Create a copy of the frame for overlay
+            display_frame = frame.copy()
             
-            # Only create background if window is initialized
-            if screen_width > 0 and screen_height > 0:
-                # Create black background
-                background = np.zeros((screen_height, screen_width, 3), dtype=np.uint8)
+            # Add Venice timestamp and frame number
+            venice_time = self.get_venice_time().strftime('%H:%M:%S')
+            cv2.putText(display_frame, f"Frame: {self.frame_count} | Venice Time: {venice_time}", 
+                      (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            # Draw ROIs if enabled
+            if self.show_rois and self.roi_configs:
+                for roi_name, roi_config in self.roi_configs.items():
+                    x = int(roi_config['x'])
+                    y = int(roi_config['y'])
+                    w = int(roi_config['width'])
+                    h = int(roi_config['height'])
+                    cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                    
+                    # Add ROI label and movement value if calculating
+                    if hasattr(self, 'current_movements') and self.calculating:
+                        movement_val = self.current_movements.get(roi_name, 0)
+                        cv2.putText(display_frame, 
+                                  f"{roi_name}: {movement_val:.2f}", 
+                                  (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 
+                                  0.6, (0, 255, 0), 2)
+            
+            # Draw recording indicator and time encoding when calculating
+            if self.calculating:
+                # Get current time encoding
+                t_sin, t_cos = self.encode_time(self.get_venice_time())
                 
-                # Calculate position to center the frame
-                frame_height, frame_width = frame.shape[:2]
-                x_offset = (screen_width - frame_width) // 2
-                y_offset = (screen_height - frame_height) // 2
+                # Draw recording dot
+                radius = 10
+                center = (display_frame.shape[1]-20, 20)
+                cv2.circle(display_frame, center, radius, (0, 0, 255), -1)
                 
-                # Create a copy of the frame for overlay
-                display_frame = frame.copy()
+                # Add time encoding values
+                cv2.putText(display_frame,
+                          f"sin(t): {t_sin:.2f}",
+                          (display_frame.shape[1]-150, 15),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.5, (255, 255, 255), 1)
+                cv2.putText(display_frame,
+                          f"cos(t): {t_cos:.2f}",
+                          (display_frame.shape[1]-150, 35),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.5, (255, 255, 255), 1)
+
+            try:
+                # Create window if it doesn't exist
+                cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
                 
-                # Add Venice timestamp and frame number
-                venice_time = self.get_venice_time().strftime('%H:%M:%S')
-                cv2.putText(display_frame, f"Frame: {self.frame_count} | Venice Time: {venice_time}", 
-                          (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                
-                # Draw ROIs if enabled
-                if self.show_rois and self.roi_configs:
-                    for roi_name, roi_config in self.roi_configs.items():
-                        x = int(roi_config['x'])
-                        y = int(roi_config['y'])
-                        w = int(roi_config['width'])
-                        h = int(roi_config['height'])
-                        cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                # Get window dimensions after window is created
+                rect = cv2.getWindowImageRect(window_name)
+                if rect is not None and len(rect) == 4:
+                    screen_width = rect[2]
+                    screen_height = rect[3]
+                    
+                    if screen_width > 0 and screen_height > 0:
+                        # Create black background
+                        background = np.zeros((screen_height, screen_width, 3), dtype=np.uint8)
                         
-                        # Add ROI label and movement value if calculating
-                        if hasattr(self, 'current_movements') and self.calculating:
-                            movement_val = self.current_movements.get(roi_name, 0)
-                            cv2.putText(display_frame, 
-                                      f"{roi_name}: {movement_val:.2f}", 
-                                      (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 
-                                      0.6, (0, 255, 0), 2)
+                        # Calculate position to center the frame
+                        frame_height, frame_width = display_frame.shape[:2]
+                        x_offset = (screen_width - frame_width) // 2
+                        y_offset = (screen_height - frame_height) // 2
+                        
+                        # Place the frame on the black background
+                        if x_offset >= 0 and y_offset >= 0:
+                            background[y_offset:y_offset+frame_height, x_offset:x_offset+frame_width] = display_frame
+                            cv2.imshow(window_name, background)
+                            return True
                 
-                # Draw recording indicator and time encoding when calculating
-                if self.calculating:
-                    # Get current time encoding
-                    t_sin, t_cos = self.encode_time(self.get_venice_time())
-                    
-                    # Draw recording dot
-                    radius = 10
-                    center = (display_frame.shape[1]-20, 20)
-                    cv2.circle(display_frame, center, radius, (0, 0, 255), -1)
-                    
-                    # Add time encoding values
-                    cv2.putText(display_frame,
-                              f"sin(t): {t_sin:.2f}",
-                              (display_frame.shape[1]-150, 15),
-                              cv2.FONT_HERSHEY_SIMPLEX,
-                              0.5, (255, 255, 255), 1)
-                    cv2.putText(display_frame,
-                              f"cos(t): {t_cos:.2f}",
-                              (display_frame.shape[1]-150, 35),
-                              cv2.FONT_HERSHEY_SIMPLEX,
-                              0.5, (255, 255, 255), 1)
+                # If we couldn't get valid window dimensions or create background, show frame directly
+                cv2.imshow(window_name, display_frame)
                 
-                # Place the frame on the black background
-                if x_offset >= 0 and y_offset >= 0:
-                    background[y_offset:y_offset+frame_height, x_offset:x_offset+frame_width] = display_frame
-                    cv2.imshow(window_name, background)
-                else:
-                    # If window is smaller than frame, just show the frame
-                    cv2.imshow(window_name, display_frame)
-            else:
-                # If window is not yet initialized, show the frame directly
-                cv2.imshow(window_name, frame)
-        return True
+            except Exception as e:
+                # If there's any error, fall back to showing the frame directly
+                cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                cv2.imshow(window_name, display_frame)
+            
+            return True
 
     def save_roi_to_config(self, roi_number: int, selected_cells: list):
         """Save ROI coordinates from selected cells to config"""
