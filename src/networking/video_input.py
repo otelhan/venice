@@ -151,6 +151,9 @@ class VideoInput:
             try:
                 print(f"Connection attempt {attempt + 1}/{self.max_retries}")
                 
+                # Store the current source for reference
+                self.current_source = url
+                
                 # Check if the input is a local file
                 if os.path.isfile(url):
                     print(f"Opening local video file: {url}")
@@ -212,9 +215,14 @@ class VideoInput:
                         self.frame_queue.put(frame)
                     time.sleep(0.01)  # Small sleep to avoid hogging CPU
                 else:
-                    print("\nFailed to read frame in capture thread")
-                    self.reconnect()
-                    time.sleep(0.5)
+                    # Check if this is a local file
+                    if hasattr(self, 'current_source') and os.path.isfile(self.current_source):
+                        print("\nEnd of video file reached, restarting...")
+                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to beginning
+                    else:
+                        print("\nFailed to read frame in capture thread")
+                        self.reconnect()
+                        time.sleep(0.5)
         
         # Start the capture thread
         self.processing_thread = threading.Thread(target=capture_frames, daemon=True)
