@@ -146,35 +146,39 @@ class VideoInput:
         return self.config['streams'].get(stream_name, {}).get('url')
         
     def connect_to_stream(self, url: str) -> bool:
-        """Connect to YouTube stream with retry logic"""
+        """Connect to video source (either local file or YouTube stream)"""
         for attempt in range(self.max_retries):
             try:
                 print(f"Connection attempt {attempt + 1}/{self.max_retries}")
                 
-                # Configure yt-dlp
-                ydl_opts = {
-                    'format': 'best',
-                    'quiet': True,
-                }
+                # Check if the input is a local file
+                if os.path.isfile(url):
+                    print(f"Opening local video file: {url}")
+                    self.cap = cv2.VideoCapture(url)
+                else:
+                    print(f"Attempting to connect to stream: {url}")
+                    # Configure yt-dlp
+                    ydl_opts = {
+                        'format': 'best',
+                        'quiet': True,
+                    }
+                    
+                    # Get stream URL using yt-dlp
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        stream_url = info['url']
+                    
+                    # Open video stream
+                    self.cap = cv2.VideoCapture(stream_url)
                 
-                # Get stream URL using yt-dlp
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    stream_url = info['url']
-                
-                # Open video stream with timeout property
-                self.cap = cv2.VideoCapture(stream_url)
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # Reduce buffer size
-                
-                # Set additional CV2 properties for better performance
                 self.cap.set(cv2.CAP_PROP_FPS, 30)  # Request 30fps
                 
                 if not self.cap.isOpened():
-                    raise Exception("Could not open stream")
+                    raise Exception("Could not open video source")
                 
                 self.is_running = True
                 self.last_frame_success = time.time()
-                print(f"Connected to stream: {info.get('title', 'Unknown')}")
                 
                 # Start frame capture thread
                 self.start_frame_capture_thread()

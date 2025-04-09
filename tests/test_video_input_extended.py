@@ -123,9 +123,9 @@ async def test_ack_server():
         print("× Failed to send test acknowledgment")
         return False
 
-async def test_video_input(fullscreen=False, debug=False):
-    """Test video input with a Venice live stream"""
-    print("\nTesting video input with Venice live stream...")
+async def test_video_input(fullscreen=False, debug=False, use_video=False):
+    """Test video input with either a video file or Venice live stream"""
+    print("\nTesting video input...")
     print("\nControls:")
     print("'s' - Select all ROIs")
     print("'r' - Select single ROI")
@@ -176,21 +176,34 @@ async def test_video_input(fullscreen=False, debug=False):
     except Exception as e:
         print(f"Error testing acknowledgment handler: {e}")
     
-    # Get stream URL from config
-    url = video.get_stream_url('venice_live')
-    if not url:
-        print("ERROR: No stream URL found in config")
-        return
+    # Connect to video source
+    if use_video:
+        # Get video path from config
+        video_path = video.config.get('video_input', {}).get('video_path')
+        if not video_path:
+            print("ERROR: No video path found in config")
+            return False
+            
+        print(f"Opening video file from config: {video_path}")
+        if not video.connect_to_stream(video_path):
+            print("Failed to open video file")
+            return False
+    else:
+        # Get stream URL from config
+        url = video.get_stream_url('venice_live')
+        if not url:
+            print("ERROR: No stream URL found in config")
+            return
+            
+        print(f"Attempting to connect to: {url}")
         
-    print(f"Attempting to connect to: {url}")
-    
-    # Connect to stream
-    if not video.connect_to_stream(url):
-        print("Failed to connect to stream")
-        return False
+        # Connect to stream
+        if not video.connect_to_stream(url):
+            print("Failed to connect to stream")
+            return False
     
     # Main loop
-    print("Stream connected, entering main loop...")
+    print("Video source connected, entering main loop...")
     video.show_rois = True
     try:
         last_send_time = time.time()
@@ -250,21 +263,27 @@ async def test_video_input(fullscreen=False, debug=False):
     return True
 
 async def main():
-    """Main test function"""
-    # First test the acknowledgment server by itself
-    ack_test_result = await test_ack_server()
-    print(f"Acknowledgment server test {'passed' if ack_test_result else 'failed'}")
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Video Input Test with Extended Features')
+    parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--video', action='store_true', help='Use video file from config')
+    group.add_argument('--stream', action='store_true', help='Use stream from config')
     
-    # Continue with the test even if ack test fails
-    print("\nProceeding with main test...")
+    args = parser.parse_args()
     
-    # Then run the full test
-    try:
-        await test_video_input()
-    except Exception as e:
-        print(f"Error in main test: {e}")
-        import traceback
-        traceback.print_exc()
+    # Run acknowledgment server test first
+    if not await test_ack_server():
+        print("\nWARNING: Acknowledgment server test failed!")
+        print("Continuing with main test anyway...")
+    
+    # Run main test
+    await test_video_input(
+        fullscreen=args.fullscreen,
+        debug=args.debug,
+        use_video=args.video
+    )
 
 if __name__ == "__main__":
     asyncio.run(main()) 

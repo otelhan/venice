@@ -159,7 +159,7 @@ video_input:
   destination: res00
   display:
     show_plots: true
-  ip: 192.168.1.133
+  ip: 192.168.1.106
   listen_port: 8777
   output:
     csv_path: data/movement_vectors.csv
@@ -255,3 +255,4 @@ video_input:
     vector_interval: 30
     vector_size: 30
   send_port: 8765
+  video_path: input_videos/ponte_morning20min.mp4
