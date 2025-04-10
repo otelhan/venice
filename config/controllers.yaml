@@ -17,7 +17,7 @@ controllers:
     mac: 2c:cf:67:8b:24:f7
   res00:
     description: Reservoir Controller 00
-    destination: res01
+    destination: resX
     display:
       enabled: true
       show_camera: true
@@ -58,13 +58,12 @@ controllers:
     port: 8765
   resX:
     description: Reservoir Controller X
-    destination: output
+    destination: res01
     display:
       enabled: true
       show_camera: true
       show_plots: true
-    ip: 192.168.1.100  # You can change this IP as needed
-    listen_port: 8765
+    ip: 192.168.1.8  # You can change this IP as needed
     port: 8765
   trainer:
     description: Reservoir Trainer
