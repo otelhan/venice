@@ -56,6 +56,16 @@ controllers:
     ip: 192.168.1.254
     mac: 2c:cf:67:8b:fe:ab
     port: 8765
+  resX:
+    description: Reservoir Controller X
+    destination: output
+    display:
+      enabled: true
+      show_camera: true
+      show_plots: true
+    ip: 192.168.1.100  # You can change this IP as needed
+    listen_port: 8765
+    port: 8765
   trainer:
     description: Reservoir Trainer
     destination: builder
