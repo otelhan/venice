@@ -15,6 +15,7 @@ import json
 import asyncio
 import threading
 import queue
+import random
 
 # Use cocoa backend for Mac, xcb for Linux
 # if os.uname().sysname == 'Darwin':  # macOS
@@ -106,6 +107,12 @@ class VideoInput:
         self.show_plots = False
         self.plots_initialized = False
 
+        # Random video playback
+        self.input_videos_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'input_videos')
+        self.video_files = []
+        self.current_source = None
+        self.update_video_file_list()
+
     def load_config(self):
         """Load and initialize config with default ROI settings if needed"""
         config_path = Path(__file__).parent.parent.parent / 'config' / 'controllers.yaml'
@@ -146,7 +153,16 @@ class VideoInput:
         return self.config['streams'].get(stream_name, {}).get('url')
         
     def connect_to_stream(self, url: str) -> bool:
-        """Connect to video source (either local file or YouTube stream)"""
+        """Connect to video source (either local file, YouTube stream, or a random video)"""
+        # If url is "random", select a random video file
+        if url == "random":
+            random_file = self.get_random_video_file()
+            if random_file:
+                url = random_file
+            else:
+                print("No video files available for random selection")
+                return False
+        
         for attempt in range(self.max_retries):
             try:
                 print(f"Connection attempt {attempt + 1}/{self.max_retries}")
@@ -217,8 +233,20 @@ class VideoInput:
                 else:
                     # Check if this is a local file
                     if hasattr(self, 'current_source') and os.path.isfile(self.current_source):
-                        print("\nEnd of video file reached, restarting...")
-                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to beginning
+                        print("\nEnd of video file reached")
+                        # Get a new random video instead of restarting
+                        random_file = self.get_random_video_file()
+                        if random_file:
+                            print(f"Loading next video: {os.path.basename(random_file)}")
+                            self.cap.release()
+                            self.cap = cv2.VideoCapture(random_file)
+                            self.current_source = random_file
+                            if not self.cap.isOpened():
+                                print("Failed to open new video, trying another...")
+                                self.reconnect_to_random_video()
+                        else:
+                            print("No more videos available, restarting current video")
+                            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to beginning
                     else:
                         print("\nFailed to read frame in capture thread")
                         self.reconnect()
@@ -894,6 +922,79 @@ class VideoInput:
             elif key == 27:  # Escape key
                 cv2.destroyWindow("Select ROI")
                 return None
+
+    def update_video_file_list(self):
+        """Update the list of available video files from input_videos directory"""
+        self.video_files = []
+        # Check if directory exists
+        if os.path.exists(self.input_videos_dir) and os.path.isdir(self.input_videos_dir):
+            # Get all video files
+            for file in os.listdir(self.input_videos_dir):
+                if file.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+                    full_path = os.path.join(self.input_videos_dir, file)
+                    self.video_files.append(full_path)
+        
+        if self.video_files:
+            print(f"\nFound {len(self.video_files)} video files in input_videos directory")
+            for i, file in enumerate(self.video_files):
+                print(f"  {i+1}. {os.path.basename(file)}")
+        else:
+            print("\nNo video files found in input_videos directory!")
+    
+    def get_random_video_file(self):
+        """Get a random video file from the input_videos directory"""
+        # Update file list to ensure it's current
+        self.update_video_file_list()
+        
+        if not self.video_files:
+            return None
+        
+        # Get a random file that's different from the current one
+        available_files = [f for f in self.video_files if f != self.current_source]
+        if not available_files and self.video_files:
+            # If only one file or all files used, use the full list
+            available_files = self.video_files
+        
+        if available_files:
+            random_file = random.choice(available_files)
+            print(f"\nSelected random video: {os.path.basename(random_file)}")
+            return random_file
+        
+        return None
+
+    def reconnect_to_random_video(self):
+        """Switch to a different random video file"""
+        if not self.is_running:
+            return
+            
+        print("\n[INFO] Switching to a different video file...")
+        
+        # Stop the current stream
+        self.is_running = False
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+        
+        # Wait for processing thread to exit
+        if self.processing_thread and self.processing_thread.is_alive():
+            print("[INFO] Waiting for processing thread to complete...")
+            time.sleep(1)  # Give thread a chance to exit
+            
+        # Clear frame queue
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except:
+                pass
+        
+        # Connect to a new random video
+        random_file = self.get_random_video_file()
+        if random_file:
+            print(f"[INFO] Connecting to new video: {os.path.basename(random_file)}...")
+            self.is_running = True
+            self.connect_to_stream(random_file)
+        else:
+            print("[ERROR] No video files available for reconnection")
 
 class VideoInputWithAck(VideoInput):
     def __init__(self):

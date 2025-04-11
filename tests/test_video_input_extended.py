@@ -123,7 +123,7 @@ async def test_ack_server():
         print("× Failed to send test acknowledgment")
         return False
 
-async def test_video_input(fullscreen=False, debug=False, use_video=False):
+async def test_video_input(fullscreen=False, debug=False, use_video=False, random_video=False):
     """Test video input with either a video file or Venice live stream"""
     print("\nTesting video input...")
     print("\nControls:")
@@ -132,6 +132,7 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False):
     print("'t' - Toggle ROI display")
     print("'f' - Toggle fullscreen")
     print("'q' - Quit")
+    print("'n' - Load next random video (if using random mode)")
     
     # Create video input with acknowledgment handling
     video = VideoInputWithAck()
@@ -178,16 +179,23 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False):
     
     # Connect to video source
     if use_video:
-        # Get video path from config
-        video_path = video.config.get('video_input', {}).get('video_path')
-        if not video_path:
-            print("ERROR: No video path found in config")
-            return False
-            
-        print(f"Opening video file from config: {video_path}")
-        if not video.connect_to_stream(video_path):
-            print("Failed to open video file")
-            return False
+        if random_video:
+            # Use random video selection
+            print("Using random video selection from input_videos directory")
+            if not video.connect_to_stream("random"):
+                print("Failed to connect to random video")
+                return False
+        else:
+            # Get video path from config
+            video_path = video.config.get('video_input', {}).get('video_path')
+            if not video_path:
+                print("ERROR: No video path found in config")
+                return False
+                
+            print(f"Opening video file from config: {video_path}")
+            if not video.connect_to_stream(video_path):
+                print("Failed to open video file")
+                return False
     else:
         # Get stream URL from config
         url = video.get_stream_url('venice_live')
@@ -249,6 +257,10 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False):
                     cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
                 else:
                     cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            elif key == ord('n') and (use_video and random_video):
+                # Load next random video
+                print("\nManually switching to next random video...")
+                video.reconnect_to_random_video()
             
             # Short sleep to reduce CPU usage
             await asyncio.sleep(0.01)
@@ -270,6 +282,7 @@ async def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--video', action='store_true', help='Use video file from config')
     group.add_argument('--stream', action='store_true', help='Use stream from config')
+    group.add_argument('--random', action='store_true', help='Use random videos from input_videos directory')
     
     args = parser.parse_args()
     
@@ -282,7 +295,8 @@ async def main():
     await test_video_input(
         fullscreen=args.fullscreen,
         debug=args.debug,
-        use_video=args.video
+        use_video=args.video or args.random,
+        random_video=args.random
     )
 
 if __name__ == "__main__":
