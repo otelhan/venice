@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 # Parse command line arguments
 USE_VIDEO=false
 USE_STREAM=false
+USE_RANDOM=false
 FULLSCREEN=false
 
 while [[ $# -gt 0 ]]; do
@@ -21,13 +22,17 @@ while [[ $# -gt 0 ]]; do
             USE_STREAM=true
             shift
             ;;
+        --random)
+            USE_RANDOM=true
+            shift
+            ;;
         --fullscreen)
             FULLSCREEN=true
             shift
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--video] [--stream] [--fullscreen]"
+            echo "Usage: $0 [--video | --stream | --random] [--fullscreen]"
             exit 1
             ;;
     esac
@@ -44,11 +49,14 @@ if [ "$USE_VIDEO" = true ]; then
     CMD="$CMD --video"
 elif [ "$USE_STREAM" = true ]; then
     CMD="$CMD --stream"
+elif [ "$USE_RANDOM" = true ]; then
+    CMD="$CMD --random"
 else
-    echo "Error: Either --video or --stream must be specified"
-    echo "Usage: $0 [--video] [--stream] [--fullscreen]"
+    echo "Error: One of --video, --stream, or --random must be specified"
+    echo "Usage: $0 [--video | --stream | --random] [--fullscreen]"
     exit 1
 fi
 
+echo "Executing: $CMD"
 # Run the command
 eval $CMD
