@@ -11,7 +11,7 @@ controllers:
     description: Output Controller
     display:
       enabled: false
-      show_camera: false
+      show_camera: false  
       show_plots: false
     ip: 192.168.1.42
     mac: 2c:cf:67:8b:24:f7

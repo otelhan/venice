@@ -1,4 +1,4 @@
-import asyncio
+    import asyncio
 from src.networking.input_node import InputNode
 
 async def run_input_node(input_node):
