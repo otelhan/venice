@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import time
 import os
+import random
 from pathlib import Path
 import yaml
 import sys
@@ -123,7 +124,7 @@ async def test_ack_server():
         print("× Failed to send test acknowledgment")
         return False
 
-async def test_video_input(fullscreen=False, debug=False, use_video=False, screen_only=False):
+async def test_video_input(fullscreen=False, debug=False, use_video=False, use_random=False):
     """Test video input with either a video file or Venice live stream"""
     print("\nTesting video input...")
     print("\nControls:")
@@ -131,57 +132,80 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, scree
     print("'r' - Select single ROI")
     print("'t' - Toggle ROI display")
     print("'f' - Toggle fullscreen")
+    if use_random:
+        print("'n' - Load next random video")
     print("'q' - Quit")
     
     # Create video input with acknowledgment handling
     video = VideoInputWithAck()
     
-    # In screen-only mode, we don't set up networking
-    if not screen_only:
-        # Start acknowledgment server and wait for it to be ready
-        print("\nStarting acknowledgment server...")
-        # Don't force restart if the test_ack_server already set up a server
-        if video.server is None:
-            server_task = asyncio.create_task(video.setup_ack_server(force_restart=False))
-        else:
-            print("Using existing server from previous test")
-            server_task = None
-        
-        # Give the server time to start up fully before continuing
-        await asyncio.sleep(2)  # Shorter wait since we already waited in test_ack_server
-        
-        # Update the IP address in config with the correct IP
-        local_ip = video.get_local_ip()
-        print(f"Local IP detected: {local_ip}")
-        print(f"Acknowledgment server running on: {local_ip}:{video.listen_port}")
-        
-        # Print acknowledgment server info
-        print("\nVerifying acknowledgment server status:")
-        if video.server:
-            print(f"✓ Server initialized and waiting for connections")
-            print(f"Server socket info: {video.server.sockets if hasattr(video.server, 'sockets') else 'No sockets'}")
-        else:
-            print("⚠ WARNING: Server not properly initialized!")
-        
-        # Test acknowledgment handling directly
-        try:
-            print("\nTesting acknowledgment handling...")
-            # Prepare for acknowledgment
-            video.waiting_for_ack = True
-            video.ack_received.clear()
-            
-            # Since we can't directly call the handler, we'll manually simulate an ack
-            print("Manually simulating acknowledgment...")
-            video.waiting_for_ack = False
-            video.ack_received.set()
-            print("✓ Direct acknowledgment test passed")
-        except Exception as e:
-            print(f"Error testing acknowledgment handler: {e}")
+    # Start acknowledgment server and wait for it to be ready
+    print("\nStarting acknowledgment server...")
+    # Don't force restart if the test_ack_server already set up a server
+    if video.server is None:
+        server_task = asyncio.create_task(video.setup_ack_server(force_restart=False))
     else:
-        print("\nRunning in screen-only mode - no networking or data transmission")
+        print("Using existing server from previous test")
+        server_task = None
     
-    # Connect to video source
-    if use_video:
+    # Give the server time to start up fully before continuing
+    await asyncio.sleep(2)  # Shorter wait since we already waited in test_ack_server
+    
+    # Update the IP address in config with the correct IP
+    local_ip = video.get_local_ip()
+    print(f"Local IP detected: {local_ip}")
+    print(f"Acknowledgment server running on: {local_ip}:{video.listen_port}")
+    
+    # Print acknowledgment server info
+    print("\nVerifying acknowledgment server status:")
+    if video.server:
+        print(f"✓ Server initialized and waiting for connections")
+        print(f"Server socket info: {video.server.sockets if hasattr(video.server, 'sockets') else 'No sockets'}")
+    else:
+        print("⚠ WARNING: Server not properly initialized!")
+    
+    # Test acknowledgment handling directly
+    try:
+        print("\nTesting acknowledgment handling...")
+        # Prepare for acknowledgment
+        video.waiting_for_ack = True
+        video.ack_received.clear()
+        
+        # Since we can't directly call the handler, we'll manually simulate an ack
+        print("Manually simulating acknowledgment...")
+        video.waiting_for_ack = False
+        video.ack_received.set()
+        print("✓ Direct acknowledgment test passed")
+    except Exception as e:
+        print(f"Error testing acknowledgment handler: {e}")
+    
+    # Get video path if using random mode
+    if use_random:
+        input_dir = os.path.join(project_root, "input_videos")
+        if not os.path.exists(input_dir):
+            os.makedirs(input_dir)
+            print(f"Created input_videos directory: {input_dir}")
+            print("Please add video files to this directory and try again")
+            return False
+        
+        video_files = []
+        for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+            video_files.extend(list(Path(input_dir).glob(f"*{ext}")))
+        
+        if not video_files:
+            print(f"No video files found in {input_dir}")
+            return False
+        
+        # Select random video
+        current_video = str(random.choice(video_files))
+        print(f"Randomly selected video: {os.path.basename(current_video)}")
+        
+        # Connect to the video file
+        if not video.connect_to_stream(current_video):
+            print(f"Failed to open video file: {current_video}")
+            return False
+    # Connect to video source from config if not using random
+    elif use_video:
         # Get video path from config
         video_path = video.config.get('video_input', {}).get('video_path')
         if not video_path:
@@ -222,16 +246,15 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, scree
             if frame is not None:
                 video.show_frame(frame)
             
-            # Try sending data if we have enough and not in screen-only mode
-            if not screen_only and time.time() - last_send_time >= 30:  # Every 30 seconds
+            # Try sending data if we have enough
+            if time.time() - last_send_time >= 30:  # Every 30 seconds
                 if len(video.movement_buffers['roi_1']) >= 30:
                     print(f"\nAttempting to send movement vector...")
                     await video.send_movement_vector()
                     last_send_time = time.time()
             
-            # Handle CSV saving if not in screen-only mode
-            if not screen_only:
-                await video.check_and_save()
+            # Handle CSV saving
+            await video.check_and_save()
             
             # Process key commands
             key = cv2.waitKey(1) & 0xFF
@@ -254,6 +277,31 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, scree
                     cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
                 else:
                     cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            elif use_random and key == ord('n'):
+                # Load next random video
+                print("\nLoading next random video...")
+                video.close()
+                
+                # Select a different random video
+                video_files = []
+                input_dir = os.path.join(project_root, "input_videos")
+                for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                    video_files.extend(list(Path(input_dir).glob(f"*{ext}")))
+                
+                # Try to select a different video if possible
+                if len(video_files) > 1:
+                    remaining_videos = [v for v in video_files if str(v) != current_video]
+                    if remaining_videos:
+                        current_video = str(random.choice(remaining_videos))
+                else:
+                    current_video = str(video_files[0])
+                
+                print(f"Selected video: {os.path.basename(current_video)}")
+                if not video.connect_to_stream(current_video):
+                    print(f"Failed to open video file: {current_video}")
+                    break
+                
+                video.calculating = True
             
             # Short sleep to reduce CPU usage
             await asyncio.sleep(0.01)
@@ -272,28 +320,24 @@ async def main():
     parser = argparse.ArgumentParser(description='Video Input Test with Extended Features')
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
-    parser.add_argument('--screen', action='store_true', help='Screen-only mode (no networking)')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--video', action='store_true', help='Use video file from config')
     group.add_argument('--stream', action='store_true', help='Use stream from config')
+    group.add_argument('--random', action='store_true', help='Use random video from input_videos folder')
     
     args = parser.parse_args()
     
-    # Skip acknowledgment server test in screen-only mode
-    if not args.screen:
-        # Run acknowledgment server test first
-        if not await test_ack_server():
-            print("\nWARNING: Acknowledgment server test failed!")
-            print("Continuing with main test anyway...")
-    else:
-        print("\nRunning in screen-only mode, skipping acknowledgment server test")
+    # Run acknowledgment server test first
+    if not await test_ack_server():
+        print("\nWARNING: Acknowledgment server test failed!")
+        print("Continuing with main test anyway...")
     
     # Run main test
     await test_video_input(
         fullscreen=args.fullscreen,
         debug=args.debug,
         use_video=args.video,
-        screen_only=args.screen
+        use_random=args.random
     )
 
 if __name__ == "__main__":

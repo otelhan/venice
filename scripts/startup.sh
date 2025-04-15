@@ -10,7 +10,6 @@ cd "$(dirname "$0")/.."
 USE_VIDEO=false
 USE_STREAM=false
 FULLSCREEN=false
-SCREEN_ONLY=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -26,13 +25,9 @@ while [[ $# -gt 0 ]]; do
             FULLSCREEN=true
             shift
             ;;
-        --screen)
-            SCREEN_ONLY=true
-            shift
-            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--video] [--stream] [--fullscreen] [--screen]"
+            echo "Usage: $0 [--video] [--stream] [--fullscreen]"
             exit 1
             ;;
     esac
@@ -45,20 +40,15 @@ if [ "$FULLSCREEN" = true ]; then
     CMD="$CMD --fullscreen"
 fi
 
-if [ "$SCREEN_ONLY" = true ]; then
-    CMD="$CMD --screen"
-fi
-
 if [ "$USE_VIDEO" = true ]; then
     CMD="$CMD --video"
 elif [ "$USE_STREAM" = true ]; then
     CMD="$CMD --stream"
 else
     echo "Error: Either --video or --stream must be specified"
-    echo "Usage: $0 [--video] [--stream] [--fullscreen] [--screen]"
+    echo "Usage: $0 [--video] [--stream] [--fullscreen]"
     exit 1
 fi
 
-echo "Executing: $CMD"
 # Run the command
 eval $CMD
