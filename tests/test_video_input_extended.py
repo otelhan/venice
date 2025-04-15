@@ -124,7 +124,7 @@ async def test_ack_server():
         print("× Failed to send test acknowledgment")
         return False
 
-async def test_video_input(fullscreen=False, debug=False, use_video=False, use_random=False):
+async def test_video_input(fullscreen=False, debug=False, use_video=False, use_random=False, screen_mode=False):
     """Test video input with either a video file or Venice live stream"""
     print("\nTesting video input...")
     print("\nControls:")
@@ -139,45 +139,48 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
     # Create video input with acknowledgment handling
     video = VideoInputWithAck()
     
-    # Start acknowledgment server and wait for it to be ready
-    print("\nStarting acknowledgment server...")
-    # Don't force restart if the test_ack_server already set up a server
-    if video.server is None:
-        server_task = asyncio.create_task(video.setup_ack_server(force_restart=False))
-    else:
-        print("Using existing server from previous test")
-        server_task = None
-    
-    # Give the server time to start up fully before continuing
-    await asyncio.sleep(2)  # Shorter wait since we already waited in test_ack_server
-    
-    # Update the IP address in config with the correct IP
-    local_ip = video.get_local_ip()
-    print(f"Local IP detected: {local_ip}")
-    print(f"Acknowledgment server running on: {local_ip}:{video.listen_port}")
-    
-    # Print acknowledgment server info
-    print("\nVerifying acknowledgment server status:")
-    if video.server:
-        print(f"✓ Server initialized and waiting for connections")
-        print(f"Server socket info: {video.server.sockets if hasattr(video.server, 'sockets') else 'No sockets'}")
-    else:
-        print("⚠ WARNING: Server not properly initialized!")
-    
-    # Test acknowledgment handling directly
-    try:
-        print("\nTesting acknowledgment handling...")
-        # Prepare for acknowledgment
-        video.waiting_for_ack = True
-        video.ack_received.clear()
+    # Start acknowledgment server and wait for it to be ready, unless in screen mode
+    if not screen_mode:
+        print("\nStarting acknowledgment server...")
+        # Don't force restart if the test_ack_server already set up a server
+        if video.server is None:
+            server_task = asyncio.create_task(video.setup_ack_server(force_restart=False))
+        else:
+            print("Using existing server from previous test")
+            server_task = None
         
-        # Since we can't directly call the handler, we'll manually simulate an ack
-        print("Manually simulating acknowledgment...")
-        video.waiting_for_ack = False
-        video.ack_received.set()
-        print("✓ Direct acknowledgment test passed")
-    except Exception as e:
-        print(f"Error testing acknowledgment handler: {e}")
+        # Give the server time to start up fully before continuing
+        await asyncio.sleep(2)  # Shorter wait since we already waited in test_ack_server
+        
+        # Update the IP address in config with the correct IP
+        local_ip = video.get_local_ip()
+        print(f"Local IP detected: {local_ip}")
+        print(f"Acknowledgment server running on: {local_ip}:{video.listen_port}")
+        
+        # Print acknowledgment server info
+        print("\nVerifying acknowledgment server status:")
+        if video.server:
+            print(f"✓ Server initialized and waiting for connections")
+            print(f"Server socket info: {video.server.sockets if hasattr(video.server, 'sockets') else 'No sockets'}")
+        else:
+            print("⚠ WARNING: Server not properly initialized!")
+        
+        # Test acknowledgment handling directly
+        try:
+            print("\nTesting acknowledgment handling...")
+            # Prepare for acknowledgment
+            video.waiting_for_ack = True
+            video.ack_received.clear()
+            
+            # Since we can't directly call the handler, we'll manually simulate an ack
+            print("Manually simulating acknowledgment...")
+            video.waiting_for_ack = False
+            video.ack_received.set()
+            print("✓ Direct acknowledgment test passed")
+        except Exception as e:
+            print(f"Error testing acknowledgment handler: {e}")
+    else:
+        print("\nRunning in screen mode (no networking)")
     
     # Get video path if using random mode
     if use_random:
@@ -247,14 +250,15 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
                 video.show_frame(frame)
             
             # Try sending data if we have enough
-            if time.time() - last_send_time >= 30:  # Every 30 seconds
+            if not screen_mode and time.time() - last_send_time >= 30:  # Every 30 seconds
                 if len(video.movement_buffers['roi_1']) >= 30:
                     print(f"\nAttempting to send movement vector...")
                     await video.send_movement_vector()
                     last_send_time = time.time()
             
             # Handle CSV saving
-            await video.check_and_save()
+            if not screen_mode:
+                await video.check_and_save()
             
             # Process key commands
             key = cv2.waitKey(1) & 0xFF
@@ -320,6 +324,7 @@ async def main():
     parser = argparse.ArgumentParser(description='Video Input Test with Extended Features')
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--screen', action='store_true', help='Run in screen mode (no networking, data sending, or CSV writing)')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--video', action='store_true', help='Use video file from config')
     group.add_argument('--stream', action='store_true', help='Use stream from config')
@@ -327,8 +332,8 @@ async def main():
     
     args = parser.parse_args()
     
-    # Run acknowledgment server test first
-    if not await test_ack_server():
+    # Run acknowledgment server test first, unless in screen mode
+    if not args.screen and not await test_ack_server():
         print("\nWARNING: Acknowledgment server test failed!")
         print("Continuing with main test anyway...")
     
@@ -337,7 +342,8 @@ async def main():
         fullscreen=args.fullscreen,
         debug=args.debug,
         use_video=args.video,
-        use_random=args.random
+        use_random=args.random,
+        screen_mode=args.screen
     )
 
 if __name__ == "__main__":

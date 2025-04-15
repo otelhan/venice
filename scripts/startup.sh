@@ -11,6 +11,7 @@ USE_VIDEO=false
 USE_STREAM=false
 USE_RANDOM=false
 FULLSCREEN=false
+SCREEN_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -30,9 +31,13 @@ while [[ $# -gt 0 ]]; do
             FULLSCREEN=true
             shift
             ;;
+        --screen)
+            SCREEN_MODE=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen]"
+            echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen] [--screen]"
             exit 1
             ;;
     esac
@@ -45,22 +50,26 @@ if [ "$FULLSCREEN" = true ]; then
     CMD="$CMD --fullscreen"
 fi
 
+if [ "$SCREEN_MODE" = true ]; then
+    CMD="$CMD --screen"
+fi
+
 # Handle the video source options - make sure only one is specified
 if [ "$USE_VIDEO" = true ] && [ "$USE_STREAM" = true ]; then
     echo "Error: Cannot specify both --video and --stream"
-    echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen]"
+    echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen] [--screen]"
     exit 1
 fi
 
 if [ "$USE_VIDEO" = true ] && [ "$USE_RANDOM" = true ]; then
     echo "Error: Cannot specify both --video and --random"
-    echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen]"
+    echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen] [--screen]"
     exit 1
 fi
 
 if [ "$USE_STREAM" = true ] && [ "$USE_RANDOM" = true ]; then
     echo "Error: Cannot specify both --stream and --random"
-    echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen]"
+    echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen] [--screen]"
     exit 1
 fi
 
@@ -73,7 +82,7 @@ elif [ "$USE_RANDOM" = true ]; then
     CMD="$CMD --random"
 else
     echo "Error: Must specify one of --video, --stream, or --random"
-    echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen]"
+    echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen] [--screen]"
     exit 1
 fi
 
