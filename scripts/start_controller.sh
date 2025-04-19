@@ -3,7 +3,7 @@
 cd "$(dirname "$0")/.."
 
 # Wait for X server to start
-sleep 5
+sleep 7
 
 # Set display and X authority for GUI windows
 #export DISPLAY=:0
