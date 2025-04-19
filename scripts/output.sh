@@ -2,8 +2,12 @@
 # Script to run the output controller
 # This can be used in both operation mode and test mode
 
+
 # Navigate to the project root directory
 cd "$(dirname "$0")/.."
+
+# Source the virtual environment
+source venv/bin/activate
 
 # Check for arguments
 MODE="operation"  # Default mode
