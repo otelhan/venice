@@ -744,13 +744,25 @@ class OutputController:
         return venice_now
         
     def get_csv_path(self):
-        """Get CSV path with date-based rotation"""
-        # Get current Venice time and format date string
+        """Get path for CSV file with session uniqueness to prevent overwriting"""
+        # Get current Venice time
         venice_time = self.get_venice_time()
         date_str = venice_time.strftime('%Y%m%d')
         
-        # Return full path with date
-        return os.path.join(self.data_dir, f"processed_movement_{date_str}.csv")
+        # Create a session ID based on startup timestamp to ensure uniqueness
+        if not hasattr(self, 'session_id'):
+            # Generate a unique session ID using timestamp and random number
+            import random
+            import time
+            random.seed(time.time())
+            self.session_id = f"{int(time.time())}_{random.randint(1000, 9999)}"
+            print(f"Generated unique session ID: {self.session_id}")
+        
+        # Include both date and session ID in filename to prevent overwrites
+        filename = f"processed_movement_{date_str}_session_{self.session_id}.csv"
+        
+        # Return full path 
+        return os.path.join(self.data_dir, filename)
         
     def save_to_csv(self, data):
         """Save received data to CSV"""
