@@ -1,9 +1,8 @@
 #!/bin/bash
+# Headless script to run the output controller
+# This can be used for automated startup via systemd
 
-# Script name: headless_output.sh
-# Purpose: Headless version of output.sh for running output processing as a service
-
-# Change to the project root directory
+# Change to the project root directory first
 cd "$(dirname "$0")/.."
 
 # Source the virtual environment
@@ -15,65 +14,51 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/headless_output_$(date +%Y%m%d_%H%M%S).log"
 exec > "$LOG_FILE" 2>&1
 
-echo "===== Starting Headless Output Processor ====="
+echo "===== Starting Headless Output Controller ====="
 echo "Date: $(date)"
 echo "Working directory: $(pwd)"
 
-# Parse command line arguments
-# Add your specific arguments here, similar to the original output.sh
-# For example:
-OUTPUT_TYPE=""
-ADDITIONAL_OPTIONS=""
+# Check for arguments
+MODE="operation"  # Default mode
+INTERACTIVE=""    # By default, run in non-interactive mode
+EXTRA_ARGS=""     # Extra arguments for the Python script
 
+# Process command line arguments - same as original script
 while [[ $# -gt 0 ]]; do
-    case $1 in
-        --type)
-            OUTPUT_TYPE="$2"
-            shift 2
-            ;;
-        --option)
-            ADDITIONAL_OPTIONS="$ADDITIONAL_OPTIONS --$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Usage: $0 [--type TYPE] [--option OPTION]"
-            exit 1
-            ;;
-    esac
+  case $1 in
+    --test|-t)
+      MODE="test"
+      shift
+      ;;
+    --operation|-o)
+      MODE="operation"
+      shift
+      ;;
+    --interactive|-i)
+      INTERACTIVE=""  # Remove non-interactive flag
+      shift
+      ;;
+    *)
+      # Pass any other arguments directly to the Python script
+      EXTRA_ARGS="$EXTRA_ARGS $1"
+      shift
+      ;;
+  esac
 done
 
-# Set default output type if not specified
-if [ -z "$OUTPUT_TYPE" ]; then
-    OUTPUT_TYPE="default"
-    echo "No output type specified, using default"
+# If not interactive, add the flag
+if [ -z "$INTERACTIVE" ]; then
+  EXTRA_ARGS="$EXTRA_ARGS --non-interactive"
 fi
 
-# Build the command
-# Replace this with the actual command from output.sh
-CMD="python -m src.run_output $OUTPUT_TYPE $ADDITIONAL_OPTIONS"
-
-# Support running in a non-interactive environment
-# by creating a virtual display if needed
-if [ -z "$DISPLAY" ]; then
-    echo "No display detected, running with virtual display"
-    
-    # Check if xvfb is installed
-    if command -v xvfb-run &> /dev/null; then
-        CMD="xvfb-run -a $CMD"
-    else
-        echo "Warning: xvfb-run not found. GUI operations may fail."
-        # Still try to run with null display
-        export DISPLAY=:0
-    fi
-fi
-
-echo "Executing: $CMD"
-
-# Run the command
-eval $CMD
+# Run the output controller
+echo "Starting Output Controller in $MODE mode..."
+python -m src.networking.run_output_extended --mode $MODE $EXTRA_ARGS
 EXIT_CODE=$?
 
-echo "Process exited with code: $EXIT_CODE"
-echo "===== Headless Output Processor Ended ====="
+echo "Output Controller exited with code: $EXIT_CODE"
+echo "===== Headless Output Controller Ended ====="
 echo "End time: $(date)"
+
+# Exit with the same status code as the Python script
+exit $EXIT_CODE
