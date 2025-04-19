@@ -145,7 +145,7 @@ def get_video_number(filename):
     return 9999  # Return a high number if no match is found
 
 def get_sequence_videos(input_dir):
-    """Get a list of video files sorted by numeric prefix in descending order"""
+    """Get a list of video files sorted by numeric prefix in ascending order"""
     video_files = []
     for ext in [".mp4", ".avi", ".mov", ".mkv"]:
         video_files.extend(list(Path(input_dir).glob(f"*{ext}")))
@@ -156,11 +156,11 @@ def get_sequence_videos(input_dir):
         for i, vf in enumerate(video_files):
             print(f"  {i+1}. {vf.name}")
     
-    # Sort video files by their numeric prefix in descending order
-    video_files.sort(key=lambda x: get_video_number(x.name), reverse=True)
+    # Sort video files by their numeric prefix in ascending order (reverse=False)
+    video_files.sort(key=lambda x: get_video_number(x.name), reverse=False)
     
     if video_files:
-        print("\nFilenames after sorting in DESCENDING order:")
+        print("\nFilenames after sorting in ASCENDING order:")
         for i, vf in enumerate(video_files):
             print(f"  {i+1}. {vf.name}")
     
