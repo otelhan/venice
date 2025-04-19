@@ -20,6 +20,7 @@ USE_STREAM=false
 USE_RANDOM=true  # Default to random
 USE_SEQUENCE=false
 FULLSCREEN=false
+SKIP_ACK=true  # Default to skipping acknowledgment test in headless mode
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -49,9 +50,13 @@ while [[ $# -gt 0 ]]; do
             FULLSCREEN=true
             shift
             ;;
+        --test-ack)
+            SKIP_ACK=false  # Run acknowledgment test if explicitly requested
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--video] [--stream] [--random] [--sequence] [--fullscreen]"
+            echo "Usage: $0 [--video] [--stream] [--random] [--sequence] [--fullscreen] [--test-ack]"
             exit 1
             ;;
     esac
@@ -62,6 +67,11 @@ CMD="python -m tests.test_video_input_extended"
 
 if [ "$FULLSCREEN" = true ]; then
     CMD="$CMD --fullscreen"
+fi
+
+# Add skip-ack-test flag
+if [ "$SKIP_ACK" = true ]; then
+    CMD="$CMD --skip-ack-test"
 fi
 
 # Handle the video source options - make sure only one is specified

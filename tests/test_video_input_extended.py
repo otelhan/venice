@@ -6,6 +6,7 @@ import numpy as np
 import time
 import os
 import random
+import re
 from pathlib import Path
 import yaml
 import sys
@@ -124,7 +125,48 @@ async def test_ack_server():
         print("× Failed to send test acknowledgment")
         return False
 
-async def test_video_input(fullscreen=False, debug=False, use_video=False, use_random=False, screen_mode=False):
+def get_video_number(filename):
+    """Extract the numeric part from simple number filenames like 0.mp4, 4.mp4, etc."""
+    # For simple filenames like "0.mp4", extract the number before the extension
+    match = re.search(r'^(\d+)\.mp4$', filename)
+    if match:
+        number = int(match.group(1))
+        print(f"Matched simple numeric filename: extracted {number} from {filename}")
+        return number
+        
+    # Fallback for other patterns
+    match = re.search(r'(\d+)', filename)
+    if match:
+        number = int(match.group(1))
+        print(f"Matched general numeric pattern: extracted {number} from {filename}")
+        return number
+        
+    print(f"No number found in filename: {filename}, using default high value")
+    return 9999  # Return a high number if no match is found
+
+def get_sequence_videos(input_dir):
+    """Get a list of video files sorted by numeric prefix in descending order"""
+    video_files = []
+    for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+        video_files.extend(list(Path(input_dir).glob(f"*{ext}")))
+    
+    print(f"\nFound {len(video_files)} video files in directory")
+    if video_files:
+        print("Filenames before sorting:")
+        for i, vf in enumerate(video_files):
+            print(f"  {i+1}. {vf.name}")
+    
+    # Sort video files by their numeric prefix in descending order
+    video_files.sort(key=lambda x: get_video_number(x.name), reverse=True)
+    
+    if video_files:
+        print("\nFilenames after sorting in DESCENDING order:")
+        for i, vf in enumerate(video_files):
+            print(f"  {i+1}. {vf.name}")
+    
+    return video_files
+
+async def test_video_input(fullscreen=False, debug=False, use_video=False, use_random=False, use_sequence=False, screen_mode=False):
     """Test video input with either a video file or Venice live stream"""
     print("\nTesting video input...")
     print("\nControls:")
@@ -134,6 +176,8 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
     print("'f' - Toggle fullscreen")
     if use_random:
         print("'n' - Load next random video")
+    if use_sequence:
+        print("'n' - Load next video in sequence")
     print("'q' - Quit")
     
     # Create video input with acknowledgment handling
@@ -182,8 +226,12 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
     else:
         print("\nRunning in screen mode (no networking)")
     
-    # Get video path if using random mode
-    if use_random:
+    # Get video path for sequence or random mode
+    current_video = None
+    video_files = []
+    current_video_index = 0
+    
+    if use_sequence or use_random:
         input_dir = os.path.join(project_root, "input_videos")
         if not os.path.exists(input_dir):
             os.makedirs(input_dir)
@@ -191,23 +239,38 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
             print("Please add video files to this directory and try again")
             return False
         
-        video_files = []
-        for ext in [".mp4", ".avi", ".mov", ".mkv"]:
-            video_files.extend(list(Path(input_dir).glob(f"*{ext}")))
-        
-        if not video_files:
-            print(f"No video files found in {input_dir}")
-            return False
-        
-        # Select random video
-        current_video = str(random.choice(video_files))
-        print(f"Randomly selected video: {os.path.basename(current_video)}")
+        if use_sequence:
+            # Get videos sorted by their numeric prefix
+            video_files = get_sequence_videos(input_dir)
+            if not video_files:
+                print(f"No video files found in {input_dir}")
+                return False
+                
+            # Print the sequence of videos
+            print("\nVideos will play in this sequence:")
+            for i, video_file in enumerate(video_files):
+                print(f"{i+1}. {video_file.name}")
+            
+            current_video = str(video_files[current_video_index])
+            print(f"\nStarting with video 1: {os.path.basename(current_video)}")
+        else:  # use_random
+            # Get all video files without sorting
+            for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                video_files.extend(list(Path(input_dir).glob(f"*{ext}")))
+            
+            if not video_files:
+                print(f"No video files found in {input_dir}")
+                return False
+            
+            # Select random video
+            current_video = str(random.choice(video_files))
+            print(f"Randomly selected video: {os.path.basename(current_video)}")
         
         # Connect to the video file
         if not video.connect_to_stream(current_video):
             print(f"Failed to open video file: {current_video}")
             return False
-    # Connect to video source from config if not using random
+    # Connect to video source from config if not using random or sequence
     elif use_video:
         # Get video path from config
         video_path = video.config.get('video_input', {}).get('video_path')
@@ -287,12 +350,6 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
                 video.close()
                 
                 # Select a different random video
-                video_files = []
-                input_dir = os.path.join(project_root, "input_videos")
-                for ext in [".mp4", ".avi", ".mov", ".mkv"]:
-                    video_files.extend(list(Path(input_dir).glob(f"*{ext}")))
-                
-                # Try to select a different video if possible
                 if len(video_files) > 1:
                     remaining_videos = [v for v in video_files if str(v) != current_video]
                     if remaining_videos:
@@ -301,6 +358,21 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
                     current_video = str(video_files[0])
                 
                 print(f"Selected video: {os.path.basename(current_video)}")
+                if not video.connect_to_stream(current_video):
+                    print(f"Failed to open video file: {current_video}")
+                    break
+                
+                video.calculating = True
+            elif use_sequence and key == ord('n'):
+                # Load next video in sequence
+                print("\nLoading next video in sequence...")
+                video.close()
+                
+                # Move to the next video in sequence, or loop back to first
+                current_video_index = (current_video_index + 1) % len(video_files)
+                current_video = str(video_files[current_video_index])
+                
+                print(f"Playing video {current_video_index+1}/{len(video_files)}: {os.path.basename(current_video)}")
                 if not video.connect_to_stream(current_video):
                     print(f"Failed to open video file: {current_video}")
                     break
@@ -330,23 +402,31 @@ async def main():
     group.add_argument('--stream', action='store_true', help='Use stream from config')
     group.add_argument('--random', action='store_true', help='Use random video from input_videos folder')
     group.add_argument('--sequence', action='store_true', help='Play videos in sequence based on numeric prefixes')
+    parser.add_argument('--skip-ack-test', action='store_true', help='Skip the acknowledgment server test')
     
     args = parser.parse_args()
     
-    # Run acknowledgment server test first, unless in screen mode
-    if not args.screen and not await test_ack_server():
-        print("\nWARNING: Acknowledgment server test failed!")
-        print("Continuing with main test anyway...")
+    # Run acknowledgment server test first, unless in screen mode or explicitly skipped
+    if not args.screen and not args.skip_ack_test:
+        ack_test_result = await test_ack_server()
+        if not ack_test_result:
+            print("\nWARNING: Acknowledgment server test failed!")
+            print("Continuing with main test anyway...")
     
     # Run main test
-    await test_video_input(
-        fullscreen=args.fullscreen,
-        debug=args.debug,
-        use_video=args.video,
-        use_random=args.random,
-        use_sequence=args.sequence,
-        screen_mode=args.screen
-    )
+    try:
+        result = await test_video_input(
+            fullscreen=args.fullscreen,
+            debug=args.debug,
+            use_video=args.video,
+            use_random=args.random,
+            use_sequence=args.sequence,
+            screen_mode=args.screen
+        )
+        return result
+    except Exception as e:
+        print(f"Error running test_video_input: {e}")
+        return False
 
 if __name__ == "__main__":
     asyncio.run(main()) 
