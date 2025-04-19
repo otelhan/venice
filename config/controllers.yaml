@@ -19,9 +19,9 @@ controllers:
     description: Reservoir Controller 00
     destination: res01
     display:
-      enabled: false
-      show_camera: false
-      show_plots: false
+      enabled: true
+      show_camera: true
+      show_plots: true
     ip: 192.168.1.66
     listen_port: 8765
     mac: 2c:cf:67:8b:24:f6
