@@ -145,6 +145,13 @@ class OutputController:
 
     async def start(self):
         """Start the output node and websocket server"""
+        # First check if the serial ports are already in use by another process
+        print("\n=== Checking Serial Port Status ===")
+        ports_checked = await self.check_and_release_serial_ports()
+        if not ports_checked:
+            print("WARNING: Unable to verify serial port availability")
+            print("Will attempt to connect anyway...")
+        
         # Simple USB reset - try to cycle the USB connections
         print("\n=== Attempting USB device reset ===")
         try:
@@ -1072,6 +1079,130 @@ class OutputController:
         print("\nWaiting 2 seconds...")
         await asyncio.sleep(2)  # Wait 2 seconds after positioning
         print("Wait complete, proceeding...")
+
+    async def check_and_release_serial_ports(self):
+        """Check if serial ports are in use and try to release them if possible"""
+        try:
+            import serial
+            import psutil
+            import signal
+            import time
+            
+            # Define the serial ports we want to check
+            serial_ports = ["/dev/ttyACM0", "/dev/ttyACM1"]
+            port_status = {}
+            
+            print("Checking serial port availability...")
+            
+            # First check if ports exist
+            for port in serial_ports:
+                if not os.path.exists(port):
+                    print(f"Port {port} does not exist yet. It may be disconnected.")
+                    port_status[port] = "not_found"
+                    continue
+                
+                # Try to access port
+                try:
+                    ser = serial.Serial(port, 115200, timeout=0.1, write_timeout=0.1)
+                    ser.close()
+                    print(f"Port {port} is available ✓")
+                    port_status[port] = "available"
+                except serial.SerialException as e:
+                    port_status[port] = "in_use"
+                    print(f"Port {port} appears to be in use ⚠")
+                    
+                    # If port is in use, let's try to find which process has it
+                    try:
+                        # Find all processes with open files
+                        for proc in psutil.process_iter(['pid', 'name', 'open_files']):
+                            try:
+                                if proc.info['open_files']:
+                                    for file in proc.info['open_files']:
+                                        if port in file.path:
+                                            print(f"Found process using {port}: PID {proc.info['pid']} ({proc.info['name']})")
+                                            
+                                            # Check if it's this process
+                                            if proc.info['pid'] == os.getpid():
+                                                print(f"This is our own process, ignoring")
+                                                continue
+                                                
+                                            # Check if it's a systemd service
+                                            if 'systemd' in proc.info['name'] or 'python' in proc.info['name']:
+                                                print(f"This appears to be a service or another Python process")
+                                                print(f"Attempting to check for service...")
+                                                
+                                                # Check for systemd service
+                                                import subprocess
+                                                try:
+                                                    service_check = subprocess.run(
+                                                        ["systemctl", "--user", "status"], 
+                                                        capture_output=True, 
+                                                        text=True
+                                                    )
+                                                    if "output-processor.service" in service_check.stdout:
+                                                        print("Found output-processor.service running")
+                                                        print("You may need to stop it with: systemctl --user stop output-processor.service")
+                                                except Exception as se:
+                                                    print(f"Error checking service status: {se}")
+                                            
+                                            # Ask whether to terminate the process
+                                            try:
+                                                if os.isatty(0) and not getattr(self, 'no_ack', False):  # Only prompt if interactive
+                                                    response = input(f"Would you like to terminate process {proc.info['pid']} to free port {port}? (y/n): ")
+                                                    if response.lower() == 'y':
+                                                        print(f"Attempting to terminate process {proc.info['pid']}...")
+                                                        try:
+                                                            os.kill(proc.info['pid'], signal.SIGTERM)
+                                                            time.sleep(1)  # Give it time to close
+                                                            try:
+                                                                # Check if process is still running
+                                                                os.kill(proc.info['pid'], 0)
+                                                                print(f"Process {proc.info['pid']} is still running, trying SIGKILL")
+                                                                os.kill(proc.info['pid'], signal.SIGKILL)
+                                                            except OSError:
+                                                                print(f"Process {proc.info['pid']} terminated successfully")
+                                                        except Exception as ke:
+                                                            print(f"Failed to kill process: {ke}")
+                                                else:
+                                                    print("Running in non-interactive mode, not terminating other processes")
+                                            except Exception as ie:
+                                                print(f"Error during interactive prompt: {ie}")
+                            except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
+                                continue
+                                
+                        # Try to open port again after potential process termination
+                        try:
+                            ser = serial.Serial(port, 115200, timeout=0.1, write_timeout=0.1)
+                            ser.close()
+                            print(f"Port {port} is now available ✓")
+                            port_status[port] = "released"
+                        except serial.SerialException as e2:
+                            print(f"Port {port} is still in use after release attempt")
+                    except Exception as pe:
+                        print(f"Error checking processes: {pe}")
+            
+            # Check final status
+            all_available = all(status in ["available", "released"] for status in port_status.values())
+            if all_available:
+                print("All needed ports are available ✓")
+                return True
+            else:
+                print("Some ports are still in use or not found")
+                
+                # Print more detailed instructions if we expect a systemd service
+                if any(status == "in_use" for status in port_status.values()):
+                    print("\nIMPORTANT: If you're running this script manually while the systemd service")
+                    print("is also running, you need to stop the service first:")
+                    print("    systemctl --user stop output-processor.service")
+                    print("Then try running this script again.")
+                    print("When done, you can restart the service with:")
+                    print("    systemctl --user start output-processor.service\n")
+                
+                return False
+                
+        except Exception as e:
+            print(f"Error checking serial ports: {e}")
+            return False
 
 async def main():
     # Parse command line arguments
