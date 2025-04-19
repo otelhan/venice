@@ -323,6 +323,27 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
             if not screen_mode:
                 await video.check_and_save()
             
+            # Check if video has ended (for auto-advance in sequence mode)
+            if use_sequence and hasattr(video, 'cap') and video.cap is not None:
+                current_frame = video.cap.get(cv2.CAP_PROP_POS_FRAMES)
+                total_frames = video.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                
+                # If we're near the end of the video (allow small buffer)
+                if total_frames > 0 and current_frame >= total_frames - 3:
+                    print("\nReached end of video, advancing to next in sequence...")
+                    video.close()
+                    
+                    # Move to the next video in sequence, or loop back to first
+                    current_video_index = (current_video_index + 1) % len(video_files)
+                    current_video = str(video_files[current_video_index])
+                    
+                    print(f"Playing video {current_video_index+1}/{len(video_files)}: {os.path.basename(current_video)}")
+                    if not video.connect_to_stream(current_video):
+                        print(f"Failed to open video file: {current_video}")
+                        break
+                    
+                    video.calculating = True
+            
             # Process key commands
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
@@ -365,7 +386,7 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
                 video.calculating = True
             elif use_sequence and key == ord('n'):
                 # Load next video in sequence
-                print("\nLoading next video in sequence...")
+                print("\nManually advancing to next video in sequence...")
                 video.close()
                 
                 # Move to the next video in sequence, or loop back to first
