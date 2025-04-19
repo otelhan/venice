@@ -19,6 +19,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 # Check for arguments
 MODE="operation"  # Default mode
 INTERACTIVE=""    # By default, run in non-interactive mode
+NO_ACK=""        # By default, send acknowledgments
 
 # Process command line arguments
 while [[ $# -gt 0 ]]; do
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --interactive|-i)
       INTERACTIVE=""  # Remove non-interactive flag
+      shift
+      ;;
+    --no-ack)
+      NO_ACK="--no-ack"  # Add no-ack flag
       shift
       ;;
     *)
@@ -50,7 +55,10 @@ fi
 
 # Run the output controller
 echo "Starting Output Controller in $MODE mode..."
-python -m src.networking.run_output_extended --mode $MODE $EXTRA_ARGS
+if [ -n "$NO_ACK" ]; then
+  echo "Acknowledgment sending is DISABLED"
+fi
+python -m src.networking.run_output_extended --mode $MODE $NO_ACK $EXTRA_ARGS
 
 # Exit with the same status code as the Python script
 exit $? 

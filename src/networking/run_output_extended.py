@@ -33,6 +33,7 @@ class OutputController:
         self.clock_current_angle = 0
         self.mode = mode
         self.test_sector = 0  # For testing specific clock sectors
+        self.no_ack = False   # Flag to disable acknowledgment
         
         # Test data
         self.test_data = None
@@ -291,15 +292,21 @@ class OutputController:
                 print("Waiting for data...")
                 
                 # For operation mode, start websocket server and never return
-                server = await websockets.serve(
-                    self._handle_connection, 
-                    "0.0.0.0", 
-                    self.port,
-                    ping_interval=None,
-                    ping_timeout=None
-                )
-                print(f"Websocket server running on port {self.port}")
-                await server.wait_closed()  # This will block until the server is closed
+                try:
+                    server = await websockets.serve(
+                        self._handle_connection, 
+                        "0.0.0.0", 
+                        self.port,
+                        ping_interval=None,
+                        ping_timeout=None
+                    )
+                    print(f"Websocket server running on port {self.port}")
+                    await server.wait_closed()  # This will block until the server is closed
+                except Exception as e:
+                    print(f"Error starting websocket server: {e}")
+                    print("Critical failure, exiting...")
+                    import sys
+                    sys.exit(1)
                 
             else:
                 print("The clock is centered at 0 degrees")
@@ -333,12 +340,18 @@ class OutputController:
             
             await self.move_clock()
             
-            if self.mode == 'operation' and timestamp:
-                success = await self.send_acknowledgement(timestamp)
-                if success:
-                    print("Acknowledgment sent to video_input")
-                else:
-                    print("Failed to send acknowledgment to video_input")
+            if self.mode == 'operation' and timestamp and not self.no_ack:
+                try:
+                    success = await self.send_acknowledgement(timestamp)
+                    if success:
+                        print("Acknowledgment sent to video_input")
+                    else:
+                        print("Failed to send acknowledgment to video_input, but continuing operation")
+                except Exception as e:
+                    print(f"Error during acknowledgment: {e}")
+                    print("Continuing operation despite acknowledgment failure")
+            elif self.no_ack and timestamp:
+                print("Acknowledgment sending SKIPPED (--no-ack flag set)")
             
             await self.transition_to(OutputState.IDLE)
             
@@ -1069,15 +1082,20 @@ async def main():
                        help='Port to listen on (default: 8765)')
     parser.add_argument('--non-interactive', '-n', action='store_true',
                        help='Run in non-interactive mode (no prompts)')
+    parser.add_argument('--no-ack', action='store_true',
+                       help='Disable acknowledgment sending')
     args = parser.parse_args()
     
     # Use command line arguments
     mode = args.mode
     non_interactive = args.non_interactive
+    no_ack = args.no_ack
     
     # Print welcome message with mode information
     print("\n=== Output Controller ===")
     print(f"Starting in {mode.upper()} mode")
+    if no_ack:
+        print("Acknowledgment sending is DISABLED")
     
     # Only show mode selection if in interactive terminal and not explicitly set to non-interactive
     if os.isatty(0) and not non_interactive and not os.environ.get('NON_INTERACTIVE'):
@@ -1096,6 +1114,9 @@ async def main():
     
     # Create controller with selected mode
     controller = OutputController(mode)
+    
+    # Set the no_ack flag
+    controller.no_ack = no_ack
     
     try:
         # Start controller (this will center servos after connection is established)
