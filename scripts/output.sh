@@ -9,6 +9,13 @@ cd "$(dirname "$0")/.."
 # Source the virtual environment
 source venv/bin/activate
 
+# Create log file
+LOG_FILE="$(pwd)/logs/headless_output_$(date +%Y%m%d_%H%M%S).log"
+mkdir -p "$(dirname $LOG_FILE)"
+
+# Redirect output to log file AND terminal
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 # Check for arguments
 MODE="operation"  # Default mode
 INTERACTIVE=""    # By default, run in non-interactive mode
