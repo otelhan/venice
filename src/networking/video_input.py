@@ -702,7 +702,7 @@ class VideoInput:
             
             # Add Venice timestamp and frame number
             venice_time = self.get_venice_time().strftime('%H:%M:%S')
-            cv2.putText(display_frame, f"Frame: {self.frame_count} | Venice Time: {venice_time}", 
+            cv2.putText(display_frame, f"Frame: {self.frame_count}", 
                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             
             # Draw ROIs if enabled
