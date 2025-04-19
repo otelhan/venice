@@ -1,29 +1,26 @@
 #!/bin/bash
 # Headless script to run the output controller
-# This can be used for automated startup via systemd
+# This is almost identical to output.sh but with logging
 
-# Change to the project root directory first
+# Navigate to the project root directory
 cd "$(dirname "$0")/.."
 
 # Source the virtual environment
 source venv/bin/activate
 
-# Create log directory and file
-LOG_DIR="$(pwd)/logs"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/headless_output_$(date +%Y%m%d_%H%M%S).log"
-exec > "$LOG_FILE" 2>&1
+# Create log file
+LOG_FILE="$(pwd)/logs/headless_output_$(date +%Y%m%d_%H%M%S).log"
+mkdir -p "$(dirname $LOG_FILE)"
 
-echo "===== Starting Headless Output Controller ====="
-echo "Date: $(date)"
-echo "Working directory: $(pwd)"
+# Redirect output to log file AND terminal
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Check for arguments
+# Check for arguments - IDENTICAL to output.sh from here
 MODE="operation"  # Default mode
 INTERACTIVE=""    # By default, run in non-interactive mode
-EXTRA_ARGS=""     # Extra arguments for the Python script
+EXTRA_ARGS=""     # Initialize EXTRA_ARGS
 
-# Process command line arguments - same as original script
+# Process command line arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
     --test|-t)
@@ -51,14 +48,9 @@ if [ -z "$INTERACTIVE" ]; then
   EXTRA_ARGS="$EXTRA_ARGS --non-interactive"
 fi
 
-# Run the output controller
+# Run the output controller - IDENTICAL to output.sh
 echo "Starting Output Controller in $MODE mode..."
 python -m src.networking.run_output_extended --mode $MODE $EXTRA_ARGS
-EXIT_CODE=$?
-
-echo "Output Controller exited with code: $EXIT_CODE"
-echo "===== Headless Output Controller Ended ====="
-echo "End time: $(date)"
 
 # Exit with the same status code as the Python script
-exit $EXIT_CODE
+exit $?
