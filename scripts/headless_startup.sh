@@ -1,28 +1,35 @@
 #!/bin/bash
 
-# Script name: headless_startup.sh
-
 # Source the virtual environment
 source venv/bin/activate
 
 # Change to the project root directory
 cd "$(dirname "$0")/.."
 
-# Parse command line arguments
+# Set up logging
+LOG_FILE="$(pwd)/logs/background_$(date +%Y%m%d_%H%M%S).log"
+mkdir -p "$(dirname $LOG_FILE)"
+exec > "$LOG_FILE" 2>&1
+
+echo "===== Starting Background Video Processor ====="
+echo "Date: $(date)"
+
+# Parse command line arguments - defaulting to random
 USE_VIDEO=false
 USE_STREAM=false
-USE_RANDOM=false
+USE_RANDOM=true  # Default to random
 FULLSCREEN=false
-SCREEN_MODE=true  # Always true for headless version
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --video)
             USE_VIDEO=true
+            USE_RANDOM=false  # Override default
             shift
             ;;
         --stream)
             USE_STREAM=true
+            USE_RANDOM=false  # Override default
             shift
             ;;
         --random)
@@ -41,16 +48,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Create log file path
-LOG_FILE="$(pwd)/logs/headless_$(date +%Y%m%d_%H%M%S).log"
-mkdir -p "$(dirname $LOG_FILE)"
-exec > "$LOG_FILE" 2>&1
-
-echo "===== Starting Headless Video Processor ====="
-echo "Date: $(date)"
-
 # Build the command based on arguments
-CMD="python -m tests.test_video_input_extended --screen"
+CMD="python -m tests.test_video_input_extended"
 
 if [ "$FULLSCREEN" = true ]; then
     CMD="$CMD --fullscreen"
@@ -79,25 +78,29 @@ elif [ "$USE_STREAM" = true ]; then
     CMD="$CMD --stream"
 elif [ "$USE_RANDOM" = true ]; then
     CMD="$CMD --random"
-else
-    echo "Error: Must specify one of --video, --stream, or --random"
-    exit 1
 fi
 
-# Set environment variables for headless operation
-export MPLBACKEND=Agg
-export PYTHONUNBUFFERED=1
-export PYTHONPATH=.
-#export OPENCV_VIDEOIO_PRIORITY_MSMF=0
-#export QT_QPA_PLATFORM=offscreen
+# Support running in a non-interactive environment
+# by creating a virtual display if needed
+if [ -z "$DISPLAY" ]; then
+    echo "No display detected, running with virtual display"
+    
+    # Check if xvfb is installed
+    if command -v xvfb-run &> /dev/null; then
+        CMD="xvfb-run -a $CMD"
+    else
+        echo "Warning: xvfb-run not found. GUI windows may fail."
+        # Still try to run with null display
+        export DISPLAY=:0
+    fi
+fi
 
 echo "Executing: $CMD"
-echo "Environment: MPLBACKEND=$MPLBACKEND, QT_QPA_PLATFORM=$QT_QPA_PLATFORM"
 
 # Run the command
 eval $CMD
 EXIT_CODE=$?
 
 echo "Process exited with code: $EXIT_CODE"
-echo "===== Headless Video Processor Ended ====="
+echo "===== Background Video Processor Ended ====="
 echo "End time: $(date)"
