@@ -142,10 +142,26 @@ class OutputController:
 
     async def start(self):
         """Start the output node and websocket server"""
-        if not self.output_node.start():
-            print("Failed to start output node")
-            return
-
+        # Add retry logic for connecting to servo boards
+        max_retries = 5
+        retry_delay = 3  # seconds
+        
+        for attempt in range(max_retries):
+            print(f"\nAttempt {attempt+1}/{max_retries} to connect to servo boards...")
+            
+            if self.output_node.start():
+                print("✓ Successfully connected to servo boards")
+                break
+            else:
+                print(f"× Failed to start output node on attempt {attempt+1}")
+                
+                if attempt < max_retries - 1:
+                    print(f"Waiting {retry_delay} seconds before retrying...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    print("All connection attempts failed. Cannot proceed.")
+                    return
+        
         print(f"\nStarting output controller in {self.mode} mode")
         print(f"Listening on port: {self.port}")
         
