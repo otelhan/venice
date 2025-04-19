@@ -3,11 +3,11 @@
 # Script name: headless_output.sh
 # Purpose: Headless version of output.sh for running output processing as a service
 
-# Source the virtual environment
-source venv/bin/activate
-
 # Change to the project root directory
 cd "$(dirname "$0")/.."
+
+# Source the virtual environment
+source venv/bin/activate
 
 # Create log directory and file
 LOG_DIR="$(pwd)/logs"
