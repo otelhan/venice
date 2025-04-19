@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Source the virtual environment
-source venv/bin/activate
-
 # Change to the project root directory
 cd "$(dirname "$0")/.."
+
+# Source the virtual environment
+source venv/bin/activate
 
 # Set up logging
 LOG_FILE="$(pwd)/logs/background_$(date +%Y%m%d_%H%M%S).log"
