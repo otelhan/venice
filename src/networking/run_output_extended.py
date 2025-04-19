@@ -118,7 +118,9 @@ class OutputController:
                 self.servo_positions[servo_id] = 0  # Track in degrees
             else:
                 print(f"✗ Failed to center cube servo {servo_id}")
-            await asyncio.sleep(0.1)
+            
+            # Increase the delay between servo commands to prevent communication issues
+            await asyncio.sleep(0.5)
         
         # Center clock servo (secondary controller)
         clock_command = {
@@ -142,6 +144,30 @@ class OutputController:
 
     async def start(self):
         """Start the output node and websocket server"""
+        # Simple USB reset - try to cycle the USB connections
+        print("\n=== Attempting USB device reset ===")
+        try:
+            import serial
+            
+            # Try to reset the USB connections by opening and closing them
+            usb_devices = ["/dev/ttyACM0", "/dev/ttyACM1"]
+            for device in usb_devices:
+                if os.path.exists(device):
+                    print(f"Resetting {device}...")
+                    try:
+                        ser = serial.Serial(device, 115200)
+                        ser.close()
+                        print(f"Successfully reset {device}")
+                    except Exception as e:
+                        print(f"Could not reset {device}: {e}")
+            
+            # Wait for devices to stabilize
+            print("Waiting for USB devices to stabilize...")
+            await asyncio.sleep(2)
+        except Exception as e:
+            print(f"Error during USB reset: {e}")
+            print("Continuing anyway...")
+        
         # Add retry logic for connecting to servo boards
         max_retries = 5
         retry_delay = 3  # seconds

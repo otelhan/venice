@@ -18,6 +18,7 @@ echo "Date: $(date)"
 USE_VIDEO=false
 USE_STREAM=false
 USE_RANDOM=true  # Default to random
+USE_SEQUENCE=false
 FULLSCREEN=false
 
 while [[ $# -gt 0 ]]; do
@@ -25,15 +26,23 @@ while [[ $# -gt 0 ]]; do
         --video)
             USE_VIDEO=true
             USE_RANDOM=false  # Override default
+            USE_SEQUENCE=false
             shift
             ;;
         --stream)
             USE_STREAM=true
             USE_RANDOM=false  # Override default
+            USE_SEQUENCE=false
             shift
             ;;
         --random)
             USE_RANDOM=true
+            USE_SEQUENCE=false
+            shift
+            ;;
+        --sequence)
+            USE_SEQUENCE=true
+            USE_RANDOM=false  # Override default
             shift
             ;;
         --fullscreen)
@@ -42,7 +51,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--video] [--stream] [--random] [--fullscreen]"
+            echo "Usage: $0 [--video] [--stream] [--random] [--sequence] [--fullscreen]"
             exit 1
             ;;
     esac
@@ -71,6 +80,21 @@ if [ "$USE_STREAM" = true ] && [ "$USE_RANDOM" = true ]; then
     exit 1
 fi
 
+if [ "$USE_VIDEO" = true ] && [ "$USE_SEQUENCE" = true ]; then
+    echo "Error: Cannot specify both --video and --sequence"
+    exit 1
+fi
+
+if [ "$USE_STREAM" = true ] && [ "$USE_SEQUENCE" = true ]; then
+    echo "Error: Cannot specify both --stream and --sequence"
+    exit 1
+fi
+
+if [ "$USE_RANDOM" = true ] && [ "$USE_SEQUENCE" = true ]; then
+    echo "Error: Cannot specify both --random and --sequence"
+    exit 1
+fi
+
 # Add the appropriate video source flag
 if [ "$USE_VIDEO" = true ]; then
     CMD="$CMD --video"
@@ -78,6 +102,8 @@ elif [ "$USE_STREAM" = true ]; then
     CMD="$CMD --stream"
 elif [ "$USE_RANDOM" = true ]; then
     CMD="$CMD --random"
+elif [ "$USE_SEQUENCE" = true ]; then
+    CMD="$CMD --sequence"
 fi
 
 # Support running in a non-interactive environment

@@ -329,6 +329,7 @@ async def main():
     group.add_argument('--video', action='store_true', help='Use video file from config')
     group.add_argument('--stream', action='store_true', help='Use stream from config')
     group.add_argument('--random', action='store_true', help='Use random video from input_videos folder')
+    group.add_argument('--sequence', action='store_true', help='Play videos in sequence based on numeric prefixes')
     
     args = parser.parse_args()
     
@@ -343,6 +344,7 @@ async def main():
         debug=args.debug,
         use_video=args.video,
         use_random=args.random,
+        use_sequence=args.sequence,
         screen_mode=args.screen
     )
 
