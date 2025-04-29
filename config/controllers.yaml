@@ -13,7 +13,7 @@ controllers:
       enabled: false
       show_camera: false
       show_plots: false
-    ip: 192.168.1.42
+    ip: 192.168.0.108
     mac: 2c:cf:67:8b:24:f7
   res00:
     description: Reservoir Controller 00
@@ -22,7 +22,7 @@ controllers:
       enabled: true
       show_camera: true
       show_plots: true
-    ip: 192.168.1.66
+    ip: 192.168.0.107
     listen_port: 8765
     mac: 2c:cf:67:8b:24:f6
     port: 8765
@@ -43,7 +43,7 @@ controllers:
       enabled: true
       show_camera: true
       show_plots: true
-    ip: 192.168.1.30
+    ip: 192.168.0.106
     mac: 2c:cf:67:8b:2b:d4
     port: 8765
   res03:
@@ -168,7 +168,7 @@ video_input:
   destination: res00
   display:
     show_plots: true
-  ip: 192.168.1.106
+  ip: 192.168.0.103
   listen_port: 8777
   output:
     csv_path: data/movement_vectors.csv
