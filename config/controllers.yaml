@@ -33,7 +33,7 @@ controllers:
       enabled: true
       show_camera: true
       show_plots: true
-    ip: 192.168.1.178
+    ip: 192.168.0.109
     mac: 2c:cf:67:8c:50:b7
     port: 8765
   res02:
@@ -53,7 +53,7 @@ controllers:
       enabled: true
       show_camera: true
       show_plots: true
-    ip: 192.168.1.254
+    ip: 192.168.0.110
     mac: 2c:cf:67:8b:fe:ab
     port: 8765
   resX:
@@ -63,7 +63,7 @@ controllers:
       enabled: true
       show_camera: true
       show_plots: true
-    ip: 192.168.1.8
+    ip: 192.168.0.111
     port: 8765
   trainer:
     description: Reservoir Trainer
