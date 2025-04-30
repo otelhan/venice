@@ -63,7 +63,7 @@ controllers:
       enabled: true
       show_camera: true
       show_plots: true
-    ip: 192.168.0.111
+    ip: 192.168.0.11
     port: 8765
   trainer:
     description: Reservoir Trainer
@@ -78,7 +78,7 @@ servo_config:
     main:
       baud: 1000000
       debug: false
-      port: /dev/ttyACM1
+      port: /dev/ttyACM0
       servos:
         '1':
           id: 1
@@ -118,7 +118,7 @@ servo_config:
     secondary:
       baud: 1000000
       debug: false
-      port: /dev/ttyACM0
+      port: /dev/ttyACM1
       servos:
         '1':
           id: 1
