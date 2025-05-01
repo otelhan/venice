@@ -60,12 +60,12 @@ class OutputController:
         
         # Add clock position mapping (6 positions)
         self.clock_positions = {
-            0: -135,  # 0-3 hours (offset by +15 degrees from original -150)
-            1: -75,   # 4-7 hours (offset by +15 degrees from original -90)
-            2: -15,   # 8-11 hours (offset by +15 degrees from original -30)
-            3: 45,    # 12-15 hours (offset by +15 degrees from original 30)
-            4: 105,   # 16-19 hours (offset by +15 degrees from original 90)
-            5: 135    # 20-23 hours (adjusted to stay within 150 degree limit)
+            0: 135,   # 0-3 hours (now at the positive end)
+            1: 75,    # 4-7 hours
+            2: 15,    # 8-11 hours
+            3: -45,   # 12-15 hours
+            4: -105,  # 16-19 hours
+            5: -135   # 20-23 hours
         }
         
         # If in test mode, load test data immediately
@@ -491,7 +491,7 @@ class OutputController:
         print(f"Target angle: {target_angle:.1f}°")
         
         # Move directly to target position
-        print(f"\nMoving from idle position (-150°) to sector {sector}...")
+        print(f"\nMoving from idle position (150°) to sector {sector}...")
         clock_command = {
             'type': 'servo',
             'controller': 'secondary',
@@ -516,19 +516,19 @@ class OutputController:
         # In operation mode, return to idle position after waiting
         if self.mode == 'operation':
             # Move directly back to idle position
-            print("\nReturning to idle position (-150°)...")
+            print("\nReturning to idle position (150°)...")
             return_command = {
                 'type': 'servo',
                 'controller': 'secondary',
                 'servo_id': 1,
-                'position': -150,  # Return to idle position
+                'position': 150,  # Return to idle position
                 'time_ms': 1000
             }
             
             response = self.output_node.process_command(return_command)
             if response['status'] == 'ok':
-                print("✓ Clock returned to idle position (-150°)")
-                self.clock_current_angle = -150
+                print("✓ Clock returned to idle position (150°)")
+                self.clock_current_angle = 150
             else:
                 print("✗ Failed to return clock to idle position")
                 return False
@@ -968,7 +968,7 @@ class OutputController:
         print("These values are converted to an angle between -180° and 180°,")
         print("which is then mapped to one of the six sectors.")
         print()
-        print(f"In operation mode, the clock returns to the idle position (-150°)")
+        print(f"In operation mode, the clock returns to the idle position (150°)")
         print("after displaying the calculated time sector.")
         
         # Only wait for input in test mode
@@ -977,7 +977,7 @@ class OutputController:
             input()
 
     async def center_all_servos_for_operation(self):
-        """Center all servos before operation, with clock at the idle position (-150 degrees)"""
+        """Center all servos before operation, with clock at the idle position (150 degrees)"""
         print("\n=== Centering All Servos Before Operation ===")
         
         # Center cube servos (main controller)
@@ -1014,18 +1014,18 @@ class OutputController:
         else:
             print(f"✗ Failed to center clock servo")
         
-        # Then move to idle position (-150 degrees) for operation mode
+        # Then move to idle position (150 degrees) for operation mode
         clock_command = {
             'type': 'servo',
             'controller': 'secondary',
             'servo_id': 1,
-            'position': -150,  # -150 degrees (idle position)
+            'position': 150,  # 150 degrees (idle position)
             'time_ms': 1000
         }
         response = self.output_node.process_command(clock_command)
         if response['status'] == 'ok':
-            print(f"✓ Clock set to idle position (-150°)")
-            self.clock_current_angle = -150  # Track in degrees
+            print(f"✓ Clock set to idle position (150°)")
+            self.clock_current_angle = 150  # Track in degrees
         else:
             print(f"✗ Failed to set clock servo")
         
