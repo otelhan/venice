@@ -491,15 +491,15 @@ class OutputController:
         print(f"Target angle: {target_angle:.1f}°")
         
         if self.mode == 'operation':
-            # In operation mode, always center at sector 5 (150 degrees) first
+            # In operation mode, use an idle position of -165 degrees (before sector 0)
             center_command = {
                 'type': 'servo',
                 'controller': 'secondary',
                 'servo_id': 1,
-                'position': 150,  # Sector 5 (150 degrees)
+                'position': -165,  # Idle position before sector 0
                 'time_ms': 1000
             }
-            print("Moving to sector 5 (150°)...")
+            print("Moving to idle position (-165°)...")
         else:
             # In test mode, center at 0 degrees
             center_command = {
@@ -514,8 +514,8 @@ class OutputController:
         response = self.output_node.process_command(center_command)
         if response['status'] == 'ok':
             if self.mode == 'operation':
-                print("✓ Clock positioned at sector 5 (150°)")
-                self.clock_current_angle = 150
+                print("✓ Clock positioned at idle position (-165°)")
+                self.clock_current_angle = -165
             else:
                 print("✓ Clock centered")
                 self.clock_current_angle = 0
@@ -570,23 +570,23 @@ class OutputController:
         print(f"\nWaiting at sector {sector} for {wait_time} seconds...")
         await asyncio.sleep(wait_time)
         
-        # In operation mode, return to sector 5 after waiting
+        # In operation mode, return to idle position after waiting
         if self.mode == 'operation':
-            print("\nReturning to sector 5 (150°)...")
+            print("\nReturning to idle position (-165°)...")
             return_command = {
                 'type': 'servo',
                 'controller': 'secondary',
                 'servo_id': 1,
-                'position': 150,  # Return to sector 5
+                'position': -165,  # Return to idle position
                 'time_ms': 1000
             }
             
             response = self.output_node.process_command(return_command)
             if response['status'] == 'ok':
-                print("✓ Clock returned to sector 5 (150°)")
-                self.clock_current_angle = 150
+                print("✓ Clock returned to idle position (-165°)")
+                self.clock_current_angle = -165
             else:
-                print("✗ Failed to return clock to sector 5")
+                print("✗ Failed to return clock to idle position")
                 return False
             
             # Brief wait after returning
@@ -947,12 +947,12 @@ class OutputController:
             print("-------------------------------")
             print("Sector | Time Range | Angle")
             print("-------------------------------")
-            print("0      | 00-03 hrs  | -150°")
-            print("1      | 04-07 hrs  | -90°")
-            print("2      | 08-11 hrs  | -30°")
-            print("3      | 12-15 hrs  | +30°")
-            print("4      | 16-19 hrs  | +90°")
-            print("5      | 20-23 hrs  | +150°")
+            print(f"0      | 00-03 hrs  | {self.clock_positions[0]}°")
+            print(f"1      | 04-07 hrs  | {self.clock_positions[1]}°")
+            print(f"2      | 08-11 hrs  | {self.clock_positions[2]}°")
+            print(f"3      | 12-15 hrs  | {self.clock_positions[3]}°")
+            print(f"4      | 16-19 hrs  | {self.clock_positions[4]}°")
+            print(f"5      | 20-23 hrs  | {self.clock_positions[5]}°")
             print("-------------------------------")
             
             sector_choice = input("\nEnter sector (0-5): ").strip()
@@ -1001,22 +1001,22 @@ class OutputController:
         print("The clock indicates time by pointing to one of 6 sectors around the circle.")
         print("Each sector represents a 4-hour period of the day:")
         print()
-        print("Sector 0: 00:00-03:59 (-150° position)")
+        print(f"Sector 0: 00:00-03:59 ({self.clock_positions[0]}° position)")
         print("         Midnight to early morning")
         print()
-        print("Sector 1: 04:00-07:59 (-90° position)")
+        print(f"Sector 1: 04:00-07:59 ({self.clock_positions[1]}° position)")
         print("         Early morning")
         print()
-        print("Sector 2: 08:00-11:59 (-30° position)")
+        print(f"Sector 2: 08:00-11:59 ({self.clock_positions[2]}° position)")
         print("         Late morning")
         print()
-        print("Sector 3: 12:00-15:59 (+30° position)")
+        print(f"Sector 3: 12:00-15:59 ({self.clock_positions[3]}° position)")
         print("         Early afternoon")
         print()
-        print("Sector 4: 16:00-19:59 (+90° position)")
+        print(f"Sector 4: 16:00-19:59 ({self.clock_positions[4]}° position)")
         print("         Late afternoon/early evening")
         print()
-        print("Sector 5: 20:00-23:59 (+150° position) - HOME POSITION")
+        print(f"Sector 5: 20:00-23:59 ({self.clock_positions[5]}° position)")
         print("         Evening/night")
         print()
         print("The time is calculated from sine/cosine values that represent")
@@ -1024,7 +1024,7 @@ class OutputController:
         print("These values are converted to an angle between -180° and 180°,")
         print("which is then mapped to one of the six sectors.")
         print()
-        print("In operation mode, the clock returns to sector 5 (HOME)")
+        print(f"In operation mode, the clock returns to the idle position (-165°)")
         print("after displaying the calculated time sector.")
         
         # Only wait for input in test mode
@@ -1033,7 +1033,7 @@ class OutputController:
             input()
 
     async def center_all_servos_for_operation(self):
-        """Center all servos before operation, with clock at sector 5 (150 degrees)"""
+        """Center all servos before operation, with clock at the idle position (-165 degrees)"""
         print("\n=== Centering All Servos Before Operation ===")
         
         # Center cube servos (main controller)
@@ -1053,18 +1053,18 @@ class OutputController:
                 print(f"✗ Failed to center cube servo {servo_id}")
             await asyncio.sleep(0.1)
         
-        # Position clock servo at sector 5 (150 degrees) for operation mode
+        # Position clock servo at idle position (-165 degrees) for operation mode
         clock_command = {
             'type': 'servo',
             'controller': 'secondary',
             'servo_id': 1,
-            'position': 150,  # 150 degrees (sector 5)
+            'position': -165,  # -165 degrees (idle position)
             'time_ms': 1000
         }
         response = self.output_node.process_command(clock_command)
         if response['status'] == 'ok':
-            print(f"✓ Clock set to sector 5 (150°)")
-            self.clock_current_angle = 150  # Track in degrees
+            print(f"✓ Clock set to idle position (-165°)")
+            self.clock_current_angle = -165  # Track in degrees
         else:
             print(f"✗ Failed to set clock servo")
         
