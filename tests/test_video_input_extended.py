@@ -183,6 +183,10 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
     # Create video input with acknowledgment handling
     video = VideoInputWithAck()
     
+    # Track fullscreen state
+    is_fullscreen = fullscreen
+    window_name = "Venice Stream"
+    
     # Start acknowledgment server and wait for it to be ready, unless in screen mode
     if not screen_mode:
         print("\nStarting acknowledgment server...")
@@ -299,6 +303,13 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
     # Main loop
     print("Video source connected, entering main loop...")
     video.show_rois = True
+    
+    # Set initial fullscreen state if needed
+    if is_fullscreen:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        print("Window initialized in fullscreen mode")
+        
     try:
         last_send_time = time.time()
         video.calculating = True  # Start movement calculation
@@ -323,6 +334,13 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
             if not screen_mode:
                 await video.check_and_save()
             
+            # Helper function to ensure window properties are correctly set
+            def apply_fullscreen_state():
+                if is_fullscreen:
+                    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    print("Reapplied fullscreen mode")
+            
             # Check if video has ended (for auto-advance in sequence mode)
             if use_sequence and hasattr(video, 'cap') and video.cap is not None:
                 current_frame = video.cap.get(cv2.CAP_PROP_POS_FRAMES)
@@ -343,6 +361,9 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
                         break
                     
                     video.calculating = True
+                    
+                    # Reapply fullscreen state after loading new video
+                    apply_fullscreen_state()
             
             # Process key commands
             key = cv2.waitKey(1) & 0xFF
@@ -360,11 +381,13 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
                 video.show_rois = not video.show_rois
             elif key == ord('f'):
                 # Toggle fullscreen
-                window_name = "Venice Stream"
-                if cv2.getWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN) == cv2.WINDOW_FULLSCREEN:
-                    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-                else:
+                is_fullscreen = not is_fullscreen
+                if is_fullscreen:
                     cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    print("Switched to fullscreen mode")
+                else:
+                    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                    print("Switched to normal window mode")
             elif use_random and key == ord('n'):
                 # Load next random video
                 print("\nLoading next random video...")
@@ -384,6 +407,9 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
                     break
                 
                 video.calculating = True
+                
+                # Reapply fullscreen state after loading new video
+                apply_fullscreen_state()
             elif use_sequence and key == ord('n'):
                 # Load next video in sequence
                 print("\nManually advancing to next video in sequence...")
@@ -399,6 +425,9 @@ async def test_video_input(fullscreen=False, debug=False, use_video=False, use_r
                     break
                 
                 video.calculating = True
+                
+                # Reapply fullscreen state after loading new video
+                apply_fullscreen_state()
             
             # Short sleep to reduce CPU usage
             await asyncio.sleep(0.01)
