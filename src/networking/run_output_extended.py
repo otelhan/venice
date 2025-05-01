@@ -490,83 +490,8 @@ class OutputController:
         print(f"Current angle: {self.clock_current_angle:.1f}°")
         print(f"Target angle: {target_angle:.1f}°")
         
-        # First center at 0 degrees
-        reset_command = {
-            'type': 'servo',
-            'controller': 'secondary',
-            'servo_id': 1,
-            'position': 0,  # 0 degrees is center
-            'time_ms': 1000
-        }
-        print("First resetting to center position (0°)...")
-        response = self.output_node.process_command(reset_command)
-        if response['status'] == 'ok':
-            print("✓ Clock reset to center")
-            self.clock_current_angle = 0
-            await asyncio.sleep(1)  # Wait briefly at center position
-        else:
-            print("✗ Failed to reset clock servo")
-            return False
-        
-        if self.mode == 'operation':
-            # In operation mode, use an idle position of -150 degrees (zone 0)
-            center_command = {
-                'type': 'servo',
-                'controller': 'secondary',
-                'servo_id': 1,
-                'position': -150,  # Idle position at zone 0
-                'time_ms': 1000
-            }
-            print("Moving to idle position (-150°)...")
-        else:
-            # In test mode, center at 0 degrees
-            center_command = {
-                'type': 'servo',
-                'controller': 'secondary',
-                'servo_id': 1,
-                'position': 0,  # 0 degrees is center (will be converted to microseconds)
-                'time_ms': 1000
-            }
-            print("Moving to center position (0°)...")
-        
-        response = self.output_node.process_command(center_command)
-        if response['status'] == 'ok':
-            if self.mode == 'operation':
-                print("✓ Clock positioned at idle position (-150°)")
-                self.clock_current_angle = -150
-            else:
-                print("✓ Clock centered")
-                self.clock_current_angle = 0
-            await asyncio.sleep(3)  # Wait 3 seconds at center/position
-        else:
-            print("✗ Failed to position clock servo")
-            return False
-        
-        # In test mode, perform full rotation; in operation mode, go directly to target
-        if self.mode == 'test':
-            # Perform one full rotation
-            print("\nPerforming full rotation...")
-            rotation_angles = [-150, -90, -30, 30, 90, 150, -150]  # Complete cycle
-            for angle in rotation_angles:
-                rotation_command = {
-                    'type': 'servo',
-                    'controller': 'secondary',
-                    'servo_id': 1,
-                    'position': angle,  # Angle in degrees (will be converted to microseconds)
-                    'time_ms': 500  # Faster movement for rotation
-                }
-                
-                response = self.output_node.process_command(rotation_command)
-                if response['status'] == 'ok':
-                    print(f"✓ Rotated to {angle}°")
-                    self.clock_current_angle = angle
-                    await asyncio.sleep(0.6)  # Short delay between positions
-                else:
-                    print(f"✗ Failed to rotate to {angle}°")
-                    return False
-        
-        # Move to target position
-        print(f"\nMoving to final position in sector {sector}...")
+        # Move directly to target position
+        print(f"\nMoving from idle position (-150°) to sector {sector}...")
         clock_command = {
             'type': 'servo',
             'controller': 'secondary',
@@ -590,27 +515,8 @@ class OutputController:
         
         # In operation mode, return to idle position after waiting
         if self.mode == 'operation':
-            # First reset to center
-            print("\nResetting to center position (0°)...")
-            reset_command = {
-                'type': 'servo',
-                'controller': 'secondary',
-                'servo_id': 1,
-                'position': 0,  # Center position
-                'time_ms': 1000
-            }
-            
-            response = self.output_node.process_command(reset_command)
-            if response['status'] == 'ok':
-                print("✓ Clock reset to center")
-                self.clock_current_angle = 0
-                await asyncio.sleep(1)  # Brief wait at center
-            else:
-                print("✗ Failed to reset clock to center")
-                return False
-                
-            # Then move to idle position
-            print("\nMoving to idle position (-150°)...")
+            # Move directly back to idle position
+            print("\nReturning to idle position (-150°)...")
             return_command = {
                 'type': 'servo',
                 'controller': 'secondary',
