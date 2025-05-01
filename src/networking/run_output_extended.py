@@ -60,12 +60,12 @@ class OutputController:
         
         # Add clock position mapping (6 positions)
         self.clock_positions = {
-            0: -150,  # 0-3 hours
-            1: -90,   # 4-7 hours
-            2: -30,   # 8-11 hours
-            3: 30,    # 12-15 hours
-            4: 90,    # 16-19 hours
-            5: 150    # 20-23 hours
+            0: -135,  # 0-3 hours (offset by +15 degrees from original -150)
+            1: -75,   # 4-7 hours (offset by +15 degrees from original -90)
+            2: -15,   # 8-11 hours (offset by +15 degrees from original -30)
+            3: 45,    # 12-15 hours (offset by +15 degrees from original 30)
+            4: 105,   # 16-19 hours (offset by +15 degrees from original 90)
+            5: 135    # 20-23 hours (adjusted to stay within 150 degree limit)
         }
         
         # If in test mode, load test data immediately
